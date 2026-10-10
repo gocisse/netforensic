@@ -64,7 +64,7 @@ The final deliverable is a **single self-contained Go binary**.
 ## Build & Run
 ```bash
 go build -o netforensic ./cmd/netforensic
-go run .              # run the program
+go run ./cmd/netforensic   # run the program
 go build ./...        # build
 go test ./...         # run all tests
 go test -run TestName ./path/to/pkg   # run a single test
