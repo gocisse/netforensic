@@ -104,5 +104,6 @@ func dnsIssue(kind string, sev models.Severity, title string, p models.PacketInf
 		Title:       title,
 		Description: desc,
 		Timestamp:   p.Timestamp,
+		Domain:      p.DNSQueryName,
 	}
 }

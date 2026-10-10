@@ -14,6 +14,7 @@ const (
 	ProtocolDNS  Protocol = "DNS"
 	ProtocolHTTP Protocol = "HTTP"
 	ProtocolTLS  Protocol = "TLS"
+	ProtocolARP  Protocol = "ARP"
 )
 
 // Severity represents the severity level of a detected issue.
@@ -39,6 +40,28 @@ type PacketInfo struct {
 	PayloadSize int       `json:"payload_size"`
 	TCPSeq      uint32    `json:"tcp_seq,omitempty"`   // TCP sequence number; 0 for non-TCP
 	TCPFlags    string    `json:"tcp_flags,omitempty"` // e.g. "SYN", "PSH,ACK"; empty for non-TCP
+	TCPAck      uint32    `json:"tcp_ack,omitempty"`   // TCP acknowledgment number; 0 for non-TCP
+
+	// TCP handshake timeline of the flow this packet belongs to. The reader
+	// fills these on every packet of a flow once the whole capture has been
+	// read; a zero time means the event was not observed (for example a
+	// capture that started mid-connection).
+	TCPSynTime    time.Time `json:"tcp_syn_time,omitempty"`     // first SYN from the client
+	TCPSynAckTime time.Time `json:"tcp_syn_ack_time,omitempty"` // server's SYN-ACK
+	TCPAckTime    time.Time `json:"tcp_ack_time,omitempty"`     // client's final handshake ACK
+	FirstDataTime time.Time `json:"first_data_time,omitempty"`  // first payload from the server after the handshake
+
+	// ICMP fields are set on ICMPv4 packets (Protocol ICMP).
+	ICMPType    uint8  `json:"icmp_type,omitempty"`
+	ICMPCode    uint8  `json:"icmp_code,omitempty"`
+	ICMPMessage string `json:"icmp_message,omitempty"` // human-readable, e.g. "Destination Unreachable: Port Unreachable"
+
+	// ARP fields are set on ARP packets (Protocol ARP). SrcIP and DstIP hold
+	// the sender and target protocol addresses.
+	ARPOperation string `json:"arp_operation,omitempty"` // "request" or "reply"
+	ARPSenderIP  string `json:"arp_sender_ip,omitempty"`
+	ARPSenderMAC string `json:"arp_sender_mac,omitempty"`
+	ARPTargetIP  string `json:"arp_target_ip,omitempty"`
 
 	// DNS fields are set only on packets that carry a decoded DNS message
 	// with at least one question; DNSQueryName != "" identifies such packets.
@@ -52,6 +75,7 @@ type PacketInfo struct {
 	// request line (method, URI) or status line (status code).
 	HTTPMethod     string `json:"http_method,omitempty"`
 	HTTPURI        string `json:"http_uri,omitempty"`
+	HTTPHost       string `json:"http_host,omitempty"` // Host header of a request
 	HTTPStatusCode int    `json:"http_status_code,omitempty"`
 
 	// TLS fields are set on TCP packets whose payload starts with a TLS record.
@@ -77,6 +101,13 @@ type Flow struct {
 	BytesSent   int       `json:"bytes_sent"`
 	BytesRecv   int       `json:"bytes_recv"`
 	Retransmits int       `json:"retransmits"` // Key metric for packet loss/slow connections
+
+	// Performance metrics for TCP flows, in milliseconds. Zero means the
+	// metric could not be measured from the capture.
+	SetupTimeMs float64 `json:"setup_time_ms"` // SYN to final handshake ACK
+	TTFBMs      float64 `json:"ttfb_ms"`       // handshake completion to first server data
+	AvgRTTMs    float64 `json:"avg_rtt_ms"`
+	MaxRTTMs    float64 `json:"max_rtt_ms"` // large values relative to the average indicate jitter
 }
 
 // Issue represents a detected forensic problem or anomaly.
@@ -88,6 +119,25 @@ type Issue struct {
 	Description string    `json:"description"`
 	Timestamp   time.Time `json:"timestamp"`
 	FlowID      string    `json:"flow_id,omitempty"` // Optional: link to specific flow
+	Domain      string    `json:"domain,omitempty"`  // Optional: domain or HTTP host involved, used for correlation
+}
+
+// TimelineEvent is one entry in the chronological incident timeline.
+type TimelineEvent struct {
+	Timestamp   time.Time `json:"timestamp"`
+	EventType   string    `json:"event_type"` // e.g. "root_cause", "symptom", "issue", "capture_start"
+	Description string    `json:"description"`
+	Severity    Severity  `json:"severity"`
+}
+
+// RootCauseAnalysis is the correlated diagnosis of a capture.
+type RootCauseAnalysis struct {
+	HealthScore     int             `json:"health_score"` // 0-100, 100 is healthy
+	PrimaryCause    string          `json:"primary_cause"`
+	Confidence      string          `json:"confidence"` // "high", "medium" or "low"
+	Summary         string          `json:"summary"`
+	Timeline        []TimelineEvent `json:"timeline"`
+	Recommendations []string        `json:"recommendations"`
 }
 
 // AnalysisResult is the final output of the analyzer.
@@ -99,4 +149,7 @@ type AnalysisResult struct {
 	Duration     string    `json:"duration"` // e.g., "1.2s"
 	Issues       []Issue   `json:"issues"`
 	TopTalkers   []Flow    `json:"top_talkers"` // Top 5 flows by bytes
+	SlowFlows    []Flow    `json:"slow_flows"`  // Top 5 flows by worst timing metric
+
+	Diagnosis RootCauseAnalysis `json:"diagnosis"`
 }

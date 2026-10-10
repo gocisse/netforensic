@@ -86,6 +86,9 @@ func newRootCmd() *cobra.Command {
 				return nil
 			}
 
+			if err := printTriageReport(cmd.OutOrStdout(), res); err != nil {
+				return fmt.Errorf("write triage report: %w", err)
+			}
 			if verbose {
 				if err := printPacketTable(cmd.OutOrStdout(), packets); err != nil {
 					return fmt.Errorf("write packet table: %w", err)

@@ -46,21 +46,22 @@ func analyzeHTTP(packets []models.PacketInfo) []models.Issue {
 			pending[k] = q[1:]
 		}
 
-		what := fmt.Sprintf("response from %s", p.SrcIP)
+		what, host := fmt.Sprintf("response from %s", p.SrcIP), ""
 		if req != nil {
 			what = fmt.Sprintf("%s %s to %s", req.HTTPMethod, req.HTTPURI, req.DstIP)
+			host = req.HTTPHost
 		}
 		switch {
 		case p.HTTPStatusCode >= 500:
-			issues = append(issues, httpIssue("server-error", models.SeverityError, "HTTP Server Error", p,
+			issues = append(issues, httpIssue("server-error", models.SeverityError, "HTTP Server Error", p, host,
 				fmt.Sprintf("%s returned status %d", what, p.HTTPStatusCode)))
 		case p.HTTPStatusCode >= 400:
-			issues = append(issues, httpIssue("client-error", models.SeverityWarning, "HTTP Client Error", p,
+			issues = append(issues, httpIssue("client-error", models.SeverityWarning, "HTTP Client Error", p, host,
 				fmt.Sprintf("%s returned status %d", what, p.HTTPStatusCode)))
 		}
 		if req != nil {
 			if rtt := p.Timestamp.Sub(req.Timestamp); rtt > httpSlowResponse {
-				issues = append(issues, httpIssue("slow", models.SeverityInfo, "HTTP Slow Response", *req,
+				issues = append(issues, httpIssue("slow", models.SeverityInfo, "HTTP Slow Response", *req, host,
 					fmt.Sprintf("%s took %s to answer (status %d)", what, rtt, p.HTTPStatusCode)))
 			}
 		}
@@ -69,7 +70,7 @@ func analyzeHTTP(packets []models.PacketInfo) []models.Issue {
 }
 
 // httpIssue builds an HTTP issue anchored at packet p.
-func httpIssue(kind string, sev models.Severity, title string, p models.PacketInfo, desc string) models.Issue {
+func httpIssue(kind string, sev models.Severity, title string, p models.PacketInfo, domain, desc string) models.Issue {
 	return models.Issue{
 		ID:          fmt.Sprintf("http-%s-%d-%s:%d", kind, p.Timestamp.UnixNano(), p.SrcIP, p.SrcPort),
 		Severity:    sev,
@@ -77,5 +78,6 @@ func httpIssue(kind string, sev models.Severity, title string, p models.PacketIn
 		Title:       title,
 		Description: desc,
 		Timestamp:   p.Timestamp,
+		Domain:      domain,
 	}
 }

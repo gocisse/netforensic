@@ -28,10 +28,14 @@ func Analyze(packets []models.PacketInfo, service string) *models.AnalysisResult
 	}
 
 	flows := aggregateFlows(packets)
+	flows, perfIssues := applyPerformanceMetrics(packets, flows)
 	issues := detectIssues(flows)
 	issues = append(issues, analyzeDNS(packets)...)
 	issues = append(issues, analyzeHTTP(packets)...)
 	issues = append(issues, analyzeTLS(packets)...)
+	issues = append(issues, analyzeICMP(packets)...)
+	issues = append(issues, analyzeARP(packets)...)
+	issues = append(issues, perfIssues...)
 	if issues == nil {
 		issues = []models.Issue{} // serialize as [] rather than null
 	}
@@ -46,6 +50,8 @@ func Analyze(packets []models.PacketInfo, service string) *models.AnalysisResult
 		Duration:     captureDuration(packets).String(),
 		Issues:       issues,
 		TopTalkers:   talkers,
+		SlowFlows:    slowFlows(flows, topTalkerCount),
+		Diagnosis:    correlate(packets, flows, issues),
 	}
 }
 
@@ -116,6 +122,17 @@ type flowKey struct {
 	proto models.Protocol
 }
 
+// canonicalKey returns the direction-independent flow key of p and whether p
+// travels from the canonical source endpoint to the canonical destination.
+func canonicalKey(p models.PacketInfo) (key flowKey, forward bool) {
+	src := endpoint{p.SrcIP, p.SrcPort}
+	dst := endpoint{p.DstIP, p.DstPort}
+	if dst.less(src) {
+		return flowKey{dst, src, p.Protocol}, false
+	}
+	return flowKey{src, dst, p.Protocol}, true
+}
+
 // aggregateFlows groups packets into bidirectional flows. Packets A->B and
 // B->A share one flow whose canonical source is the lesser (IP, port)
 // endpoint. BytesSent counts bytes from the canonical source and BytesRecv
@@ -135,15 +152,8 @@ func aggregateFlows(packets []models.PacketInfo) []models.Flow {
 	seen := make(map[seqKey]struct{})
 
 	for _, p := range packets {
-		src := endpoint{p.SrcIP, p.SrcPort}
-		dst := endpoint{p.DstIP, p.DstPort}
-		forward := !dst.less(src)
-		a, b := src, dst
-		if !forward {
-			a, b = dst, src
-		}
-
-		key := flowKey{a, b, p.Protocol}
+		key, forward := canonicalKey(p)
+		a, b := key.a, key.b
 		f, ok := byKey[key]
 		if !ok {
 			f = &models.Flow{

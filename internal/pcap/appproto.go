@@ -44,6 +44,7 @@ func fillHTTP(info *models.PacketInfo, payload []byte) {
 			if parts[0] == m {
 				info.HTTPMethod = m
 				info.HTTPURI = parts[1]
+				info.HTTPHost = httpHost(payload)
 				return
 			}
 		}
@@ -256,4 +257,19 @@ func tlsVersionName(v int) string {
 		return "TLS 1.3"
 	}
 	return fmt.Sprintf("0x%04x", v)
+}
+
+// httpHost returns the Host header value of an HTTP request payload, or "".
+func httpHost(payload []byte) string {
+	lines := strings.Split(string(payload), "\n")
+	for _, l := range lines[1:] {
+		l = strings.TrimRight(l, "\r")
+		if l == "" {
+			break // end of headers
+		}
+		if name, value, ok := strings.Cut(l, ":"); ok && strings.EqualFold(strings.TrimSpace(name), "host") {
+			return strings.TrimSpace(value)
+		}
+	}
+	return ""
 }

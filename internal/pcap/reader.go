@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"os"
 	"strings"
 
@@ -48,6 +49,7 @@ func ReadPackets(filePath string) ([]models.PacketInfo, error) {
 		info.Size = ci.Length
 		packets = append(packets, info)
 	}
+	annotateHandshakes(packets)
 	return packets, nil
 }
 
@@ -55,6 +57,11 @@ func ReadPackets(filePath string) ([]models.PacketInfo, error) {
 // It reports false if the packet has no IPv4 or IPv6 layer.
 func packetInfo(pkt gopacket.Packet) (models.PacketInfo, bool) {
 	var info models.PacketInfo
+
+	if l := pkt.Layer(layers.LayerTypeARP); l != nil {
+		fillARP(&info, l.(*layers.ARP))
+		return info, true
+	}
 
 	switch {
 	case pkt.Layer(layers.LayerTypeIPv4) != nil:
@@ -75,6 +82,7 @@ func packetInfo(pkt gopacket.Packet) (models.PacketInfo, bool) {
 		info.PayloadSize = len(t.Payload)
 		info.TCPSeq = t.Seq
 		info.TCPFlags = tcpFlags(t)
+		info.TCPAck = t.Ack
 		fillHTTP(&info, t.Payload)
 		fillTLS(&info, t.Payload)
 	case pkt.Layer(layers.LayerTypeUDP) != nil:
@@ -82,7 +90,12 @@ func packetInfo(pkt gopacket.Packet) (models.PacketInfo, bool) {
 		info.Protocol = models.ProtocolUDP
 		info.SrcPort, info.DstPort = uint16(u.SrcPort), uint16(u.DstPort)
 		info.PayloadSize = len(u.Payload)
-	case pkt.Layer(layers.LayerTypeICMPv4) != nil, pkt.Layer(layers.LayerTypeICMPv6) != nil:
+	case pkt.Layer(layers.LayerTypeICMPv4) != nil:
+		ic := pkt.Layer(layers.LayerTypeICMPv4).(*layers.ICMPv4)
+		info.Protocol = models.ProtocolICMP
+		info.ICMPType, info.ICMPCode = ic.TypeCode.Type(), ic.TypeCode.Code()
+		info.ICMPMessage = icmpMessage(info.ICMPType, info.ICMPCode)
+	case pkt.Layer(layers.LayerTypeICMPv6) != nil:
 		info.Protocol = models.ProtocolICMP
 	}
 	if l := pkt.Layer(layers.LayerTypeDNS); l != nil {
@@ -144,4 +157,47 @@ func tcpFlags(t *layers.TCP) string {
 		}
 	}
 	return strings.Join(flags, ",")
+}
+
+// fillARP sets the ARP fields on info. SrcIP and DstIP carry the sender and
+// target protocol addresses so ARP packets fit the generic packet view.
+func fillARP(info *models.PacketInfo, a *layers.ARP) {
+	info.Protocol = models.ProtocolARP
+	info.ARPOperation = "request"
+	if a.Operation == layers.ARPReply {
+		info.ARPOperation = "reply"
+	}
+	info.ARPSenderIP = net.IP(a.SourceProtAddress).String()
+	info.ARPTargetIP = net.IP(a.DstProtAddress).String()
+	info.ARPSenderMAC = net.HardwareAddr(a.SourceHwAddress).String()
+	info.SrcIP, info.DstIP = info.ARPSenderIP, info.ARPTargetIP
+}
+
+var icmpTypeNames = map[uint8]string{
+	0: "Echo Reply", 3: "Destination Unreachable", 4: "Source Quench", 5: "Redirect",
+	8: "Echo Request", 9: "Router Advertisement", 10: "Router Solicitation",
+	11: "Time Exceeded", 12: "Parameter Problem", 13: "Timestamp Request", 14: "Timestamp Reply",
+}
+
+var icmpCodeNames = map[uint8]map[uint8]string{
+	3: {0: "Network Unreachable", 1: "Host Unreachable", 2: "Protocol Unreachable", 3: "Port Unreachable",
+		4: "Fragmentation Needed", 5: "Source Route Failed", 9: "Network Administratively Prohibited",
+		10: "Host Administratively Prohibited", 13: "Communication Administratively Prohibited"},
+	5:  {0: "Redirect for Network", 1: "Redirect for Host", 2: "Redirect for TOS and Network", 3: "Redirect for TOS and Host"},
+	11: {0: "TTL Exceeded in Transit", 1: "Fragment Reassembly Time Exceeded"},
+}
+
+// icmpMessage returns a human-readable description of an ICMPv4 type and code.
+func icmpMessage(typ, code uint8) string {
+	name, ok := icmpTypeNames[typ]
+	if !ok {
+		return fmt.Sprintf("Type %d Code %d", typ, code)
+	}
+	if code == 0 && icmpCodeNames[typ] == nil {
+		return name
+	}
+	if c, ok := icmpCodeNames[typ][code]; ok {
+		return name + ": " + c
+	}
+	return fmt.Sprintf("%s: Code %d", name, code)
 }
