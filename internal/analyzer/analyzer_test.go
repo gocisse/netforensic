@@ -10,32 +10,32 @@ import (
 	"github.com/gocisse/netforensic/internal/models"
 )
 
-const samplePCAP = "../pcap/testdata/sample.pcap"
-
-func TestAnalyzeFile(t *testing.T) {
+func TestAnalyze(t *testing.T) {
+	t0 := time.Unix(1700000000, 0)
+	packets := []models.PacketInfo{
+		{Timestamp: t0, SrcIP: "10.0.0.1", SrcPort: 12345, DstIP: "10.0.0.2", DstPort: 80, Protocol: models.ProtocolTCP, Size: 100, PayloadSize: 5, TCPSeq: 1000, TCPFlags: "PSH,ACK"},
+		{Timestamp: t0.Add(time.Second), SrcIP: "192.168.1.10", SrcPort: 54321, DstIP: "8.8.8.8", DstPort: 53, Protocol: models.ProtocolUDP, Size: 60, PayloadSize: 3},
+	}
 	tests := []struct {
 		name        string
+		packets     []models.PacketInfo
 		service     string
 		wantPackets int
 		wantFlows   int
 		wantTop     string
-		wantErr     bool
 	}{
-		{"all", "all", 2, 2, "", false},
-		{"dns", "dns", 1, 1, "192.168.1.10:54321-8.8.8.8:53", false},
-		{"http", "http", 1, 1, "10.0.0.1:12345-10.0.0.2:80", false},
-		{"tls matches nothing", "tls", 0, 0, "", false},
-		{"numeric port", "53", 1, 1, "192.168.1.10:54321-8.8.8.8:53", false},
-		{"unknown service", "ftp", 0, 0, "", true},
+		{"all", packets, "all", 2, 2, "10.0.0.1:12345-10.0.0.2:80"},
+		{"dns", packets, "dns", 1, 1, "192.168.1.10:54321-8.8.8.8:53"},
+		{"http", packets, "http", 1, 1, "10.0.0.1:12345-10.0.0.2:80"},
+		{"tls matches nothing", packets, "tls", 0, 0, ""},
+		{"numeric port", packets, "53", 1, 1, "192.168.1.10:54321-8.8.8.8:53"},
+		{"unknown service", packets, "ftp", 0, 0, ""},
+		{"nil packets", nil, "all", 0, 0, ""},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			res, err := AnalyzeFile(samplePCAP, tt.service)
-			if tt.wantErr {
-				assert.Error(t, err)
-				return
-			}
-			require.NoError(t, err)
+			res := Analyze(tt.packets, tt.service)
+			require.NotNil(t, res)
 			assert.Equal(t, tt.wantPackets, res.TotalPackets)
 			assert.Equal(t, tt.wantFlows, res.TotalFlows)
 			assert.Len(t, res.TopTalkers, tt.wantFlows)
@@ -44,11 +44,18 @@ func TestAnalyzeFile(t *testing.T) {
 			}
 		})
 	}
+
+	assert.Equal(t, "1s", Analyze(packets, "all").Duration)
 }
 
-func TestAnalyzeFileMissing(t *testing.T) {
-	_, err := AnalyzeFile("nope.pcap", "all")
-	assert.Error(t, err)
+func TestAnalyzeRetransmitIssue(t *testing.T) {
+	t0 := time.Unix(1700000000, 0)
+	data := models.PacketInfo{Timestamp: t0, SrcIP: "10.0.0.1", SrcPort: 1000, DstIP: "10.0.0.2", DstPort: 80, Protocol: models.ProtocolTCP, Size: 100, PayloadSize: 10, TCPSeq: 500, TCPFlags: "PSH,ACK"}
+	res := Analyze([]models.PacketInfo{data, data}, "all")
+	require.Len(t, res.Issues, 1)
+	assert.Equal(t, "PacketLoss", res.Issues[0].Category)
+	assert.Equal(t, models.SeverityWarning, res.Issues[0].Severity)
+	assert.Equal(t, 1, res.TopTalkers[0].Retransmits)
 }
 
 func TestAggregateFlows(t *testing.T) {
@@ -80,6 +87,35 @@ func TestAggregateFlows(t *testing.T) {
 	assert.Equal(t, tcp.ID, rev[0].ID)
 	assert.Equal(t, 0, rev[0].BytesSent)
 	assert.Equal(t, 70, rev[0].BytesRecv)
+}
+
+func TestAggregateFlowsRetransmits(t *testing.T) {
+	pkt := func(src string, sp uint16, dst string, dp uint16, seq uint32, payload int, flags string) models.PacketInfo {
+		return models.PacketInfo{SrcIP: src, SrcPort: sp, DstIP: dst, DstPort: dp, Protocol: models.ProtocolTCP, Size: 60, PayloadSize: payload, TCPSeq: seq, TCPFlags: flags}
+	}
+	tests := []struct {
+		name    string
+		packets []models.PacketInfo
+		want    int
+	}{
+		{"same seq same direction", []models.PacketInfo{
+			pkt("a", 1, "b", 2, 100, 10, "ACK"), pkt("a", 1, "b", 2, 100, 10, "ACK")}, 1},
+		{"same seq opposite directions", []models.PacketInfo{
+			pkt("a", 1, "b", 2, 100, 10, "ACK"), pkt("b", 2, "a", 1, 100, 10, "ACK")}, 0},
+		{"repeated bare acks", []models.PacketInfo{
+			pkt("a", 1, "b", 2, 100, 0, "ACK"), pkt("a", 1, "b", 2, 100, 0, "ACK")}, 0},
+		{"retransmitted syn", []models.PacketInfo{
+			pkt("a", 1, "b", 2, 100, 0, "SYN"), pkt("a", 1, "b", 2, 100, 0, "SYN")}, 1},
+		{"distinct seqs", []models.PacketInfo{
+			pkt("a", 1, "b", 2, 100, 10, "ACK"), pkt("a", 1, "b", 2, 110, 10, "ACK")}, 0},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			flows := aggregateFlows(tt.packets)
+			require.Len(t, flows, 1)
+			assert.Equal(t, tt.want, flows[0].Retransmits)
+		})
+	}
 }
 
 func TestDetectIssues(t *testing.T) {

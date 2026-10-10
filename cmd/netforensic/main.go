@@ -11,6 +11,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/gocisse/netforensic/internal/analyzer"
+	"github.com/gocisse/netforensic/internal/pcap"
 )
 
 var validServices = []string{"all", "dns", "http", "tls", "https", "<port>"}
@@ -40,10 +41,12 @@ func newRootCmd() *cobra.Command {
 			if err := validateFile(args[0]); err != nil {
 				return err
 			}
-			res, err := analyzer.AnalyzeFile(args[0], service)
+			packets, err := pcap.ReadPackets(args[0])
 			if err != nil {
-				return fmt.Errorf("analyze file: %w", err)
+				return fmt.Errorf("read %s: %w", args[0], err)
 			}
+			res := analyzer.Analyze(packets, service)
+			res.FileName = args[0]
 			fmt.Fprintf(cmd.OutOrStdout(), "Analyzed %d packets in %d flows, found %d issues in %s\n",
 				res.TotalPackets, res.TotalFlows, len(res.Issues), res.Duration)
 			for _, is := range res.Issues {

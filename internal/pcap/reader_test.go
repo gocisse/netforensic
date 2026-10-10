@@ -43,7 +43,7 @@ func createSamplePCAP(t *testing.T, path string) {
 	require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o755))
 
 	tcpData := serialize(t, layers.IPProtocolTCP, net.IP{10, 0, 0, 1}, net.IP{10, 0, 0, 2},
-		&layers.TCP{SrcPort: 12345, DstPort: 80, SYN: true, Window: 1024}, []byte("hello"))
+		&layers.TCP{SrcPort: 12345, DstPort: 80, Seq: 1000, SYN: true, PSH: true, Window: 1024}, []byte("hello"))
 	udpData := serialize(t, layers.IPProtocolUDP, net.IP{192, 168, 1, 10}, net.IP{8, 8, 8, 8},
 		&layers.UDP{SrcPort: 54321, DstPort: 53}, []byte("dns"))
 
@@ -77,9 +77,11 @@ func TestReadPackets(t *testing.T) {
 		dstPort     uint16
 		proto       models.Protocol
 		payloadSize int
+		tcpSeq      uint32
+		tcpFlags    string
 	}{
-		{"tcp", 0, "10.0.0.1", "10.0.0.2", 12345, 80, models.ProtocolTCP, 5},
-		{"udp", 1, "192.168.1.10", "8.8.8.8", 54321, 53, models.ProtocolUDP, 3},
+		{"tcp", 0, "10.0.0.1", "10.0.0.2", 12345, 80, models.ProtocolTCP, 5, 1000, "SYN,PSH"},
+		{"udp", 1, "192.168.1.10", "8.8.8.8", 54321, 53, models.ProtocolUDP, 3, 0, ""},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -90,6 +92,8 @@ func TestReadPackets(t *testing.T) {
 			assert.Equal(t, tt.dstPort, p.DstPort)
 			assert.Equal(t, tt.proto, p.Protocol)
 			assert.Equal(t, tt.payloadSize, p.PayloadSize)
+			assert.Equal(t, tt.tcpSeq, p.TCPSeq)
+			assert.Equal(t, tt.tcpFlags, p.TCPFlags)
 			assert.Positive(t, p.Size)
 		})
 	}

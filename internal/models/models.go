@@ -37,6 +37,8 @@ type PacketInfo struct {
 	Protocol    Protocol  `json:"protocol"`
 	Size        int       `json:"size"`
 	PayloadSize int       `json:"payload_size"`
+	TCPSeq      uint32    `json:"tcp_seq,omitempty"`   // TCP sequence number; 0 for non-TCP
+	TCPFlags    string    `json:"tcp_flags,omitempty"` // e.g. "SYN", "PSH,ACK"; empty for non-TCP
 }
 
 // Flow represents an aggregated view of a network connection (e.g., a TCP stream).

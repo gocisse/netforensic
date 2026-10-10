@@ -1,5 +1,5 @@
-// Package analyzer contains the analysis logic. Everything except AnalyzeFile,
-// which loads the capture, is pure and operates on in-memory models.
+// Package analyzer contains the pure analysis logic. It performs no file,
+// CLI or network I/O and operates only on in-memory models.
 package analyzer
 
 import (
@@ -10,61 +10,52 @@ import (
 	"time"
 
 	"github.com/gocisse/netforensic/internal/models"
-	"github.com/gocisse/netforensic/internal/pcap"
 )
 
 const topTalkerCount = 5
 
-// AnalyzeFile reads the pcap file at filePath, restricts it to the given
-// service filter ("all", "dns", "http", "tls", "https" or a port number),
-// and returns the aggregated flows, top talkers and detected issues.
-func AnalyzeFile(filePath string, service string) (*models.AnalysisResult, error) {
+// Analyze restricts packets to the given service filter ("all", "dns",
+// "http", "tls", "https" or a port number) and returns the aggregated flows,
+// top talkers and detected issues. An unrecognized service matches no
+// packets. Analyze is pure: it performs no I/O.
+func Analyze(packets []models.PacketInfo, service string) *models.AnalysisResult {
 	start := time.Now()
 
-	port, matchAll, err := parseService(service)
-	if err != nil {
-		return nil, err
-	}
-
-	packets, err := pcap.ReadPackets(filePath)
-	if err != nil {
-		return nil, fmt.Errorf("read packets: %w", err)
-	}
-	if !matchAll {
+	if port, matchAll, ok := parseService(service); !ok {
+		packets = nil
+	} else if !matchAll {
 		packets = filterByPort(packets, port)
 	}
 
 	flows := aggregateFlows(packets)
-	issues := detectIssues(flows)
-
 	return &models.AnalysisResult{
-		FileName:     filePath,
 		TotalPackets: len(packets),
 		TotalFlows:   len(flows),
 		AnalysisTime: start,
 		Duration:     captureDuration(packets).String(),
-		Issues:       issues,
+		Issues:       detectIssues(flows),
 		TopTalkers:   topTalkers(flows, topTalkerCount),
-	}, nil
+	}
 }
 
-// parseService maps a service filter to a port. matchAll is true for "all".
-func parseService(service string) (port uint16, matchAll bool, err error) {
+// parseService maps a service filter to a port. matchAll is true for "all";
+// ok is false if the service is not recognized.
+func parseService(service string) (port uint16, matchAll bool, ok bool) {
 	switch strings.ToLower(service) {
 	case "all", "":
-		return 0, true, nil
+		return 0, true, true
 	case "dns":
-		return 53, false, nil
+		return 53, false, true
 	case "http":
-		return 80, false, nil
+		return 80, false, true
 	case "tls", "https":
-		return 443, false, nil
+		return 443, false, true
 	}
-	n, convErr := strconv.ParseUint(service, 10, 16)
-	if convErr != nil {
-		return 0, false, fmt.Errorf("unknown service %q", service)
+	n, err := strconv.ParseUint(service, 10, 16)
+	if err != nil {
+		return 0, false, false
 	}
-	return uint16(n), false, nil
+	return uint16(n), false, true
 }
 
 // filterByPort keeps packets whose source or destination port equals port.
@@ -119,10 +110,18 @@ type flowKey struct {
 // endpoint. BytesSent counts bytes from the canonical source and BytesRecv
 // bytes from the canonical destination.
 //
-// Retransmits is not populated yet: PacketInfo carries no TCP sequence
-// numbers to detect them from.
+// Retransmits counts TCP packets that reuse a sequence number already seen
+// in the same direction of the same flow. To avoid false positives, only
+// packets that consume sequence space (payload, SYN or FIN) are considered;
+// bare ACKs legitimately repeat sequence numbers.
 func aggregateFlows(packets []models.PacketInfo) []models.Flow {
+	type seqKey struct {
+		flow    flowKey
+		forward bool
+		seq     uint32
+	}
 	byKey := make(map[flowKey]*models.Flow)
+	seen := make(map[seqKey]struct{})
 
 	for _, p := range packets {
 		src := endpoint{p.SrcIP, p.SrcPort}
@@ -155,6 +154,13 @@ func aggregateFlows(packets []models.PacketInfo) []models.Flow {
 		} else {
 			f.BytesRecv += p.Size
 		}
+		if p.Protocol == models.ProtocolTCP && consumesSeq(p) {
+			sk := seqKey{key, forward, p.TCPSeq}
+			if _, dup := seen[sk]; dup {
+				f.Retransmits++
+			}
+			seen[sk] = struct{}{}
+		}
 		if p.Timestamp.Before(f.StartTime) {
 			f.StartTime = p.Timestamp
 		}
@@ -174,6 +180,20 @@ func aggregateFlows(packets []models.PacketInfo) []models.Flow {
 		return flows[i].ID < flows[j].ID
 	})
 	return flows
+}
+
+// consumesSeq reports whether a TCP packet occupies sequence space, i.e. it
+// carries payload or a SYN/FIN flag.
+func consumesSeq(p models.PacketInfo) bool {
+	if p.PayloadSize > 0 {
+		return true
+	}
+	for _, f := range strings.Split(p.TCPFlags, ",") {
+		if f == "SYN" || f == "FIN" {
+			return true
+		}
+	}
+	return false
 }
 
 // detectIssues inspects flows and returns any anomalies found.

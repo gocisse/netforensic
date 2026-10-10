@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 
 	"github.com/google/gopacket"
 	"github.com/google/gopacket/layers"
@@ -72,6 +73,8 @@ func packetInfo(pkt gopacket.Packet) (models.PacketInfo, bool) {
 		info.Protocol = models.ProtocolTCP
 		info.SrcPort, info.DstPort = uint16(t.SrcPort), uint16(t.DstPort)
 		info.PayloadSize = len(t.Payload)
+		info.TCPSeq = t.Seq
+		info.TCPFlags = tcpFlags(t)
 	case pkt.Layer(layers.LayerTypeUDP) != nil:
 		u := pkt.Layer(layers.LayerTypeUDP).(*layers.UDP)
 		info.Protocol = models.ProtocolUDP
@@ -81,4 +84,21 @@ func packetInfo(pkt gopacket.Packet) (models.PacketInfo, bool) {
 		info.Protocol = models.ProtocolICMP
 	}
 	return info, true
+}
+
+// tcpFlags renders the set TCP flags as a comma-separated string such as "PSH,ACK".
+func tcpFlags(t *layers.TCP) string {
+	var flags []string
+	for _, f := range []struct {
+		set  bool
+		name string
+	}{
+		{t.FIN, "FIN"}, {t.SYN, "SYN"}, {t.RST, "RST"}, {t.PSH, "PSH"},
+		{t.ACK, "ACK"}, {t.URG, "URG"}, {t.ECE, "ECE"}, {t.CWR, "CWR"},
+	} {
+		if f.set {
+			flags = append(flags, f.name)
+		}
+	}
+	return strings.Join(flags, ",")
 }
