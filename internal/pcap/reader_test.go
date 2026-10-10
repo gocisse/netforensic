@@ -90,9 +90,10 @@ func TestReadPackets(t *testing.T) {
 	path := filepath.Join("testdata", "sample.pcap")
 
 	query := dnsPayload(t, dnsQuery(0x1234))
+	httpReq := []byte("GET /index.html HTTP/1.1\r\nHost: example.com\r\n\r\n")
 	writePCAP(t, path, [][]byte{
 		serialize(t, layers.IPProtocolTCP, net.IP{10, 0, 0, 1}, net.IP{10, 0, 0, 2},
-			&layers.TCP{SrcPort: 12345, DstPort: 80, Seq: 1000, SYN: true, PSH: true, Window: 1024}, []byte("hello")),
+			&layers.TCP{SrcPort: 12345, DstPort: 80, Seq: 1000, PSH: true, ACK: true, Window: 1024}, httpReq),
 		serialize(t, layers.IPProtocolUDP, clientIP, serverIP,
 			&layers.UDP{SrcPort: 54321, DstPort: 53}, query),
 	})
@@ -114,7 +115,7 @@ func TestReadPackets(t *testing.T) {
 		tcpFlags    string
 		dnsName     string
 	}{
-		{"tcp", 0, "10.0.0.1", "10.0.0.2", 12345, 80, models.ProtocolTCP, 5, 1000, "SYN,PSH", ""},
+		{"tcp", 0, "10.0.0.1", "10.0.0.2", 12345, 80, models.ProtocolTCP, len(httpReq), 1000, "PSH,ACK", ""},
 		{"udp dns query", 1, "192.168.1.10", "8.8.8.8", 54321, 53, models.ProtocolUDP, len(query), 0, "", "example.com"},
 	}
 	for _, tt := range tests {
@@ -132,6 +133,44 @@ func TestReadPackets(t *testing.T) {
 			assert.Positive(t, p.Size)
 		})
 	}
+}
+
+func TestSampleHTTPRequest(t *testing.T) {
+	got, err := ReadPackets(filepath.Join("testdata", "sample.pcap"))
+	require.NoError(t, err)
+	require.NotEmpty(t, got)
+	assert.Equal(t, "GET", got[0].HTTPMethod)
+	assert.Equal(t, "/index.html", got[0].HTTPURI)
+}
+
+func TestReadPacketsHTTPAndTLS(t *testing.T) {
+	tcp := func(srcPort, dstPort uint16, payload []byte) []byte {
+		return serialize(t, layers.IPProtocolTCP, clientIP, serverIP,
+			&layers.TCP{SrcPort: layers.TCPPort(srcPort), DstPort: layers.TCPPort(dstPort), ACK: true, PSH: true}, payload)
+	}
+	path := filepath.Join(t.TempDir(), "app.pcap")
+	writePCAP(t, path, [][]byte{
+		tcp(50000, 80, []byte("GET /a HTTP/1.1\r\n\r\n")),
+		tcp(80, 50000, []byte("HTTP/1.1 404 Not Found\r\n\r\n")),
+		tcp(50001, 443, record(22, 0x0301, hello(false, 0x0303))),
+		tcp(443, 50001, record(21, 0x0303, []byte{2, 40})),
+		tcp(50002, 9000, []byte("opaque")),
+	})
+
+	got, err := ReadPackets(path)
+	require.NoError(t, err)
+	require.Len(t, got, 5)
+
+	assert.Equal(t, "GET", got[0].HTTPMethod)
+	assert.Equal(t, "/a", got[0].HTTPURI)
+	assert.Equal(t, 404, got[1].HTTPStatusCode)
+	assert.Equal(t, "ClientHello", got[2].TLSHandshakeType)
+	assert.Equal(t, "TLS 1.2", got[2].TLSVersion)
+	assert.Equal(t, "Alert", got[3].TLSHandshakeType)
+	assert.Equal(t, "fatal", got[3].TLSAlertLevel)
+	assert.Equal(t, "handshake_failure", got[3].TLSAlertDescription)
+	assert.Empty(t, got[4].HTTPMethod)
+	assert.Empty(t, got[4].TLSHandshakeType)
 }
 
 func TestReadPacketsDNS(t *testing.T) {

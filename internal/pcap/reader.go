@@ -75,6 +75,8 @@ func packetInfo(pkt gopacket.Packet) (models.PacketInfo, bool) {
 		info.PayloadSize = len(t.Payload)
 		info.TCPSeq = t.Seq
 		info.TCPFlags = tcpFlags(t)
+		fillHTTP(&info, t.Payload)
+		fillTLS(&info, t.Payload)
 	case pkt.Layer(layers.LayerTypeUDP) != nil:
 		u := pkt.Layer(layers.LayerTypeUDP).(*layers.UDP)
 		info.Protocol = models.ProtocolUDP

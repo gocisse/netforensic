@@ -47,6 +47,20 @@ type PacketInfo struct {
 	DNSResponseType string `json:"dns_response_type,omitempty"` // first answer's type, else the question type (e.g. "A")
 	DNSResponseCode string `json:"dns_response_code,omitempty"` // e.g. "NOERROR", "NXDOMAIN"; empty for queries
 	DNSIsQuery      bool   `json:"dns_is_query,omitempty"`
+
+	// HTTP fields are set on TCP packets whose payload starts with an HTTP/1.x
+	// request line (method, URI) or status line (status code).
+	HTTPMethod     string `json:"http_method,omitempty"`
+	HTTPURI        string `json:"http_uri,omitempty"`
+	HTTPStatusCode int    `json:"http_status_code,omitempty"`
+
+	// TLS fields are set on TCP packets whose payload starts with a TLS record.
+	// TLSVersion is the highest version offered by a ClientHello or the
+	// version selected by a ServerHello (e.g. "TLS 1.2").
+	TLSHandshakeType    string `json:"tls_handshake_type,omitempty"` // e.g. "ClientHello", "ServerHello", "Alert"
+	TLSVersion          string `json:"tls_version,omitempty"`
+	TLSAlertLevel       string `json:"tls_alert_level,omitempty"`       // "warning" or "fatal"
+	TLSAlertDescription string `json:"tls_alert_description,omitempty"` // e.g. "handshake_failure"
 }
 
 // Flow represents an aggregated view of a network connection (e.g., a TCP stream).
