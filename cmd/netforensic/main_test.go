@@ -43,7 +43,7 @@ func TestValidateService(t *testing.T) {
 		service string
 		wantErr bool
 	}{
-		{"all", false}, {"dns", false}, {"http", false}, {"tls", false}, {"ftp", true}, {"", true},
+		{"all", false}, {"dns", false}, {"http", false}, {"tls", false}, {"https", false}, {"443", false}, {"70000", true}, {"ftp", true}, {"", true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.service, func(t *testing.T) {

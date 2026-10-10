@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -12,7 +13,7 @@ import (
 	"github.com/gocisse/netforensic/internal/analyzer"
 )
 
-var validServices = []string{"all", "dns", "http", "tls"}
+var validServices = []string{"all", "dns", "http", "tls", "https", "<port>"}
 
 func main() {
 	if err := newRootCmd().Execute(); err != nil {
@@ -71,6 +72,9 @@ func validateService(service string) error {
 		if s == service {
 			return nil
 		}
+	}
+	if _, err := strconv.ParseUint(service, 10, 16); err == nil {
+		return nil
 	}
 	return fmt.Errorf("invalid service %q (valid: %s)", service, strings.Join(validServices, ", "))
 }
