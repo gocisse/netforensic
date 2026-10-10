@@ -39,6 +39,14 @@ type PacketInfo struct {
 	PayloadSize int       `json:"payload_size"`
 	TCPSeq      uint32    `json:"tcp_seq,omitempty"`   // TCP sequence number; 0 for non-TCP
 	TCPFlags    string    `json:"tcp_flags,omitempty"` // e.g. "SYN", "PSH,ACK"; empty for non-TCP
+
+	// DNS fields are set only on packets that carry a decoded DNS message
+	// with at least one question; DNSQueryName != "" identifies such packets.
+	DNSID           uint16 `json:"dns_id,omitempty"`            // transaction ID, used to match queries to responses
+	DNSQueryName    string `json:"dns_query_name,omitempty"`    // domain being queried
+	DNSResponseType string `json:"dns_response_type,omitempty"` // first answer's type, else the question type (e.g. "A")
+	DNSResponseCode string `json:"dns_response_code,omitempty"` // e.g. "NOERROR", "NXDOMAIN"; empty for queries
+	DNSIsQuery      bool   `json:"dns_is_query,omitempty"`
 }
 
 // Flow represents an aggregated view of a network connection (e.g., a TCP stream).

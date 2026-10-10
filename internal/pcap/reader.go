@@ -83,7 +83,48 @@ func packetInfo(pkt gopacket.Packet) (models.PacketInfo, bool) {
 	case pkt.Layer(layers.LayerTypeICMPv4) != nil, pkt.Layer(layers.LayerTypeICMPv6) != nil:
 		info.Protocol = models.ProtocolICMP
 	}
+	if l := pkt.Layer(layers.LayerTypeDNS); l != nil {
+		fillDNS(&info, l.(*layers.DNS))
+	}
 	return info, true
+}
+
+// fillDNS copies DNS message details into info. Messages without a question
+// are ignored.
+func fillDNS(info *models.PacketInfo, d *layers.DNS) {
+	if len(d.Questions) == 0 {
+		return
+	}
+	q := d.Questions[0]
+	info.DNSID = d.ID
+	info.DNSQueryName = string(q.Name)
+	info.DNSIsQuery = !d.QR
+	info.DNSResponseType = q.Type.String()
+	if d.QR {
+		info.DNSResponseCode = dnsResponseCode(d.ResponseCode)
+		if len(d.Answers) > 0 {
+			info.DNSResponseType = d.Answers[0].Type.String()
+		}
+	}
+}
+
+// dnsResponseCode returns the conventional upper-case name of an RCODE.
+func dnsResponseCode(c layers.DNSResponseCode) string {
+	switch c {
+	case layers.DNSResponseCodeNoErr:
+		return "NOERROR"
+	case layers.DNSResponseCodeFormErr:
+		return "FORMERR"
+	case layers.DNSResponseCodeServFail:
+		return "SERVFAIL"
+	case layers.DNSResponseCodeNXDomain:
+		return "NXDOMAIN"
+	case layers.DNSResponseCodeNotImp:
+		return "NOTIMP"
+	case layers.DNSResponseCodeRefused:
+		return "REFUSED"
+	}
+	return fmt.Sprintf("RCODE%d", uint8(c))
 }
 
 // tcpFlags renders the set TCP flags as a comma-separated string such as "PSH,ACK".

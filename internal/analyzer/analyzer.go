@@ -28,12 +28,13 @@ func Analyze(packets []models.PacketInfo, service string) *models.AnalysisResult
 	}
 
 	flows := aggregateFlows(packets)
+	issues := append(detectIssues(flows), analyzeDNS(packets)...)
 	return &models.AnalysisResult{
 		TotalPackets: len(packets),
 		TotalFlows:   len(flows),
 		AnalysisTime: start,
 		Duration:     captureDuration(packets).String(),
-		Issues:       detectIssues(flows),
+		Issues:       issues,
 		TopTalkers:   topTalkers(flows, topTalkerCount),
 	}
 }
