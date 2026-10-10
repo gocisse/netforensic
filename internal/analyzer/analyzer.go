@@ -19,6 +19,13 @@ const topTalkerCount = 5
 // top talkers and detected issues. An unrecognized service matches no
 // packets. Analyze is pure: it performs no I/O.
 func Analyze(packets []models.PacketInfo, service string) *models.AnalysisResult {
+	return AnalyzeWithIssues(packets, service)
+}
+
+// AnalyzeWithIssues is Analyze with additional caller-supplied issues, such
+// as problems with the capture itself (see TruncatedCaptureIssue). They are
+// included in the result's issues, health score and timeline.
+func AnalyzeWithIssues(packets []models.PacketInfo, service string, extra ...models.Issue) *models.AnalysisResult {
 	start := time.Now()
 
 	if port, matchAll, ok := parseService(service); !ok {
@@ -36,6 +43,7 @@ func Analyze(packets []models.PacketInfo, service string) *models.AnalysisResult
 	issues = append(issues, analyzeICMP(packets)...)
 	issues = append(issues, analyzeARP(packets)...)
 	issues = append(issues, perfIssues...)
+	issues = append(issues, extra...)
 	if issues == nil {
 		issues = []models.Issue{} // serialize as [] rather than null
 	}

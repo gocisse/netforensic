@@ -2,6 +2,8 @@ package main
 
 import (
 	"bytes"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -220,4 +222,49 @@ func TestRootCmdFollow(t *testing.T) {
 	_, err = run("--follow", "10.0.0.1:12345-10.0.0.2:80", "--src-ip", "8.8.8.8")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "not found")
+}
+
+func TestRootCmdTruncatedCapture(t *testing.T) {
+	data, err := os.ReadFile("../../testdata/Lab-5-AnotherSlowApp.pcapng")
+	require.NoError(t, err)
+	path := filepath.Join(t.TempDir(), "cut.pcapng")
+	require.NoError(t, os.WriteFile(path, data[:5000], 0o644))
+
+	run := func(args ...string) (string, string, error) {
+		var out, errOut bytes.Buffer
+		cmd := newRootCmd()
+		cmd.SetOut(&out)
+		cmd.SetErr(&errOut)
+		cmd.SetArgs(append(args, path))
+		err := cmd.Execute()
+		return out.String(), errOut.String(), err
+	}
+
+	t.Run("text", func(t *testing.T) {
+		out, errOut, err := run()
+		require.NoError(t, err)
+		assert.Contains(t, errOut, "is truncated; analyzing the 38 packets read before the cut")
+		assert.Contains(t, out, "Truncated Capture")
+		assert.Contains(t, out, "Analyzed 38 packets before truncation")
+		assert.Contains(t, out, "Analyzed 38 packets in 1 flows")
+	})
+	t.Run("json", func(t *testing.T) {
+		out, errOut, err := run("-o", "json")
+		require.NoError(t, err)
+		assert.Contains(t, errOut, "truncated")
+		assert.Contains(t, out, `"title": "Truncated Capture"`)
+		assert.Contains(t, out, `"category": "Capture"`)
+		assert.Contains(t, out, `"total_packets": 38`)
+	})
+	t.Run("filters do not change the packet count in the warning", func(t *testing.T) {
+		out, _, err := run("--dst-port", "80", "-o", "json")
+		require.NoError(t, err)
+		assert.Contains(t, out, "Analyzed 38 packets before truncation")
+	})
+	t.Run("follow still works on the partial capture", func(t *testing.T) {
+		out, errOut, err := run("--follow", "10.0.0.1:80-192.168.1.1:61300")
+		require.NoError(t, err)
+		assert.Contains(t, errOut, "truncated")
+		assert.Contains(t, out, "Following flow")
+	})
 }

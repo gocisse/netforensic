@@ -346,6 +346,10 @@ var categoryRecommendations = map[string][]string{
 		"Trace the path to the destination to find the router generating the ICMP errors.",
 		"Check routing tables and ACLs on that router, and look for routing loops if TTL expiry is reported.",
 	},
+	"Capture": {
+		"Re-capture the traffic, or retrieve the complete file; this analysis only covers the packets before the cut.",
+		"Check disk space, ring-buffer settings and whether the capture process was stopped or crashed.",
+	},
 	"ARP": {
 		"Find the devices owning the conflicting MAC addresses with the switch's MAC address table and remove the duplicate address.",
 		"Check for misconfigured static IPs, DHCP conflicts or hosts flooding ARP requests, and enable port security or dynamic ARP inspection.",

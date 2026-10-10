@@ -18,8 +18,30 @@ import (
 	"github.com/gocisse/netforensic/internal/models"
 )
 
-// ReadPackets opens the pcap file at filePath and returns a simplified view
-// of every packet it contains. Packets without an IP layer are skipped.
+// TruncatedError reports that a capture file ended in the middle of a
+// record. ReadPackets returns it together with the packets that were read
+// successfully before the cut, so callers can analyze the partial capture:
+//
+//	packets, err := ReadPackets(path)
+//	var trunc *TruncatedError
+//	if errors.As(err, &trunc) { /* use packets, warn the user */ }
+type TruncatedError struct {
+	Packets int   // packets read before the file ended
+	Err     error // underlying read error
+}
+
+// Error implements error.
+func (e *TruncatedError) Error() string {
+	return fmt.Sprintf("capture file ended unexpectedly after %d packets: %v", e.Packets, e.Err)
+}
+
+// Unwrap returns the underlying read error.
+func (e *TruncatedError) Unwrap() error { return e.Err }
+
+// ReadPackets opens the pcap or pcapng file at filePath and returns a
+// simplified view of every packet it contains. Packets without an IP or ARP
+// layer are skipped. If the file is cut off mid-record, the packets read so
+// far are returned together with a *TruncatedError.
 func ReadPackets(filePath string) ([]models.PacketInfo, error) {
 	f, err := os.Open(filePath)
 	if err != nil {
@@ -35,8 +57,14 @@ func ReadPackets(filePath string) ([]models.PacketInfo, error) {
 	var packets []models.PacketInfo
 	for {
 		data, ci, err := src.ReadPacketData()
-		if errors.Is(err, io.EOF) {
+		if errors.Is(err, io.EOF) && !src.cutShort() {
 			break
+		}
+		if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
+			// The file was cut off mid-record, as happens with ring buffers
+			// and crashed captures. Keep what was read.
+			annotateHandshakes(packets)
+			return packets, &TruncatedError{Packets: len(packets), Err: err}
 		}
 		if err != nil {
 			return nil, fmt.Errorf("read packet: %w", err)
@@ -255,14 +283,28 @@ func txtStrings(txts [][]byte) []string {
 type source interface {
 	ReadPacketData() ([]byte, gopacket.CaptureInfo, error)
 	linkType(ci gopacket.CaptureInfo) layers.LinkType
+	// cutShort reports, after an io.EOF, whether the file actually ended in
+	// the middle of a record.
+	cutShort() bool
 }
 
 type pcapSource struct{ *pcapgo.Reader }
 
+// cutShort is always false: pcapgo reports a record cut short as
+// io.ErrUnexpectedEOF, which ReadPackets handles directly.
+func (s pcapSource) cutShort() bool { return false }
+
 func (s pcapSource) linkType(gopacket.CaptureInfo) layers.LinkType { return s.LinkType() }
 
 // ngSource reads pcapng, whose interfaces may each have their own link type.
-type ngSource struct{ *pcapgo.NgReader }
+type ngSource struct {
+	*pcapgo.NgReader
+	track *blockTracker
+}
+
+// cutShort reports whether the file ends inside a block. The pcapng reader
+// returns a plain io.EOF there, so the framing is tracked separately.
+func (s ngSource) cutShort() bool { return s.track.midBlock() }
 
 func (s ngSource) linkType(ci gopacket.CaptureInfo) layers.LinkType {
 	if iface, err := s.Interface(ci.InterfaceIndex); err == nil {
@@ -282,11 +324,12 @@ func newSource(r io.Reader) (source, error) {
 		return nil, fmt.Errorf("read capture header: %w", err)
 	}
 	if bytes.Equal(magic, pcapngMagic) {
-		ng, err := pcapgo.NewNgReader(br, pcapgo.NgReaderOptions{WantMixedLinkType: true})
+		track := &blockTracker{r: br}
+		ng, err := pcapgo.NewNgReader(track, pcapgo.NgReaderOptions{WantMixedLinkType: true})
 		if err != nil {
 			return nil, fmt.Errorf("read pcapng header: %w", err)
 		}
-		return ngSource{ng}, nil
+		return ngSource{ng, track}, nil
 	}
 	pr, err := pcapgo.NewReader(br)
 	if err != nil {

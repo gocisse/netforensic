@@ -1,6 +1,9 @@
 package pcap
 
 import (
+	"errors"
+	"fmt"
+	"io"
 	"net"
 	"os"
 	"path/filepath"
@@ -240,4 +243,91 @@ func TestReadPacketsErrors(t *testing.T) {
 			assert.Error(t, err)
 		})
 	}
+}
+
+func TestReadPacketsTruncatedFile(t *testing.T) {
+	// Six DNS packets, so there are several record boundaries to cut at.
+	udp := func(src, dst net.IP, sp, dp uint16, d *layers.DNS) []byte {
+		return serialize(t, layers.IPProtocolUDP, src, dst, &layers.UDP{SrcPort: layers.UDPPort(sp), DstPort: layers.UDPPort(dp)}, dnsPayload(t, d))
+	}
+	var frames [][]byte
+	for id := uint16(1); id <= 6; id++ {
+		frames = append(frames, udp(clientIP, serverIP, 54321, 53, dnsQuery(id)))
+	}
+	full := filepath.Join(t.TempDir(), "full.pcap")
+	writePCAP(t, full, frames)
+	data, err := os.ReadFile(full)
+	require.NoError(t, err)
+
+	// recordEnd[i] is the file offset just after packet i.
+	const fileHeader, recordHeader = 24, 16
+	offset := fileHeader
+	var recordEnd []int
+	for _, f := range frames {
+		offset += recordHeader + len(f)
+		recordEnd = append(recordEnd, offset)
+	}
+	require.Equal(t, len(data), recordEnd[len(recordEnd)-1])
+
+	tests := []struct {
+		name         string
+		cut          int
+		wantPackets  int
+		wantTruncErr bool
+		wantErr      bool
+	}{
+		{"complete file", len(data), 6, false, false},
+		{"cut exactly between records is a clean end", recordEnd[2], 3, false, false},
+		{"cut in the middle of a packet's data", recordEnd[2] + recordHeader + 10, 3, true, false},
+		{"cut one byte short of the last packet", len(data) - 1, 5, true, false},
+		{"cut in the middle of a record header", recordEnd[3] + 5, 4, true, false},
+		{"cut in the first packet", fileHeader + recordHeader + 3, 0, true, false},
+		{"only the file header", fileHeader, 0, false, false},
+		{"cut inside the file header", 10, 0, false, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "cut.pcap")
+			require.NoError(t, os.WriteFile(path, data[:tt.cut], 0o644))
+
+			got, err := ReadPackets(path)
+			var trunc *TruncatedError
+			switch {
+			case tt.wantErr:
+				require.Error(t, err)
+				assert.False(t, errors.As(err, &trunc))
+				assert.Nil(t, got)
+				return
+			case tt.wantTruncErr:
+				require.ErrorAs(t, err, &trunc)
+				assert.Equal(t, tt.wantPackets, trunc.Packets)
+				assert.ErrorIs(t, err, io.ErrUnexpectedEOF)
+				assert.Contains(t, err.Error(), fmt.Sprintf("after %d packets", tt.wantPackets))
+			default:
+				require.NoError(t, err)
+			}
+			require.Len(t, got, tt.wantPackets)
+			for i, p := range got { // the surviving packets are intact
+				assert.Equal(t, "example.com", p.DNSQueryName)
+				assert.Equal(t, uint16(i+1), p.DNSID)
+			}
+		})
+	}
+}
+
+func TestReadPacketsTruncatedPcapng(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("..", "..", "testdata", "Lab-5-AnotherSlowApp.pcapng"))
+	require.NoError(t, err)
+
+	path := filepath.Join(t.TempDir(), "cut.pcapng")
+	require.NoError(t, os.WriteFile(path, data[:5000], 0o644))
+
+	got, err := ReadPackets(path)
+	var trunc *TruncatedError
+	require.ErrorAs(t, err, &trunc)
+	assert.Equal(t, len(got), trunc.Packets)
+	assert.Greater(t, len(got), 30, "most of the capture survives")
+	assert.Less(t, len(got), 84)
+	assert.Equal(t, "SYN", got[0].TCPFlags)
+	assert.False(t, got[0].TCPSynAckTime.IsZero(), "handshake annotation still runs on the partial capture")
 }

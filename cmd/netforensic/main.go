@@ -3,6 +3,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -12,6 +13,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/gocisse/netforensic/internal/analyzer"
+	"github.com/gocisse/netforensic/internal/models"
 	"github.com/gocisse/netforensic/internal/pcap"
 )
 
@@ -86,8 +88,17 @@ func newRootCmd() *cobra.Command {
 			}
 
 			packets, err := pcap.ReadPackets(args[0])
+			var truncated *pcap.TruncatedError
+			if errors.As(err, &truncated) {
+				fmt.Fprintf(cmd.ErrOrStderr(), "warning: %s is truncated; analyzing the %d packets read before the cut\n", args[0], len(packets))
+				err = nil
+			}
 			if err != nil {
 				return fmt.Errorf("read %s: %w", args[0], err)
+			}
+			var notes []models.Issue
+			if truncated != nil {
+				notes = append(notes, analyzer.TruncatedCaptureIssue(packets))
 			}
 			total := len(packets)
 			packets = filter.apply(packets)
@@ -99,7 +110,7 @@ func newRootCmd() *cobra.Command {
 				return followStream(cmd.OutOrStdout(), packets, follow)
 			}
 
-			res := analyzer.Analyze(packets, service)
+			res := analyzer.AnalyzeWithIssues(packets, service, notes...)
 			res.FileName = args[0]
 
 			if output == "json" {

@@ -39,7 +39,7 @@ func printTriageReport(w io.Writer, res *models.AnalysisResult) error {
 			fmt.Fprintf(w, "  ... %d more event(s); see the issue list below\n", len(d.Timeline)-maxTimelineEvents)
 			break
 		}
-		fmt.Fprintf(w, "  %s  %-8s %-13s %s\n", e.Timestamp.UTC().Format("15:04:05.000"), "["+string(e.Severity)+"]", e.EventType, e.Description)
+		fmt.Fprintf(w, "  %s  %-10s %-13s %s\n", e.Timestamp.UTC().Format("15:04:05.000"), "["+string(e.Severity)+"]", e.EventType, e.Description)
 	}
 
 	fmt.Fprintln(w, "\nTOP SLOW FLOWS")
