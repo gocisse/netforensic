@@ -80,6 +80,7 @@ func packetInfo(pkt gopacket.Packet) (models.PacketInfo, bool) {
 		info.Protocol = models.ProtocolTCP
 		info.SrcPort, info.DstPort = uint16(t.SrcPort), uint16(t.DstPort)
 		info.PayloadSize = len(t.Payload)
+		info.PayloadPreview = previewPayload(t.Payload)
 		info.TCPSeq = t.Seq
 		info.TCPFlags = tcpFlags(t)
 		info.TCPAck = t.Ack
@@ -90,6 +91,7 @@ func packetInfo(pkt gopacket.Packet) (models.PacketInfo, bool) {
 		info.Protocol = models.ProtocolUDP
 		info.SrcPort, info.DstPort = uint16(u.SrcPort), uint16(u.DstPort)
 		info.PayloadSize = len(u.Payload)
+		info.PayloadPreview = previewPayload(u.Payload)
 	case pkt.Layer(layers.LayerTypeICMPv4) != nil:
 		ic := pkt.Layer(layers.LayerTypeICMPv4).(*layers.ICMPv4)
 		info.Protocol = models.ProtocolICMP
@@ -116,6 +118,9 @@ func fillDNS(info *models.PacketInfo, d *layers.DNS) {
 	info.DNSIsQuery = !d.QR
 	info.DNSResponseType = q.Type.String()
 	if d.QR {
+		for _, a := range d.Answers {
+			info.DNSAnswers = append(info.DNSAnswers, dnsAnswer(a))
+		}
 		info.DNSResponseCode = dnsResponseCode(d.ResponseCode)
 		if len(d.Answers) > 0 {
 			info.DNSResponseType = d.Answers[0].Type.String()
@@ -200,4 +205,46 @@ func icmpMessage(typ, code uint8) string {
 		return name + ": " + c
 	}
 	return fmt.Sprintf("%s: Code %d", name, code)
+}
+
+// maxPayloadPreview bounds the payload bytes kept per packet.
+const maxPayloadPreview = 512
+
+// previewPayload returns a copy of the first bytes of payload, or nil.
+func previewPayload(payload []byte) []byte {
+	if len(payload) == 0 {
+		return nil
+	}
+	if len(payload) > maxPayloadPreview {
+		payload = payload[:maxPayloadPreview]
+	}
+	return append([]byte(nil), payload...)
+}
+
+// dnsAnswer renders a resource record as "TYPE data".
+func dnsAnswer(rr layers.DNSResourceRecord) string {
+	typ := rr.Type.String()
+	switch rr.Type {
+	case layers.DNSTypeA, layers.DNSTypeAAAA:
+		return typ + " " + rr.IP.String()
+	case layers.DNSTypeCNAME:
+		return typ + " " + string(rr.CNAME)
+	case layers.DNSTypeNS:
+		return typ + " " + string(rr.NS)
+	case layers.DNSTypePTR:
+		return typ + " " + string(rr.PTR)
+	case layers.DNSTypeMX:
+		return fmt.Sprintf("%s %d %s", typ, rr.MX.Preference, rr.MX.Name)
+	case layers.DNSTypeTXT:
+		return typ + " " + strings.Join(txtStrings(rr.TXTs), " ")
+	}
+	return typ
+}
+
+func txtStrings(txts [][]byte) []string {
+	out := make([]string, len(txts))
+	for i, t := range txts {
+		out[i] = string(t)
+	}
+	return out
 }

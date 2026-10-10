@@ -45,6 +45,11 @@ func newRootCmd() *cobra.Command {
 		service string
 		verbose bool
 		output  string
+		follow  string
+
+		srcIP, dstIP string
+		srcPort      int
+		dstPort      int
 	)
 
 	cmd := &cobra.Command{
@@ -65,10 +70,35 @@ func newRootCmd() *cobra.Command {
 			if err := validateFile(args[0]); err != nil {
 				return err
 			}
+			var srcPortP, dstPortP *int
+			if cmd.Flags().Changed("src-port") {
+				srcPortP = &srcPort
+			}
+			if cmd.Flags().Changed("dst-port") {
+				dstPortP = &dstPort
+			}
+			filter, err := newPacketFilter(srcIP, dstIP, srcPortP, dstPortP)
+			if err != nil {
+				return err
+			}
+			if follow != "" && output != "text" {
+				return fmt.Errorf("--follow only supports text output")
+			}
+
 			packets, err := pcap.ReadPackets(args[0])
 			if err != nil {
 				return fmt.Errorf("read %s: %w", args[0], err)
 			}
+			total := len(packets)
+			packets = filter.apply(packets)
+			if filter.active() && len(packets) == 0 && total > 0 {
+				fmt.Fprintf(cmd.ErrOrStderr(), "warning: no packets match the filters (%d packets in the capture)\n", total)
+			}
+
+			if follow != "" {
+				return followStream(cmd.OutOrStdout(), packets, follow)
+			}
+
 			res := analyzer.Analyze(packets, service)
 			res.FileName = args[0]
 
@@ -106,6 +136,11 @@ func newRootCmd() *cobra.Command {
 	cmd.Flags().StringVarP(&service, "service", "s", "all", "service to analyze: "+strings.Join(validServices, ", "))
 
 	cmd.Flags().StringVarP(&output, "output", "o", "text", "output format: text, json")
+	cmd.Flags().StringVar(&srcIP, "src-ip", "", "only analyze packets from this source IP")
+	cmd.Flags().StringVar(&dstIP, "dst-ip", "", "only analyze packets to this destination IP")
+	cmd.Flags().IntVar(&srcPort, "src-port", 0, "only analyze packets from this source port")
+	cmd.Flags().IntVar(&dstPort, "dst-port", 0, "only analyze packets to this destination port")
+	cmd.Flags().StringVar(&follow, "follow", "", "show the full conversation of a flow, e.g. 10.0.0.1:43210-10.0.0.2:443[/tcp]")
 	cmd.Flags().BoolVarP(&verbose, "verbose", "v", false, "print every packet read before the summary")
 
 	return cmd

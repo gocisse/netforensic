@@ -217,3 +217,50 @@ func TestHTTPHost(t *testing.T) {
 		})
 	}
 }
+
+func TestDNSAnswer(t *testing.T) {
+	tests := []struct {
+		name string
+		rr   layers.DNSResourceRecord
+		want string
+	}{
+		{"A", layers.DNSResourceRecord{Type: layers.DNSTypeA, IP: net.IP{1, 2, 3, 4}}, "A 1.2.3.4"},
+		{"AAAA", layers.DNSResourceRecord{Type: layers.DNSTypeAAAA, IP: net.ParseIP("2001:db8::1")}, "AAAA 2001:db8::1"},
+		{"CNAME", layers.DNSResourceRecord{Type: layers.DNSTypeCNAME, CNAME: []byte("real.example.org")}, "CNAME real.example.org"},
+		{"NS", layers.DNSResourceRecord{Type: layers.DNSTypeNS, NS: []byte("ns1.example.org")}, "NS ns1.example.org"},
+		{"PTR", layers.DNSResourceRecord{Type: layers.DNSTypePTR, PTR: []byte("host.example.org")}, "PTR host.example.org"},
+		{"MX", layers.DNSResourceRecord{Type: layers.DNSTypeMX, MX: layers.DNSMX{Preference: 10, Name: []byte("mail.example.org")}}, "MX 10 mail.example.org"},
+		{"TXT", layers.DNSResourceRecord{Type: layers.DNSTypeTXT, TXTs: [][]byte{[]byte("v=spf1"), []byte("-all")}}, "TXT v=spf1 -all"},
+		{"other types show only the type", layers.DNSResourceRecord{Type: layers.DNSTypeSOA}, "SOA"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, dnsAnswer(tt.rr))
+		})
+	}
+}
+
+func TestPreviewPayload(t *testing.T) {
+	assert.Nil(t, previewPayload(nil))
+
+	short := []byte("abc")
+	got := previewPayload(short)
+	assert.Equal(t, short, got)
+	short[0] = 'X'
+	assert.Equal(t, byte('a'), got[0], "preview must be a copy")
+
+	assert.Len(t, previewPayload(make([]byte, 2000)), maxPayloadPreview)
+}
+
+func TestReadPacketsKeepsDNSAnswersAndPreview(t *testing.T) {
+	resp := dnsResponse(7, layers.DNSResponseCodeNoErr, true)
+	path := filepath.Join(t.TempDir(), "ans.pcap")
+	writePCAP(t, path, [][]byte{
+		serialize(t, layers.IPProtocolUDP, serverIP, clientIP, &layers.UDP{SrcPort: 53, DstPort: 54321}, dnsPayload(t, resp)),
+	})
+	got, err := ReadPackets(path)
+	require.NoError(t, err)
+	require.Len(t, got, 1)
+	assert.Equal(t, []string{"A 93.184.216.34"}, got[0].DNSAnswers)
+	assert.Equal(t, got[0].PayloadSize, len(got[0].PayloadPreview))
+}

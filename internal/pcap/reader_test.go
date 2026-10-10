@@ -50,9 +50,12 @@ func writePCAP(t *testing.T, path string, packets [][]byte) {
 	t.Helper()
 	require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o755))
 
-	f, err := os.Create(path)
+	// Write to a temporary file and rename it into place: other packages'
+	// tests read testdata/sample.pcap concurrently and must never see a
+	// partially written file.
+	f, err := os.CreateTemp(filepath.Dir(path), ".tmp-*.pcap")
 	require.NoError(t, err)
-	defer f.Close()
+	defer os.Remove(f.Name())
 
 	w := pcapgo.NewWriter(f)
 	require.NoError(t, w.WriteFileHeader(65535, layers.LinkTypeEthernet))
@@ -61,6 +64,8 @@ func writePCAP(t *testing.T, path string, packets [][]byte) {
 		ci := gopacket.CaptureInfo{Timestamp: ts.Add(time.Duration(i) * time.Second), CaptureLength: len(data), Length: len(data)}
 		require.NoError(t, w.WritePacket(ci, data))
 	}
+	require.NoError(t, f.Close())
+	require.NoError(t, os.Rename(f.Name(), path))
 }
 
 var (

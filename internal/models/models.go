@@ -42,6 +42,10 @@ type PacketInfo struct {
 	TCPFlags    string    `json:"tcp_flags,omitempty"` // e.g. "SYN", "PSH,ACK"; empty for non-TCP
 	TCPAck      uint32    `json:"tcp_ack,omitempty"`   // TCP acknowledgment number; 0 for non-TCP
 
+	// PayloadPreview holds the first bytes (at most 512) of the TCP or UDP
+	// payload for stream display. It is not serialized.
+	PayloadPreview []byte `json:"-"`
+
 	// TCP handshake timeline of the flow this packet belongs to. The reader
 	// fills these on every packet of a flow once the whole capture has been
 	// read; a zero time means the event was not observed (for example a
@@ -65,11 +69,12 @@ type PacketInfo struct {
 
 	// DNS fields are set only on packets that carry a decoded DNS message
 	// with at least one question; DNSQueryName != "" identifies such packets.
-	DNSID           uint16 `json:"dns_id,omitempty"`            // transaction ID, used to match queries to responses
-	DNSQueryName    string `json:"dns_query_name,omitempty"`    // domain being queried
-	DNSResponseType string `json:"dns_response_type,omitempty"` // first answer's type, else the question type (e.g. "A")
-	DNSResponseCode string `json:"dns_response_code,omitempty"` // e.g. "NOERROR", "NXDOMAIN"; empty for queries
-	DNSIsQuery      bool   `json:"dns_is_query,omitempty"`
+	DNSID           uint16   `json:"dns_id,omitempty"`            // transaction ID, used to match queries to responses
+	DNSQueryName    string   `json:"dns_query_name,omitempty"`    // domain being queried
+	DNSResponseType string   `json:"dns_response_type,omitempty"` // first answer's type, else the question type (e.g. "A")
+	DNSResponseCode string   `json:"dns_response_code,omitempty"` // e.g. "NOERROR", "NXDOMAIN"; empty for queries
+	DNSIsQuery      bool     `json:"dns_is_query,omitempty"`
+	DNSAnswers      []string `json:"dns_answers,omitempty"` // e.g. "A 93.184.216.34", "CNAME example.org"
 
 	// HTTP fields are set on TCP packets whose payload starts with an HTTP/1.x
 	// request line (method, URI) or status line (status code).
