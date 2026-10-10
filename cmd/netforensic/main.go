@@ -17,15 +17,33 @@ import (
 var validServices = []string{"all", "dns", "http", "tls", "https", "<port>"}
 
 func main() {
-	if err := newRootCmd().Execute(); err != nil {
+	cmd := newRootCmd()
+	cmd.SetArgs(normalizeArgs(os.Args[1:]))
+	if err := cmd.Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, "error:", err)
 		os.Exit(1)
 	}
 }
 
+// normalizeArgs accepts the single-dash "-service" spelling; pflag would
+// otherwise parse it as the shorthand "-s" with value "ervice".
+func normalizeArgs(args []string) []string {
+	out := make([]string, len(args))
+	for i, a := range args {
+		if a == "-service" || strings.HasPrefix(a, "-service=") {
+			a = "-" + a
+		}
+		out[i] = a
+	}
+	return out
+}
+
 // newRootCmd builds the netforensic root command.
 func newRootCmd() *cobra.Command {
-	var service string
+	var (
+		service string
+		verbose bool
+	)
 
 	cmd := &cobra.Command{
 		Use:           "netforensic [flags] file.pcap",
@@ -45,6 +63,12 @@ func newRootCmd() *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("read %s: %w", args[0], err)
 			}
+			if verbose {
+				if err := printPacketTable(cmd.OutOrStdout(), packets); err != nil {
+					return fmt.Errorf("write packet table: %w", err)
+				}
+				fmt.Fprintln(cmd.OutOrStdout())
+			}
 			res := analyzer.Analyze(packets, service)
 			res.FileName = args[0]
 			fmt.Fprintf(cmd.OutOrStdout(), "Analyzed %d packets in %d flows, found %d issues in %s\n",
@@ -57,15 +81,8 @@ func newRootCmd() *cobra.Command {
 	}
 	cmd.Flags().StringVarP(&service, "service", "s", "all", "service to analyze: "+strings.Join(validServices, ", "))
 
-	// Accept the single-dash "-service" spelling; pflag would otherwise
-	// parse it as the shorthand "-s" with value "ervice".
-	args := os.Args[1:]
-	for i, a := range args {
-		if a == "-service" || strings.HasPrefix(a, "-service=") {
-			args[i] = "-" + a
-		}
-	}
-	cmd.SetArgs(args)
+	cmd.Flags().BoolVarP(&verbose, "verbose", "v", false, "print every packet read before the summary")
+
 	return cmd
 }
 

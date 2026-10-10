@@ -1,11 +1,14 @@
 package main
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestValidateFile(t *testing.T) {
@@ -48,6 +51,31 @@ func TestValidateService(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.service, func(t *testing.T) {
 			assert.Equal(t, tt.wantErr, validateService(tt.service) != nil)
+		})
+	}
+}
+
+func TestRootCmdVerbose(t *testing.T) {
+	const sample = "../../internal/pcap/testdata/sample.pcap"
+	tests := []struct {
+		name        string
+		args        []string
+		wantTable   bool
+		wantSummary string
+	}{
+		{"default", []string{sample}, false, "Analyzed 2 packets in 2 flows"},
+		{"short flag", []string{"-v", sample}, true, "Analyzed 2 packets in 2 flows"},
+		{"long flag with single-dash service", normalizeArgs([]string{"--verbose", "-service", "dns", sample}), true, "Analyzed 1 packets in 1 flows"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var out bytes.Buffer
+			cmd := newRootCmd()
+			cmd.SetOut(&out)
+			cmd.SetArgs(tt.args)
+			require.NoError(t, cmd.Execute())
+			assert.Equal(t, tt.wantTable, strings.Contains(out.String(), "SOURCE"))
+			assert.Contains(t, out.String(), tt.wantSummary)
 		})
 	}
 }
