@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -9,6 +10,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/gocisse/netforensic/internal/models"
 )
 
 func TestValidateFile(t *testing.T) {
@@ -78,4 +81,45 @@ func TestRootCmdVerbose(t *testing.T) {
 			assert.Contains(t, out.String(), tt.wantSummary)
 		})
 	}
+}
+
+func TestRootCmdJSON(t *testing.T) {
+	const sample = "../../internal/pcap/testdata/sample.pcap"
+
+	t.Run("valid json on stdout", func(t *testing.T) {
+		var out, errOut bytes.Buffer
+		cmd := newRootCmd()
+		cmd.SetOut(&out)
+		cmd.SetErr(&errOut)
+		cmd.SetArgs([]string{"-o", "json", "-v", sample})
+		require.NoError(t, cmd.Execute())
+
+		var res models.AnalysisResult
+		require.NoError(t, json.Unmarshal(out.Bytes(), &res), "stdout must be pure JSON, got: %s", out.String())
+		assert.Equal(t, sample, res.FileName)
+		assert.Equal(t, 2, res.TotalPackets)
+		assert.Equal(t, 2, res.TotalFlows)
+		assert.Len(t, res.TopTalkers, 2)
+		assert.Contains(t, out.String(), "\n  \"total_packets\": 2", "output should be indented")
+		assert.NotContains(t, out.String(), "Analyzed")
+		assert.Contains(t, errOut.String(), "SOURCE", "verbose table goes to stderr")
+	})
+
+	t.Run("empty issues is an array", func(t *testing.T) {
+		var out bytes.Buffer
+		cmd := newRootCmd()
+		cmd.SetOut(&out)
+		cmd.SetArgs([]string{"--output", "json", "-s", "tls", sample})
+		require.NoError(t, cmd.Execute())
+		assert.Contains(t, out.String(), `"issues": []`)
+		assert.Contains(t, out.String(), `"top_talkers": []`)
+	})
+
+	t.Run("invalid format", func(t *testing.T) {
+		cmd := newRootCmd()
+		cmd.SetOut(&bytes.Buffer{})
+		cmd.SetErr(&bytes.Buffer{})
+		cmd.SetArgs([]string{"-o", "xml", sample})
+		assert.Error(t, cmd.Execute())
+	})
 }

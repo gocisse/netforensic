@@ -32,13 +32,20 @@ func Analyze(packets []models.PacketInfo, service string) *models.AnalysisResult
 	issues = append(issues, analyzeDNS(packets)...)
 	issues = append(issues, analyzeHTTP(packets)...)
 	issues = append(issues, analyzeTLS(packets)...)
+	if issues == nil {
+		issues = []models.Issue{} // serialize as [] rather than null
+	}
+	talkers := topTalkers(flows, topTalkerCount)
+	if talkers == nil {
+		talkers = []models.Flow{}
+	}
 	return &models.AnalysisResult{
 		TotalPackets: len(packets),
 		TotalFlows:   len(flows),
 		AnalysisTime: start,
 		Duration:     captureDuration(packets).String(),
 		Issues:       issues,
-		TopTalkers:   topTalkers(flows, topTalkerCount),
+		TopTalkers:   talkers,
 	}
 }
 

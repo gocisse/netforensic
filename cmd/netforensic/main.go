@@ -2,6 +2,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -43,6 +44,7 @@ func newRootCmd() *cobra.Command {
 	var (
 		service string
 		verbose bool
+		output  string
 	)
 
 	cmd := &cobra.Command{
@@ -56,6 +58,10 @@ func newRootCmd() *cobra.Command {
 			if err := validateService(service); err != nil {
 				return err
 			}
+			output = strings.ToLower(output)
+			if output != "text" && output != "json" {
+				return fmt.Errorf("invalid output format %q (valid: text, json)", output)
+			}
 			if err := validateFile(args[0]); err != nil {
 				return err
 			}
@@ -63,14 +69,29 @@ func newRootCmd() *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("read %s: %w", args[0], err)
 			}
+			res := analyzer.Analyze(packets, service)
+			res.FileName = args[0]
+
+			if output == "json" {
+				if verbose { // keep stdout valid JSON
+					if err := printPacketTable(cmd.ErrOrStderr(), packets); err != nil {
+						return fmt.Errorf("write packet table: %w", err)
+					}
+				}
+				enc := json.NewEncoder(cmd.OutOrStdout())
+				enc.SetIndent("", "  ")
+				if err := enc.Encode(res); err != nil {
+					return fmt.Errorf("encode json: %w", err)
+				}
+				return nil
+			}
+
 			if verbose {
 				if err := printPacketTable(cmd.OutOrStdout(), packets); err != nil {
 					return fmt.Errorf("write packet table: %w", err)
 				}
 				fmt.Fprintln(cmd.OutOrStdout())
 			}
-			res := analyzer.Analyze(packets, service)
-			res.FileName = args[0]
 			fmt.Fprintf(cmd.OutOrStdout(), "Analyzed %d packets in %d flows, found %d issues in %s\n",
 				res.TotalPackets, res.TotalFlows, len(res.Issues), res.Duration)
 			for _, is := range res.Issues {
@@ -81,6 +102,7 @@ func newRootCmd() *cobra.Command {
 	}
 	cmd.Flags().StringVarP(&service, "service", "s", "all", "service to analyze: "+strings.Join(validServices, ", "))
 
+	cmd.Flags().StringVarP(&output, "output", "o", "text", "output format: text, json")
 	cmd.Flags().BoolVarP(&verbose, "verbose", "v", false, "print every packet read before the summary")
 
 	return cmd
