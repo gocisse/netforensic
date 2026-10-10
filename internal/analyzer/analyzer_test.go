@@ -108,6 +108,19 @@ func TestAggregateFlowsRetransmits(t *testing.T) {
 			pkt("a", 1, "b", 2, 100, 0, "SYN"), pkt("a", 1, "b", 2, 100, 0, "SYN")}, 1},
 		{"distinct seqs", []models.PacketInfo{
 			pkt("a", 1, "b", 2, 100, 10, "ACK"), pkt("a", 1, "b", 2, 110, 10, "ACK")}, 0},
+		{"repeated keep-alive probes are not retransmissions", []models.PacketInfo{
+			pkt("a", 1, "b", 2, 100, 10, "ACK"),
+			pkt("a", 1, "b", 2, 109, 1, "ACK"), pkt("a", 1, "b", 2, 109, 1, "ACK"), pkt("a", 1, "b", 2, 109, 1, "ACK")}, 0},
+		{"keep-alive does not hide a later retransmission", []models.PacketInfo{
+			pkt("a", 1, "b", 2, 100, 10, "ACK"), pkt("a", 1, "b", 2, 109, 1, "ACK"),
+			pkt("a", 1, "b", 2, 100, 10, "ACK")}, 1},
+		{"one-byte retransmission that is not a probe", []models.PacketInfo{
+			pkt("a", 1, "b", 2, 100, 1, "PSH,ACK"), pkt("a", 1, "b", 2, 101, 1, "PSH,ACK"),
+			pkt("a", 1, "b", 2, 100, 1, "PSH,ACK")}, 1},
+		{"one-byte segment repeating the last byte is a keep-alive", []models.PacketInfo{
+			pkt("a", 1, "b", 2, 100, 1, "ACK"), pkt("a", 1, "b", 2, 100, 1, "ACK")}, 0},
+		{"fin is never a keep-alive", []models.PacketInfo{
+			pkt("a", 1, "b", 2, 100, 10, "ACK"), pkt("a", 1, "b", 2, 109, 1, "FIN,ACK"), pkt("a", 1, "b", 2, 109, 1, "FIN,ACK")}, 1},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

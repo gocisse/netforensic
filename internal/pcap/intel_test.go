@@ -2,12 +2,14 @@ package pcap
 
 import (
 	"net"
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/google/gopacket"
 	"github.com/google/gopacket/layers"
+	"github.com/google/gopacket/pcapgo"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -263,4 +265,102 @@ func TestReadPacketsKeepsDNSAnswersAndPreview(t *testing.T) {
 	require.Len(t, got, 1)
 	assert.Equal(t, []string{"A 93.184.216.34"}, got[0].DNSAnswers)
 	assert.Equal(t, got[0].PayloadSize, len(got[0].PayloadPreview))
+}
+
+func TestReadPacketsPcapng(t *testing.T) {
+	packets, err := ReadPackets(filepath.Join("..", "..", "testdata", "Lab-5-AnotherSlowApp.pcapng"))
+	require.NoError(t, err)
+	require.Len(t, packets, 84)
+
+	syn := packets[0]
+	assert.Equal(t, models.ProtocolTCP, syn.Protocol)
+	assert.Equal(t, "192.168.1.1", syn.SrcIP)
+	assert.Equal(t, uint16(61300), syn.SrcPort)
+	assert.Equal(t, "10.0.0.1", syn.DstIP)
+	assert.Equal(t, uint16(80), syn.DstPort)
+	assert.Equal(t, "SYN", syn.TCPFlags)
+
+	// Frame 4 is a 1460-byte segment captured with a snaplen that cut the
+	// payload short; the real length must still be reported.
+	assert.Equal(t, 1460, packets[3].PayloadSize)
+	assert.Less(t, len(packets[3].PayloadPreview), 1460)
+}
+
+func TestReadPacketsRejectsTinyFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "tiny.pcap")
+	require.NoError(t, os.WriteFile(path, []byte{1, 2}, 0o644))
+	_, err := ReadPackets(path)
+	assert.ErrorContains(t, err, "capture header")
+}
+
+func TestReadPacketsTruncatedCapture(t *testing.T) {
+	full := serialize(t, layers.IPProtocolTCP, clientIP, serverIP,
+		&layers.TCP{SrcPort: 1000, DstPort: 80, ACK: true, Seq: 1}, make([]byte, 1000))
+	const snaplen = 80
+
+	path := filepath.Join(t.TempDir(), "trunc.pcap")
+	f, err := os.Create(path)
+	require.NoError(t, err)
+	w := pcapgo.NewWriter(f)
+	require.NoError(t, w.WriteFileHeader(snaplen, layers.LinkTypeEthernet))
+	require.NoError(t, w.WritePacket(gopacket.CaptureInfo{Timestamp: time.Unix(1700000000, 0), CaptureLength: snaplen, Length: len(full)}, full[:snaplen]))
+	require.NoError(t, f.Close())
+
+	got, err := ReadPackets(path)
+	require.NoError(t, err)
+	require.Len(t, got, 1)
+	assert.Equal(t, 1000, got[0].PayloadSize, "real segment length, not the captured bytes")
+	assert.Equal(t, len(full), got[0].Size)
+	assert.Less(t, len(got[0].PayloadPreview), 1000)
+}
+
+func TestTCPPayloadLen(t *testing.T) {
+	build := func(t *testing.T, v6 bool, zeroLength bool) (gopacket.Packet, *layers.TCP) {
+		t.Helper()
+		var network gopacket.SerializableLayer
+		var eth layers.EthernetType
+		tcp := &layers.TCP{SrcPort: 1, DstPort: 2, ACK: true}
+		if v6 {
+			ip := &layers.IPv6{Version: 6, NextHeader: layers.IPProtocolTCP, HopLimit: 64, SrcIP: net.ParseIP("fe80::1"), DstIP: net.ParseIP("fe80::2")}
+			require.NoError(t, tcp.SetNetworkLayerForChecksum(ip))
+			network, eth = ip, layers.EthernetTypeIPv6
+		} else {
+			ip := &layers.IPv4{Version: 4, IHL: 5, TTL: 64, Protocol: layers.IPProtocolTCP, SrcIP: clientIP, DstIP: serverIP}
+			require.NoError(t, tcp.SetNetworkLayerForChecksum(ip))
+			network, eth = ip, layers.EthernetTypeIPv4
+		}
+		buf := gopacket.NewSerializeBuffer()
+		ethL := &layers.Ethernet{SrcMAC: net.HardwareAddr{0, 1, 2, 3, 4, 5}, DstMAC: net.HardwareAddr{6, 7, 8, 9, 10, 11}, EthernetType: eth}
+		require.NoError(t, gopacket.SerializeLayers(buf, gopacket.SerializeOptions{FixLengths: true, ComputeChecksums: true}, ethL, network, tcp, gopacket.Payload(make([]byte, 77))))
+		data := buf.Bytes()
+		if zeroLength { // as written by NICs that segment in hardware
+			if v6 {
+				data[18], data[19] = 0, 0 // IPv6 payload length
+			} else {
+				data[16], data[17] = 0, 0 // IPv4 total length
+			}
+		}
+		pkt := gopacket.NewPacket(data, layers.LinkTypeEthernet, gopacket.Default)
+		return pkt, pkt.Layer(layers.LayerTypeTCP).(*layers.TCP)
+	}
+
+	tests := []struct {
+		name       string
+		v6         bool
+		zeroLength bool
+		want       int
+	}{
+		{"ipv4", false, false, 77},
+		{"ipv6", true, false, 77},
+		{"ipv4 with zero length (segmentation offload) falls back to captured bytes", false, true, 77},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			pkt, tcp := build(t, tt.v6, tt.zeroLength)
+			assert.Equal(t, tt.want, tcpPayloadLen(pkt, tcp))
+		})
+	}
+
+	// Without an IP layer the captured length is all there is.
+	assert.Equal(t, 3, tcpPayloadLen(gopacket.NewPacket(nil, layers.LayerTypeTCP, gopacket.Default), &layers.TCP{BaseLayer: layers.BaseLayer{Payload: []byte("abc")}}))
 }

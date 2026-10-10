@@ -1,12 +1,16 @@
 package analyzer
 
 import (
+	"path/filepath"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/gocisse/netforensic/internal/models"
+	"github.com/gocisse/netforensic/internal/pcap"
 )
 
 func issue(id string, sec float64, sev models.Severity, cat, title, domain string) models.Issue {
@@ -161,6 +165,7 @@ func TestCorrelatePriority(t *testing.T) {
 		{"dns link beats critical", nil, []models.Issue{dup, servfail("d", 10, "x.com"), http5xx("h", 11, "x.com")}, "DNS resolution failure for x.com", "high"},
 		{"critical beats congestion", congested, []models.Issue{dup}, "Duplicate IP Address", "high"},
 		{"congestion beats worst-issue fallback", congested, []models.Issue{http5xx("h", 1, "")}, "Network congestion", "medium"},
+		{"retransmissions are reported as packet loss", nil, []models.Issue{issue("p", 1, models.SeverityWarning, "PacketLoss", "TCP Retransmissions detected", "")}, "Packet loss", "low"},
 		{"error issue fallback", nil, []models.Issue{http5xx("h", 1, "x.com")}, "HTTP Server Error", "medium"},
 		{"warning issue fallback", nil, []models.Issue{issue("w", 1, models.SeverityWarning, "TLS", "TLS Protocol Downgrade", "")}, "TLS Protocol Downgrade", "low"},
 		{"info issue fallback", nil, []models.Issue{issue("i", 1, models.SeverityInfo, "ICMP", "ICMP Redirect", "")}, "ICMP Redirect", "low"},
@@ -278,4 +283,142 @@ func TestAnalyzeProducesDiagnosis(t *testing.T) {
 	assert.Equal(t, "Duplicate IP Address", res.Diagnosis.PrimaryCause)
 	assert.NotEmpty(t, res.Diagnosis.Timeline)
 	assert.NotNil(t, res.SlowFlows)
+}
+
+// The tests below run the whole pipeline on real captures from ../VendorTestFile.
+
+func readReal(t *testing.T, name string) []models.PacketInfo {
+	t.Helper()
+	packets, err := pcap.ReadPackets(filepath.Join("..", "..", "testdata", name))
+	require.NoError(t, err)
+	require.NotEmpty(t, packets)
+	return packets
+}
+
+func issueTitles(r *models.AnalysisResult) []string {
+	var titles []string
+	for _, is := range r.Issues {
+		titles = append(titles, is.Title)
+	}
+	return titles
+}
+
+// Lab-3: one HTTP download in which Wireshark reports retransmissions
+// (a fast retransmission, a retransmission and a spurious retransmission).
+func TestCorrelateRealLab3TCPRetransmissions(t *testing.T) {
+	packets := readReal(t, "Lab-3-TCP-Retrans.pcapng")
+	res := Analyze(packets, "all")
+
+	assert.Equal(t, 202, res.TotalPackets)
+	require.Equal(t, 1, res.TotalFlows)
+	flow := res.TopTalkers[0]
+	assert.Equal(t, "10.0.0.145:54436-186.15.230.24:80", flow.ID)
+	assert.Positive(t, flow.Retransmits, "retransmissions must be detected")
+
+	assert.Contains(t, issueTitles(res), "TCP Retransmissions detected")
+	assert.Less(t, res.Diagnosis.HealthScore, 100, "health must be deducted")
+	assert.Equal(t, 90, res.Diagnosis.HealthScore, "one warning")
+	assert.Contains(t, []string{"Packet loss", "Network congestion"}, res.Diagnosis.PrimaryCause)
+	assert.Equal(t, "Packet loss", res.Diagnosis.PrimaryCause, "RTT is <1ms, so this is loss rather than congestion")
+
+	var rootCause bool
+	for _, e := range res.Diagnosis.Timeline {
+		rootCause = rootCause || e.EventType == eventRootCause
+	}
+	assert.True(t, rootCause, "timeline marks the root cause")
+	assert.GreaterOrEqual(t, len(res.Diagnosis.Recommendations), 2)
+
+	// Healthy handshake and RTT: the diagnosis must not blame latency.
+	assert.Less(t, flow.SetupTimeMs, 500.0)
+	assert.Less(t, flow.AvgRTTMs, highRTTMs)
+}
+
+// Lab-5: a connection whose server takes ~108s to send its first data.
+// Wireshark finds no retransmissions here; the capture contains TCP
+// keep-alive probes, which must not be mistaken for retransmissions.
+func TestPerformanceRealLab5SlowApplication(t *testing.T) {
+	packets := readReal(t, "Lab-5-AnotherSlowApp.pcapng")
+	res := Analyze(packets, "all")
+
+	assert.Equal(t, 84, res.TotalPackets)
+	require.Equal(t, 1, res.TotalFlows)
+	flow := res.TopTalkers[0]
+	assert.Equal(t, "10.0.0.1:80-192.168.1.1:61300", flow.ID)
+
+	// Setup (SYN 0.000s -> ACK 0.104s) and TTFB (ACK -> first server data at 108.87s).
+	assert.InDelta(t, 104, flow.SetupTimeMs, 5)
+	assert.InDelta(t, 108768, flow.TTFBMs, 50)
+	assert.Greater(t, flow.TTFBMs, slowTTFBMs)
+
+	assert.Contains(t, issueTitles(res), "Slow Server Response")
+	assert.Zero(t, flow.Retransmits, "keep-alive probes are not retransmissions")
+	assert.NotContains(t, issueTitles(res), "TCP Retransmissions detected")
+	assert.Equal(t, "Slow Server Response", res.Diagnosis.PrimaryCause)
+	assert.Equal(t, 90, res.Diagnosis.HealthScore)
+
+	var inTimeline bool
+	for _, e := range res.Diagnosis.Timeline {
+		inTimeline = inTimeline || (e.EventType == eventRootCause && strings.Contains(e.Description, "Slow Server Response"))
+	}
+	assert.True(t, inTimeline, "slow response is the root-cause event in the timeline")
+
+	require.NotEmpty(t, res.SlowFlows)
+	assert.Equal(t, flow.ID, res.SlowFlows[0].ID)
+}
+
+// ARP_Spoofing.pcap holds five ARP requests, each from a different sender
+// IP and MAC, aimed at addresses in 192.168.7.0/24 from senders outside that
+// subnet. No IP address is claimed by two MACs and the burst is far below
+// the storm threshold, so the duplicate-IP and storm rules correctly stay
+// quiet. This test pins that behavior and the ARP field extraction.
+func TestCorrelateRealARPSpoofingCapture(t *testing.T) {
+	packets := readReal(t, "ARP_Spoofing.pcap")
+	require.Len(t, packets, 5)
+
+	for _, p := range packets {
+		assert.Equal(t, models.ProtocolARP, p.Protocol)
+		assert.Equal(t, "request", p.ARPOperation)
+		assert.NotEmpty(t, p.ARPSenderMAC)
+	}
+	assert.Equal(t, "192.169.223.59", packets[0].ARPSenderIP)
+	assert.Equal(t, "00:01:01:02:df:3b", packets[0].ARPSenderMAC)
+	assert.Equal(t, "192.168.7.111", packets[0].ARPTargetIP)
+
+	assert.Empty(t, analyzeARP(packets))
+	res := Analyze(packets, "all")
+	assert.Equal(t, 100, res.Diagnosis.HealthScore)
+
+	// The same traffic with one sender IP answering from a second MAC is the
+	// duplicate-IP case, which must be Critical.
+	spoofed := append([]models.PacketInfo(nil), packets...)
+	dup := packets[0]
+	dup.Timestamp = dup.Timestamp.Add(time.Millisecond)
+	dup.ARPSenderMAC = "de:ad:be:ef:00:01"
+	spoofed = append(spoofed, dup)
+	issues := analyzeARP(spoofed)
+	require.Len(t, issues, 1)
+	assert.Equal(t, models.SeverityCritical, issues[0].Severity)
+	assert.Equal(t, "Duplicate IP Address", issues[0].Title)
+	assert.Contains(t, issues[0].Description, "192.169.223.59")
+	assert.Equal(t, "Duplicate IP Address", Analyze(spoofed, "all").Diagnosis.PrimaryCause)
+}
+
+// DNS_Flood.pcap holds a single DNS query. It must parse as DNS and, being
+// the last packet of the capture, must not be reported as a timeout.
+func TestCorrelateRealDNSCapture(t *testing.T) {
+	packets := readReal(t, "DNS_Flood.pcap")
+	require.Len(t, packets, 1)
+
+	p := packets[0]
+	assert.Equal(t, "www.aha.com", p.DNSQueryName)
+	assert.True(t, p.DNSIsQuery)
+	assert.Equal(t, "A", p.DNSResponseType)
+	assert.Equal(t, uint16(0xa9ca), p.DNSID)
+	assert.Equal(t, "10.164.19.78", p.SrcIP)
+	assert.Equal(t, uint16(53), p.DstPort)
+
+	res := Analyze(packets, "dns")
+	assert.Equal(t, 1, res.TotalPackets)
+	assert.Empty(t, res.Issues)
+	assert.Equal(t, 100, res.Diagnosis.HealthScore)
 }

@@ -2,6 +2,8 @@
 package pcap
 
 import (
+	"bufio"
+	"bytes"
 	"errors"
 	"fmt"
 	"io"
@@ -25,14 +27,14 @@ func ReadPackets(filePath string) ([]models.PacketInfo, error) {
 	}
 	defer f.Close()
 
-	r, err := pcapgo.NewReader(f)
+	src, err := newSource(f)
 	if err != nil {
-		return nil, fmt.Errorf("read pcap header: %w", err)
+		return nil, err
 	}
 
 	var packets []models.PacketInfo
 	for {
-		data, ci, err := r.ReadPacketData()
+		data, ci, err := src.ReadPacketData()
 		if errors.Is(err, io.EOF) {
 			break
 		}
@@ -40,7 +42,7 @@ func ReadPackets(filePath string) ([]models.PacketInfo, error) {
 			return nil, fmt.Errorf("read packet: %w", err)
 		}
 
-		pkt := gopacket.NewPacket(data, r.LinkType(), gopacket.NoCopy)
+		pkt := gopacket.NewPacket(data, src.linkType(ci), gopacket.NoCopy)
 		info, ok := packetInfo(pkt)
 		if !ok {
 			continue
@@ -79,7 +81,7 @@ func packetInfo(pkt gopacket.Packet) (models.PacketInfo, bool) {
 		t := pkt.Layer(layers.LayerTypeTCP).(*layers.TCP)
 		info.Protocol = models.ProtocolTCP
 		info.SrcPort, info.DstPort = uint16(t.SrcPort), uint16(t.DstPort)
-		info.PayloadSize = len(t.Payload)
+		info.PayloadSize = tcpPayloadLen(pkt, t)
 		info.PayloadPreview = previewPayload(t.Payload)
 		info.TCPSeq = t.Seq
 		info.TCPFlags = tcpFlags(t)
@@ -247,4 +249,80 @@ func txtStrings(txts [][]byte) []string {
 		out[i] = string(t)
 	}
 	return out
+}
+
+// source reads packets from a capture file of either supported format.
+type source interface {
+	ReadPacketData() ([]byte, gopacket.CaptureInfo, error)
+	linkType(ci gopacket.CaptureInfo) layers.LinkType
+}
+
+type pcapSource struct{ *pcapgo.Reader }
+
+func (s pcapSource) linkType(gopacket.CaptureInfo) layers.LinkType { return s.LinkType() }
+
+// ngSource reads pcapng, whose interfaces may each have their own link type.
+type ngSource struct{ *pcapgo.NgReader }
+
+func (s ngSource) linkType(ci gopacket.CaptureInfo) layers.LinkType {
+	if iface, err := s.Interface(ci.InterfaceIndex); err == nil {
+		return iface.LinkType
+	}
+	return layers.LinkTypeEthernet
+}
+
+// pcapngMagic is the block type of a pcapng section header block.
+var pcapngMagic = []byte{0x0a, 0x0d, 0x0d, 0x0a}
+
+// newSource detects whether r is a pcap or pcapng file and opens it.
+func newSource(r io.Reader) (source, error) {
+	br := bufio.NewReader(r)
+	magic, err := br.Peek(len(pcapngMagic))
+	if err != nil {
+		return nil, fmt.Errorf("read capture header: %w", err)
+	}
+	if bytes.Equal(magic, pcapngMagic) {
+		ng, err := pcapgo.NewNgReader(br, pcapgo.NgReaderOptions{WantMixedLinkType: true})
+		if err != nil {
+			return nil, fmt.Errorf("read pcapng header: %w", err)
+		}
+		return ngSource{ng}, nil
+	}
+	pr, err := pcapgo.NewReader(br)
+	if err != nil {
+		return nil, fmt.Errorf("read pcap header: %w", err)
+	}
+	return pcapSource{pr}, nil
+}
+
+// tcpPayloadLen returns the TCP payload length the sender put on the wire,
+// derived from the IP length so that captures truncated by a small snaplen
+// still report the real segment size (sequence-number accounting depends on
+// it). It falls back to the captured length when the IP length is unusable,
+// for example with segmentation offload where it is recorded as 0.
+func tcpPayloadLen(pkt gopacket.Packet, t *layers.TCP) int {
+	captured := len(t.Payload)
+	hdr := int(t.DataOffset) * 4
+
+	var ipPayload int
+	switch {
+	case pkt.Layer(layers.LayerTypeIPv4) != nil:
+		ip := pkt.Layer(layers.LayerTypeIPv4).(*layers.IPv4)
+		if ip.Length == 0 {
+			return captured
+		}
+		ipPayload = int(ip.Length) - int(ip.IHL)*4
+	case pkt.Layer(layers.LayerTypeIPv6) != nil:
+		ip := pkt.Layer(layers.LayerTypeIPv6).(*layers.IPv6)
+		if ip.Length == 0 {
+			return captured
+		}
+		ipPayload = int(ip.Length)
+	default:
+		return captured
+	}
+	if n := ipPayload - hdr; n >= captured {
+		return n
+	}
+	return captured
 }

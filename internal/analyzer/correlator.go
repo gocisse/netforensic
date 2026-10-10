@@ -204,6 +204,9 @@ func (d *diagnosis) worst(issues []models.Issue) bool {
 func (d *diagnosis) fromIssue(is models.Issue, confidence string) {
 	d.kind, d.category, d.domain = causeIssue, is.Category, is.Domain
 	d.cause, d.confidence, d.summary = is.Title, confidence, is.Description
+	if c, ok := categoryCause[is.Category]; ok {
+		d.cause = c
+	}
 	d.roles[is.ID] = eventRootCause
 }
 
@@ -310,6 +313,12 @@ func recommendations(kind, domain, category string) []string {
 		"Review the detailed issue list below, starting with the highest severity items.",
 		"Capture again closer to the affected client and server to confirm where the problem originates.",
 	}
+}
+
+// categoryCause names the primary cause for categories where the issue title
+// describes a symptom rather than the underlying problem.
+var categoryCause = map[string]string{
+	"PacketLoss": "Packet loss",
 }
 
 var categoryRecommendations = map[string][]string{

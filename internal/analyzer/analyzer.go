@@ -148,8 +148,13 @@ func aggregateFlows(packets []models.PacketInfo) []models.Flow {
 		forward bool
 		seq     uint32
 	}
+	type dirKey = struct {
+		flow    flowKey
+		forward bool
+	}
 	byKey := make(map[flowKey]*models.Flow)
 	seen := make(map[seqKey]struct{})
+	nextSeq := make(map[dirKey]uint32) // sequence number following the highest segment seen
 
 	for _, p := range packets {
 		key, forward := canonicalKey(p)
@@ -176,11 +181,21 @@ func aggregateFlows(packets []models.PacketInfo) []models.Flow {
 			f.BytesRecv += p.Size
 		}
 		if p.Protocol == models.ProtocolTCP && consumesSeq(p) {
-			sk := seqKey{key, forward, p.TCPSeq}
-			if _, dup := seen[sk]; dup {
-				f.Retransmits++
+			dk := dirKey{key, forward}
+			next, haveNext := nextSeq[dk]
+			if isKeepAlive(p, next, haveNext) {
+				// Keep-alive probes deliberately reuse the last sequence
+				// number; they are neither retransmissions nor new data.
+			} else {
+				sk := seqKey{key, forward, p.TCPSeq}
+				if _, dup := seen[sk]; dup {
+					f.Retransmits++
+				}
+				seen[sk] = struct{}{}
+				if end := p.TCPSeq + seqLen(p); !haveNext || int32(end-next) > 0 {
+					nextSeq[dk] = end
+				}
 			}
-			seen[sk] = struct{}{}
 		}
 		if p.Timestamp.Before(f.StartTime) {
 			f.StartTime = p.Timestamp
@@ -201,6 +216,27 @@ func aggregateFlows(packets []models.PacketInfo) []models.Flow {
 		return flows[i].ID < flows[j].ID
 	})
 	return flows
+}
+
+// seqLen is the amount of sequence space a TCP packet occupies.
+func seqLen(p models.PacketInfo) uint32 {
+	n := uint32(p.PayloadSize)
+	if hasTCPFlag(p.TCPFlags, "SYN") {
+		n++
+	}
+	if hasTCPFlag(p.TCPFlags, "FIN") {
+		n++
+	}
+	return n
+}
+
+// isKeepAlive reports whether p is a TCP keep-alive probe: one byte of
+// data (or none) whose sequence number is the last acknowledged byte, one
+// below the next expected sequence number.
+func isKeepAlive(p models.PacketInfo, next uint32, haveNext bool) bool {
+	return haveNext && p.PayloadSize == 1 &&
+		!hasTCPFlag(p.TCPFlags, "SYN") && !hasTCPFlag(p.TCPFlags, "FIN") && !hasTCPFlag(p.TCPFlags, "RST") &&
+		p.TCPSeq == next-1
 }
 
 // consumesSeq reports whether a TCP packet occupies sequence space, i.e. it

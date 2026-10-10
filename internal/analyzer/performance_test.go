@@ -1,12 +1,15 @@
 package analyzer
 
 import (
+	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"github.com/gocisse/netforensic/internal/models"
+	"github.com/gocisse/netforensic/internal/pcap"
 )
 
 // tcpPkt builds a packet on the flow 10.0.0.1:1000 (client) <-> 10.0.0.2:80 (server).
@@ -198,4 +201,32 @@ func TestSlowFlows(t *testing.T) {
 	empty := slowFlows([]models.Flow{{ID: "none"}}, 5)
 	assert.NotNil(t, empty, "empty result must serialize as []")
 	assert.Empty(t, empty)
+}
+
+// Lab-5 timings cross-checked against Wireshark: the handshake completes at
+// 0.104s and the server's first data arrives at 108.87s.
+func TestPerformanceRealLab5Handshake(t *testing.T) {
+	packets, err := pcap.ReadPackets(filepath.Join("..", "..", "testdata", "Lab-5-AnotherSlowApp.pcapng"))
+	require.NoError(t, err)
+
+	first := packets[0]
+	assert.False(t, first.TCPSynTime.IsZero())
+	assert.False(t, first.TCPSynAckTime.IsZero())
+	assert.False(t, first.TCPAckTime.IsZero())
+	assert.False(t, first.FirstDataTime.IsZero())
+	assert.InDelta(t, 97, ms(first.TCPSynAckTime.Sub(first.TCPSynTime)), 2, "SYN to SYN-ACK")
+
+	flows, issues := applyPerformanceMetrics(packets, aggregateFlows(packets))
+	require.Len(t, flows, 1)
+	assert.InDelta(t, 104, flows[0].SetupTimeMs, 5)
+	assert.Greater(t, flows[0].MaxRTTMs, flows[0].AvgRTTMs/2)
+
+	var titles []string
+	for _, is := range issues {
+		titles = append(titles, is.Title)
+		assert.Equal(t, flows[0].ID, is.FlowID)
+	}
+	assert.Contains(t, titles, "Slow Server Response")
+	assert.NotContains(t, titles, "Slow TCP Handshake", "104ms is under the 500ms threshold")
+
 }
