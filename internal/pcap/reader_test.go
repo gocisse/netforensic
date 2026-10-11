@@ -536,3 +536,31 @@ func TestReadPacketsNamesUndecodedIPProtocols(t *testing.T) {
 		assert.Equal(t, want[i], p.Protocol, "packet %d", i)
 	}
 }
+
+func TestReadPacketsFileTooShortForHeader(t *testing.T) {
+	tests := []struct {
+		name string
+		data []byte
+	}{
+		{"empty file", nil},
+		{"3 bytes", []byte{0xd4, 0xc3, 0xb2}},
+		{"10 bytes of text", []byte("not a pcap")},
+		{"pcap magic and a partial header", []byte{0xd4, 0xc3, 0xb2, 0xa1, 2, 0, 4, 0, 0, 0}},
+		{"pcapng section header cut short", []byte{0x0a, 0x0d, 0x0d, 0x0a, 28, 0, 0, 0}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "short.pcap")
+			require.NoError(t, os.WriteFile(path, tt.data, 0o644))
+
+			packets, _, err := ReadPacketsStats(path, ReadOptions{})
+			require.Error(t, err)
+			assert.Nil(t, packets)
+			assert.Contains(t, err.Error(), fmt.Sprintf("file is only %d bytes, too short to hold a capture file header", len(tt.data)))
+			assert.True(t, errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF), "the cause stays in the chain: %v", err)
+
+			var trunc *TruncatedError
+			assert.False(t, errors.As(err, &trunc), "a header-less file is not a truncated capture")
+		})
+	}
+}

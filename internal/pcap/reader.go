@@ -123,6 +123,12 @@ func ReadPacketsStats(filePath string, opts ReadOptions) ([]models.PacketInfo, R
 
 	src, err := newSource(f)
 	if err != nil {
+		if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
+			// Nothing was cut mid-record: there is no complete header to read.
+			if fi, serr := f.Stat(); serr == nil {
+				err = fmt.Errorf("file is only %d bytes, too short to hold a capture file header: %w", fi.Size(), err)
+			}
+		}
 		return nil, stats, err
 	}
 
