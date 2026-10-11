@@ -88,9 +88,13 @@ type diagnosis struct {
 	roles                      map[string]string // issue ID -> timeline event type
 }
 
-// dnsHTTP applies the DNS SERVFAIL to HTTP 5xx rule.
+// dnsHTTP applies the DNS SERVFAIL to HTTP 5xx rule. A SERVFAIL issue may
+// aggregate many queries; each one is tried as the cause, using its own time
+// and domain.
 func (d *diagnosis) dnsHTTP(issues []models.Issue) bool {
 	var best *models.Issue
+	var bestAt time.Time
+	var bestDomain string
 	var bestSymptoms []models.Issue
 	bestHigh := false
 
@@ -99,42 +103,48 @@ func (d *diagnosis) dnsHTTP(issues []models.Issue) bool {
 		if s.Category != "DNS" || s.Title != "DNS SERVFAIL" {
 			continue
 		}
-		var symptoms []models.Issue
-		matched := false
-		for _, h := range issues {
-			if h.Category != "HTTP" || h.Title != "HTTP Server Error" {
-				continue
-			}
-			if dt := h.Timestamp.Sub(s.Timestamp); dt < 0 || dt > dnsHTTPWindow {
-				continue
-			}
-			switch {
-			case h.Domain != "" && s.Domain != "" && strings.EqualFold(h.Domain, s.Domain):
-				matched = true
-			case h.Domain != "" && s.Domain != "":
-				continue // a different domain: unrelated
-			}
-			symptoms = append(symptoms, h)
+		occs := s.Occurrences
+		if len(occs) == 0 {
+			occs = []models.Occurrence{{Time: s.Timestamp, Subject: s.Domain}}
 		}
-		if len(symptoms) > len(bestSymptoms) || (len(symptoms) > 0 && len(symptoms) == len(bestSymptoms) && matched && !bestHigh) {
-			best, bestSymptoms, bestHigh = s, symptoms, matched
+		for _, o := range occs {
+			var symptoms []models.Issue
+			matched := false
+			for _, h := range issues {
+				if h.Category != "HTTP" || h.Title != "HTTP Server Error" {
+					continue
+				}
+				if dt := h.Timestamp.Sub(o.Time); dt < 0 || dt > dnsHTTPWindow {
+					continue
+				}
+				switch {
+				case h.Domain != "" && o.Subject != "" && strings.EqualFold(h.Domain, o.Subject):
+					matched = true
+				case h.Domain != "" && o.Subject != "":
+					continue // a different domain: unrelated
+				}
+				symptoms = append(symptoms, h)
+			}
+			if len(symptoms) > len(bestSymptoms) || (len(symptoms) > 0 && len(symptoms) == len(bestSymptoms) && matched && !bestHigh) {
+				best, bestAt, bestDomain, bestSymptoms, bestHigh = s, o.Time, o.Subject, symptoms, matched
+			}
 		}
 	}
 	if best == nil {
 		return false
 	}
 
-	d.kind, d.domain, d.category = causeDNSHTTP, best.Domain, "DNS"
+	d.kind, d.domain, d.category = causeDNSHTTP, bestDomain, "DNS"
 	d.cause = "DNS resolution failure"
-	if best.Domain != "" {
-		d.cause += " for " + best.Domain
+	if bestDomain != "" {
+		d.cause += " for " + bestDomain
 	}
 	d.confidence = "medium"
 	if bestHigh {
 		d.confidence = "high"
 	}
 	d.summary = fmt.Sprintf("DNS SERVFAIL at %s was followed by %d HTTP 5xx error(s) within %s; the HTTP failures are most likely a consequence of the failed name resolution.",
-		best.Timestamp.UTC().Format("15:04:05.000"), len(bestSymptoms), dnsHTTPWindow)
+		bestAt.UTC().Format("15:04:05.000"), len(bestSymptoms), dnsHTTPWindow)
 	d.roles[best.ID] = eventRootCause
 	for _, h := range bestSymptoms {
 		d.roles[h.ID] = eventSymptom

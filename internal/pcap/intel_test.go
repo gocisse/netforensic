@@ -364,3 +364,53 @@ func TestTCPPayloadLen(t *testing.T) {
 	// Without an IP layer the captured length is all there is.
 	assert.Equal(t, 3, tcpPayloadLen(gopacket.NewPacket(nil, layers.LayerTypeTCP, gopacket.Default), &layers.TCP{BaseLayer: layers.BaseLayer{Payload: []byte("abc")}}))
 }
+
+func TestFillICMPOriginal(t *testing.T) {
+	ipHeader := func(ihl int, proto byte, src, dst [4]byte) []byte {
+		h := make([]byte, ihl)
+		h[0] = 0x40 | byte(ihl/4)
+		h[9] = proto
+		copy(h[12:], src[:])
+		copy(h[16:], dst[:])
+		return h
+	}
+	tcpPorts := []byte{0x9c, 0x40, 0x01, 0xbb} // 40000 -> 443
+	tests := []struct {
+		name    string
+		typ     uint8
+		payload []byte
+		want    models.PacketInfo
+	}{
+		{"tcp", 3, append(ipHeader(20, 6, [4]byte{10, 0, 0, 1}, [4]byte{192, 168, 9, 10}), tcpPorts...),
+			models.PacketInfo{ICMPOrigSrcIP: "10.0.0.1", ICMPOrigDstIP: "192.168.9.10", ICMPOrigSrcPort: 40000, ICMPOrigDstPort: 443, ICMPOrigProto: "TCP"}},
+		{"udp with IP options", 11, append(ipHeader(24, 17, [4]byte{10, 0, 0, 1}, [4]byte{8, 8, 8, 8}), 0x00, 0x35, 0xd4, 0x31),
+			models.PacketInfo{ICMPOrigSrcIP: "10.0.0.1", ICMPOrigDstIP: "8.8.8.8", ICMPOrigSrcPort: 53, ICMPOrigDstPort: 54321, ICMPOrigProto: "UDP"}},
+		{"icmp has no ports", 3, append(ipHeader(20, 1, [4]byte{10, 0, 0, 1}, [4]byte{10, 0, 0, 9}), 8, 0, 0, 0),
+			models.PacketInfo{ICMPOrigSrcIP: "10.0.0.1", ICMPOrigDstIP: "10.0.0.9", ICMPOrigProto: "ICMP"}},
+		{"other protocol", 3, append(ipHeader(20, 47, [4]byte{10, 0, 0, 1}, [4]byte{10, 0, 0, 9}), 0, 0, 0, 0),
+			models.PacketInfo{ICMPOrigSrcIP: "10.0.0.1", ICMPOrigDstIP: "10.0.0.9", ICMPOrigProto: "IP proto 47"}},
+		{"ports cut off by a short quote", 3, ipHeader(20, 6, [4]byte{10, 0, 0, 1}, [4]byte{10, 0, 0, 9}),
+			models.PacketInfo{ICMPOrigSrcIP: "10.0.0.1", ICMPOrigDstIP: "10.0.0.9", ICMPOrigProto: "TCP"}},
+		{"echo request is not an error", 8, append(ipHeader(20, 6, [4]byte{1, 1, 1, 1}, [4]byte{2, 2, 2, 2}), tcpPorts...), models.PacketInfo{}},
+		{"payload too short", 3, []byte{0x45, 0, 0}, models.PacketInfo{}},
+		{"not IPv4", 3, append([]byte{0x60}, make([]byte, 40)...), models.PacketInfo{}},
+		{"bogus header length", 3, append([]byte{0x41}, make([]byte, 40)...), models.PacketInfo{}},
+		{"header longer than payload", 3, append(ipHeader(20, 6, [4]byte{}, [4]byte{}), 0)[:20], models.PacketInfo{ICMPOrigSrcIP: "0.0.0.0", ICMPOrigDstIP: "0.0.0.0", ICMPOrigProto: "TCP"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := models.PacketInfo{ICMPType: tt.typ}
+			fillICMPOriginal(&got, tt.payload)
+			tt.want.ICMPType = tt.typ
+			assert.Equal(t, tt.want, got)
+		})
+	}
+
+	t.Run("truncated IP header with a large IHL", func(t *testing.T) {
+		h := ipHeader(20, 6, [4]byte{}, [4]byte{})
+		h[0] = 0x4f // claims 60 bytes
+		got := models.PacketInfo{ICMPType: 3}
+		fillICMPOriginal(&got, h)
+		assert.Equal(t, models.PacketInfo{ICMPType: 3}, got)
+	})
+}

@@ -146,6 +146,7 @@ func packetInfo(pkt gopacket.Packet) (models.PacketInfo, bool) {
 		info.Protocol = models.ProtocolICMP
 		info.ICMPType, info.ICMPCode = ic.TypeCode.Type(), ic.TypeCode.Code()
 		info.ICMPMessage = icmpMessage(info.ICMPType, info.ICMPCode)
+		fillICMPOriginal(&info, ic.Payload)
 	case pkt.Layer(layers.LayerTypeICMPv6) != nil:
 		info.Protocol = models.ProtocolICMP
 	}
@@ -239,6 +240,42 @@ var icmpCodeNames = map[uint8]map[uint8]string{
 		10: "Host Administratively Prohibited", 13: "Communication Administratively Prohibited"},
 	5:  {0: "Redirect for Network", 1: "Redirect for Host", 2: "Redirect for TOS and Network", 3: "Redirect for TOS and Host"},
 	11: {0: "TTL Exceeded in Transit", 1: "Fragment Reassembly Time Exceeded"},
+}
+
+// fillICMPOriginal extracts the quoted original datagram from the payload of
+// an ICMP error message (destination unreachable, source quench, redirect,
+// time exceeded, parameter problem): its IPv4 header and the first bytes of
+// its TCP or UDP header.
+func fillICMPOriginal(info *models.PacketInfo, payload []byte) {
+	switch info.ICMPType {
+	case 3, 4, 5, 11, 12:
+	default:
+		return
+	}
+	if len(payload) < 20 || payload[0]>>4 != 4 {
+		return
+	}
+	ihl := int(payload[0]&0x0f) * 4
+	if ihl < 20 || len(payload) < ihl {
+		return
+	}
+	info.ICMPOrigSrcIP = net.IP(payload[12:16]).String()
+	info.ICMPOrigDstIP = net.IP(payload[16:20]).String()
+	switch payload[9] {
+	case 1:
+		info.ICMPOrigProto = string(models.ProtocolICMP)
+	case 6, 17:
+		info.ICMPOrigProto = string(models.ProtocolTCP)
+		if payload[9] == 17 {
+			info.ICMPOrigProto = string(models.ProtocolUDP)
+		}
+		if len(payload) >= ihl+4 {
+			info.ICMPOrigSrcPort = uint16(payload[ihl])<<8 | uint16(payload[ihl+1])
+			info.ICMPOrigDstPort = uint16(payload[ihl+2])<<8 | uint16(payload[ihl+3])
+		}
+	default:
+		info.ICMPOrigProto = fmt.Sprintf("IP proto %d", payload[9])
+	}
 }
 
 // icmpMessage returns a human-readable description of an ICMPv4 type and code.

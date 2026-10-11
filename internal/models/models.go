@@ -71,6 +71,15 @@ type PacketInfo struct {
 	ICMPCode    uint8  `json:"icmp_code,omitempty"`
 	ICMPMessage string `json:"icmp_message,omitempty"` // human-readable, e.g. "Destination Unreachable: Port Unreachable"
 
+	// The packet an ICMP error message is about, quoted in its payload:
+	// the original source and destination, and their ports if the packet
+	// was TCP or UDP. Empty for other ICMP messages.
+	ICMPOrigSrcIP   string `json:"icmp_orig_src_ip,omitempty"`
+	ICMPOrigDstIP   string `json:"icmp_orig_dst_ip,omitempty"`
+	ICMPOrigSrcPort uint16 `json:"icmp_orig_src_port,omitempty"`
+	ICMPOrigDstPort uint16 `json:"icmp_orig_dst_port,omitempty"`
+	ICMPOrigProto   string `json:"icmp_orig_proto,omitempty"`
+
 	// ARP fields are set on ARP packets (Protocol ARP). SrcIP and DstIP hold
 	// the sender and target protocol addresses.
 	ARPOperation string `json:"arp_operation,omitempty"` // "request" or "reply"
@@ -155,6 +164,16 @@ type Issue struct {
 	Domain      string    `json:"domain,omitempty"`  // Optional: domain or HTTP host involved, used for correlation
 	Target      string    `json:"target,omitempty"`  // Optional: "ip:port" the issue is about, used for correlation
 	Count       int       `json:"count,omitempty"`   // Optional: number of events folded into this issue
+
+	// Occurrences lists the individual events folded into an aggregated
+	// issue, for correlation. It is not serialized.
+	Occurrences []Occurrence `json:"-"`
+}
+
+// Occurrence is one event behind an aggregated issue.
+type Occurrence struct {
+	Time    time.Time
+	Subject string // for example the queried domain name
 }
 
 // TimelineEvent is one entry in the chronological incident timeline.

@@ -3,6 +3,7 @@ package analyzer
 import (
 	"fmt"
 	"sort"
+	"strings"
 
 	"github.com/gocisse/netforensic/internal/models"
 )
@@ -14,21 +15,26 @@ const (
 )
 
 type icmpKey struct {
-	typ, code uint8
-	src, dst  string
+	typ    uint8
+	router string
 }
 
-// analyzeICMP reports ICMP error messages:
+// analyzeICMP reports ICMP error messages, folded per sending router and
+// message type:
 //   - Destination Unreachable, type 3 (error)
 //   - Time Exceeded, type 11 (warning): possible routing loop
 //   - Redirect, type 5 (info)
 //
-// Repeats of the same message between the same hosts are folded into one
-// issue that carries the count.
+// Each issue names the router, how many messages it sent and the three
+// targets (the original destination quoted in the error) hit most often.
 func analyzeICMP(packets []models.PacketInfo) []models.Issue {
 	type group struct {
-		first models.PacketInfo
-		count int
+		first   models.PacketInfo
+		count   int
+		targets map[string]int
+		codes   map[string]int
+		victims map[string]struct{} // hosts that received the errors
+		occ     []models.Occurrence
 	}
 	groups := make(map[icmpKey]*group)
 	var order []icmpKey
@@ -42,14 +48,23 @@ func analyzeICMP(packets []models.PacketInfo) []models.Issue {
 		default:
 			continue
 		}
-		k := icmpKey{p.ICMPType, p.ICMPCode, p.SrcIP, p.DstIP}
+		k := icmpKey{p.ICMPType, p.SrcIP}
 		g, ok := groups[k]
 		if !ok {
-			g = &group{first: p}
+			g = &group{first: p, targets: map[string]int{}, codes: map[string]int{}, victims: map[string]struct{}{}}
 			groups[k] = g
 			order = append(order, k)
 		}
 		g.count++
+		target := icmpTarget(p)
+		g.targets[target]++
+		msg := p.ICMPMessage
+		if msg == "" {
+			msg = fmt.Sprintf("type %d code %d", p.ICMPType, p.ICMPCode)
+		}
+		g.codes[msg]++
+		g.victims[p.DstIP] = struct{}{}
+		g.occ = append(g.occ, models.Occurrence{Time: p.Timestamp, Subject: target})
 		if p.Timestamp.Before(g.first.Timestamp) {
 			g.first = p
 		}
@@ -58,38 +73,62 @@ func analyzeICMP(packets []models.PacketInfo) []models.Issue {
 	issues := make([]models.Issue, 0, len(order))
 	for _, k := range order {
 		g := groups[k]
-		p := g.first
-		msg := p.ICMPMessage
-		if msg == "" {
-			msg = fmt.Sprintf("type %d code %d", p.ICMPType, p.ICMPCode)
+		top := topCounts(g.targets, 3)
+		parts := make([]string, len(top))
+		for i, t := range top {
+			parts[i] = fmt.Sprintf("%s (%d)", t.name, t.n)
 		}
-		times := ""
-		if g.count > 1 {
-			times = fmt.Sprintf(" (%d times)", g.count)
+		label := "Top 3 targets"
+		if len(g.targets) <= 3 {
+			label = "Targets"
 		}
 
 		var sev models.Severity
-		var title, desc string
-		switch p.ICMPType {
+		var title, kind, hint string
+		switch k.typ {
 		case icmpDestUnreachable:
-			sev, title = models.SeverityError, "ICMP Destination Unreachable"
-			desc = fmt.Sprintf("%s reported %s for traffic from %s%s", p.SrcIP, msg, p.DstIP, times)
+			sev, title, kind = models.SeverityError, "ICMP Destination Unreachable", "Destination Unreachable"
 		case icmpTimeExceeded:
-			sev, title = models.SeverityWarning, "ICMP Time Exceeded"
-			desc = fmt.Sprintf("%s reported %s for traffic from %s%s; possible routing loop or too-low TTL", p.SrcIP, msg, p.DstIP, times)
+			sev, title, kind = models.SeverityWarning, "ICMP Time Exceeded", "Time Exceeded"
+			hint = " Possible routing loop or too-low TTL."
 		default:
-			sev, title = models.SeverityInfo, "ICMP Redirect"
-			desc = fmt.Sprintf("%s redirected %s to a better route (%s)%s", p.SrcIP, p.DstIP, msg, times)
+			sev, title, kind = models.SeverityInfo, "ICMP Redirect", "Redirect"
 		}
+		desc := fmt.Sprintf("Router %s sent %s to %s. %s: %s.", k.router, count(g.count, kind+" message", kind+" messages"), count(len(g.victims), "host", "hosts"), label, strings.Join(parts, ", "))
+		reasons := topCounts(g.codes, 3)
+		rp := make([]string, len(reasons))
+		for i, r := range reasons {
+			name := r.name
+			if _, after, ok := strings.Cut(name, ": "); ok {
+				name = after
+			}
+			rp[i] = fmt.Sprintf("%s (%d)", name, r.n)
+		}
+		desc += " Reasons: " + strings.Join(rp, ", ") + "."
 		issues = append(issues, models.Issue{
-			ID:          fmt.Sprintf("icmp-%d-%d-%d-%s-%s", p.ICMPType, p.ICMPCode, p.Timestamp.UnixNano(), p.SrcIP, p.DstIP),
+			ID:          fmt.Sprintf("icmp-%d-%s", k.typ, k.router),
 			Severity:    sev,
 			Category:    "ICMP",
 			Title:       title,
-			Description: desc,
-			Timestamp:   p.Timestamp,
+			Description: desc + hint,
+			Timestamp:   g.first.Timestamp,
+			Target:      top[0].name,
+			Count:       g.count,
+			Occurrences: g.occ,
 		})
 	}
 	sort.SliceStable(issues, func(i, j int) bool { return issues[i].Timestamp.Before(issues[j].Timestamp) })
 	return issues
+}
+
+// icmpTarget names what an ICMP error was about: the original destination
+// as ip:port when the quoted packet was TCP or UDP, else just the IP.
+func icmpTarget(p models.PacketInfo) string {
+	switch {
+	case p.ICMPOrigDstIP == "":
+		return "unknown"
+	case p.ICMPOrigDstPort != 0:
+		return fmt.Sprintf("%s:%d", p.ICMPOrigDstIP, p.ICMPOrigDstPort)
+	}
+	return p.ICMPOrigDstIP
 }
