@@ -9,7 +9,13 @@ import (
 	"github.com/gocisse/netforensic/internal/models"
 )
 
-const dnsHTTPWindow = 5 * time.Second
+const (
+	dnsHTTPWindow = 5 * time.Second
+
+	// refusedSpike is the number of refused connections to one ip:port that
+	// makes "service unavailable" the primary cause.
+	refusedSpike = 5
+)
 
 // Health score deductions per issue severity.
 var severityPenalty = map[models.Severity]int{
@@ -33,6 +39,7 @@ const (
 	causeNone       = ""
 	causeDNSHTTP    = "dns-http"
 	causeCongestion = "congestion"
+	causeRefused    = "refused"
 	causeIssue      = "issue"
 )
 
@@ -41,8 +48,11 @@ const (
 //     domain (or, when the HTTP host is unknown, any HTTP 5xx): the DNS issue
 //     is the primary cause and the HTTP errors are symptoms
 //   - high RTT together with TCP retransmits on a flow: network congestion
+//   - five or more connections refused (RST in reply to SYN) by one ip:port:
+//     the service is down or a firewall rejects it
 //
-// A DNS-to-HTTP link takes priority, then a Critical issue, then congestion,
+// A DNS-to-HTTP link takes priority, then a Critical issue, then a spike of
+// refused connections to one service, then congestion,
 // then the most severe remaining issue. correlate is pure.
 func correlate(packets []models.PacketInfo, flows []models.Flow, issues []models.Issue) models.RootCauseAnalysis {
 	sorted := append([]models.Issue(nil), issues...)
@@ -52,6 +62,7 @@ func correlate(packets []models.PacketInfo, flows []models.Flow, issues []models
 	switch {
 	case d.dnsHTTP(sorted):
 	case d.critical(sorted):
+	case d.refusedSpike(sorted):
 	case d.congestion(flows, sorted):
 	case d.worst(sorted):
 	default:
@@ -142,6 +153,42 @@ func (d *diagnosis) critical(issues []models.Issue) bool {
 	return false
 }
 
+// refusedSpike makes a service that refused many connections the primary
+// cause. The server endpoint with the most refusals wins, provided it
+// reached refusedSpike.
+func (d *diagnosis) refusedSpike(issues []models.Issue) bool {
+	var worst models.Issue
+	total, targets := 0, 0
+	for _, is := range issues {
+		if is.Title != titleRefused {
+			continue
+		}
+		total += is.Count
+		targets++
+		if is.Count > worst.Count {
+			worst = is
+		}
+	}
+	if worst.Count < refusedSpike {
+		return false
+	}
+
+	d.kind, d.category = causeRefused, "Connection"
+	d.cause = "Service Unavailable / Port Closed on " + worst.Target
+	d.confidence = "high"
+	d.summary = fmt.Sprintf("%s refused %d connection attempt(s) with an RST instead of a SYN-ACK", worst.Target, worst.Count)
+	if targets > 1 {
+		d.summary += fmt.Sprintf("; %d attempts were refused in total across %d server endpoints", total, targets)
+	}
+	d.summary += ". The service is not listening, or a firewall actively rejects it."
+	for _, is := range issues {
+		if is.Title == titleRefused {
+			d.roles[is.ID] = eventRootCause
+		}
+	}
+	return true
+}
+
 // congestion detects flows with both high average RTT and retransmits.
 func (d *diagnosis) congestion(flows []models.Flow, issues []models.Issue) bool {
 	hot := make(map[string]models.Flow)
@@ -203,6 +250,9 @@ func (d *diagnosis) worst(issues []models.Issue) bool {
 
 func (d *diagnosis) fromIssue(is models.Issue, confidence string) {
 	d.kind, d.category, d.domain = causeIssue, is.Category, is.Domain
+	if is.Category == "Connection" {
+		d.category = is.Title // refused and reset connections need different advice
+	}
 	d.cause, d.confidence, d.summary = is.Title, confidence, is.Description
 	if c, ok := categoryCause[is.Category]; ok {
 		d.cause = c
@@ -292,6 +342,8 @@ func recommendations(kind, domain, category string) []string {
 			"Check the resolver's upstream reachability and DNSSEC validation; SERVFAIL usually means unreachable authoritative servers or a broken signature chain.",
 			"Re-test the HTTP service once DNS resolves; the 5xx errors should clear without any web server change.",
 		}
+	case causeRefused:
+		return categoryRecommendations[titleRefused]
 	case causeCongestion:
 		return []string{
 			"Inspect interface error, drop and queue counters on the devices along the path, starting nearest the high-RTT flows.",
@@ -322,6 +374,12 @@ var categoryCause = map[string]string{
 }
 
 var categoryRecommendations = map[string][]string{
+	titleRefused: {
+		"Verify if the service is running on the target port, or if a firewall is actively rejecting connections with an RST instead of dropping them.",
+	},
+	titleAborted: {
+		"Investigate application-level crashes, firewall state-table evictions, or middleboxes forcefully tearing down the connection.",
+	},
 	"DNS": {
 		"Query the affected names against another resolver to see whether the failure is specific to the configured one.",
 		"Check resolver health, upstream forwarders and DNSSEC validation.",

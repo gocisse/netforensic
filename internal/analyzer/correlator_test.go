@@ -353,14 +353,18 @@ func TestPerformanceRealLab5SlowApplication(t *testing.T) {
 	assert.Contains(t, issueTitles(res), "Slow Server Response")
 	assert.Zero(t, flow.Retransmits, "keep-alive probes are not retransmissions")
 	assert.NotContains(t, issueTitles(res), "TCP Retransmissions detected")
-	assert.Equal(t, "Slow Server Response", res.Diagnosis.PrimaryCause)
-	assert.Equal(t, 90, res.Diagnosis.HealthScore)
+	// The capture ends with the server resetting the connection (frame 84,
+	// 5m24s in). That error outranks the slow-response warning, which stays
+	// in the timeline and the issue list.
+	assert.Contains(t, issueTitles(res), titleAborted)
+	assert.Equal(t, titleAborted, res.Diagnosis.PrimaryCause)
+	assert.Equal(t, 70, res.Diagnosis.HealthScore)
 
-	var inTimeline bool
+	var slowInTimeline bool
 	for _, e := range res.Diagnosis.Timeline {
-		inTimeline = inTimeline || (e.EventType == eventRootCause && strings.Contains(e.Description, "Slow Server Response"))
+		slowInTimeline = slowInTimeline || (e.EventType == eventIssue && strings.Contains(e.Description, "Slow Server Response"))
 	}
-	assert.True(t, inTimeline, "slow response is the root-cause event in the timeline")
+	assert.True(t, slowInTimeline, "the slow response is still reported in the timeline")
 
 	require.NotEmpty(t, res.SlowFlows)
 	assert.Equal(t, flow.ID, res.SlowFlows[0].ID)

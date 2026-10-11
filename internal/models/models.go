@@ -135,6 +135,8 @@ type Issue struct {
 	Timestamp   time.Time `json:"timestamp"`
 	FlowID      string    `json:"flow_id,omitempty"` // Optional: link to specific flow
 	Domain      string    `json:"domain,omitempty"`  // Optional: domain or HTTP host involved, used for correlation
+	Target      string    `json:"target,omitempty"`  // Optional: "ip:port" the issue is about, used for correlation
+	Count       int       `json:"count,omitempty"`   // Optional: number of events folded into this issue
 }
 
 // TimelineEvent is one entry in the chronological incident timeline.

@@ -42,6 +42,7 @@ func AnalyzeWithIssues(packets []models.PacketInfo, service string, extra ...mod
 	issues = append(issues, analyzeTLS(packets)...)
 	issues = append(issues, analyzeICMP(packets)...)
 	issues = append(issues, analyzeARP(packets)...)
+	issues = append(issues, analyzeResets(packets)...)
 	issues = append(issues, perfIssues...)
 	issues = append(issues, extra...)
 	if issues == nil {
