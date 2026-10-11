@@ -153,20 +153,32 @@ Vite dev server proxies `/api` to `localhost:8181`. After changing the UI, run
 
 ## Known limitations
 
-- **Tunnels (GRE, IP-in-IP).** Captures containing GRE or IP-in-IP tunnels may
-  show inflated flow and retransmit counts, because the inner traffic is
-  aggregated by the outer IP addresses and the inner ports. Full tunnel
-  decapsulation is planned for a future release. (`The-Ultimate-PCAP.pcapng`,
-  for example, reports about three times the retransmissions that Wireshark
-  does.)
+- **Tunnels (GRE, IPv6-in-IPv4).** Captures containing GRE and IPv6-in-IPv4
+  tunnels may show inflated flow and retransmit counts, because the inner
+  traffic is aggregated by the outer IP addresses and the inner ports. Full
+  tunnel decapsulation is planned for a future release.
+  (`The-Ultimate-PCAP.pcapng`, for example, reports about three times the
+  retransmissions that Wireshark does.) Additionally, IP packets with protocol
+  numbers the tool does not decode (e.g., SCTP, OSPF) are counted as "Other" in
+  the protocol distribution and are not analyzed for issues.
 - **One-sided (asymmetric) captures.** A capture point that sees only one
   direction of a conversation (asymmetric routing, a SPAN port on one link)
   cannot show replies. Such SYNs are reported as "Unanswered SYN (No reply
   captured ...)" without claiming a cause, and other findings that depend on
   both directions may be missing.
+
+  When many unanswered SYNs target the same destination (a SYN flood pattern),
+  the tool reports them as a separate "Possible SYN Flood" issue instead. That
+  issue does not include the asymmetric-capture caveat, but the same
+  explanation can apply: on a one-sided capture, many SYNs with no captured
+  reply can simply mean that the replies took another path
+  (`cisco-example-lan.pcap` is such a capture, and is flagged this way).
 - **Unsupported frames.** Frames with a link-layer type this tool cannot decode
   (for example Ethernet mPackets) and non-IP traffic (spanning tree, LLDP, ...)
-  are skipped. A "Skipped Frames" note says how many; it costs no health points.
+  are skipped. (Note: the tool reports these as "link type 18" because the pcap
+  library truncates link-layer type numbers to 8 bits. The actual type for
+  Ethernet mPackets is 274.) A "Skipped Frames" note says how many; it costs no
+  health points.
 - **Truncated files** are analyzed up to the cut and flagged; a file cut inside
   its first header cannot be read at all.
 - **Health score.** It starts at 100 and drops with every issue. It goes below 0
