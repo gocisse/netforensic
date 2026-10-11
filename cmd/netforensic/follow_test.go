@@ -169,13 +169,13 @@ func TestRootCmdFilters(t *testing.T) {
 
 		out, errOut, err := run("--src-ip", "10.0.0.1", "--dst-port", "53")
 		require.NoError(t, err)
-		assert.Contains(t, out, "Analyzed 0 packets")
+		assert.Contains(t, out, "No packets matched the specified filters. Nothing to analyze.")
 		assert.Contains(t, errOut, "no packets match the filters")
 	})
 	t.Run("dst-port zero is a real filter", func(t *testing.T) {
 		out, _, err := run("--dst-port", "0")
 		require.NoError(t, err)
-		assert.Contains(t, out, "Analyzed 0 packets")
+		assert.Contains(t, out, "No packets matched the specified filters")
 	})
 	t.Run("filters apply to json output", func(t *testing.T) {
 		out, _, err := run("--dst-port", "53", "-o", "json")

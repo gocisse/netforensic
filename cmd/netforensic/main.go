@@ -125,12 +125,18 @@ func newRootCmd() *cobra.Command {
 				return followPackets(cmd.OutOrStdout(), packets, followPkts)
 			}
 
+			if len(packets) == 0 {
+				// Nothing to analyze: a health score would claim a clean bill
+				// of health for traffic that was never looked at.
+				return printNothingToAnalyze(cmd.OutOrStdout(), args[0], output == "json", filtersActive, notes)
+			}
+
 			res := analyzer.AnalyzeWithIssues(packets, "all", notes...) // already filtered
 			res.FileName = args[0]
 
 			if output == "json" {
 				if verbose { // keep stdout valid JSON
-					if err := printVerbose(cmd.ErrOrStderr(), packets, filtersActive); err != nil {
+					if err := printVerbose(cmd.ErrOrStderr(), packets); err != nil {
 						return fmt.Errorf("write packet table: %w", err)
 					}
 				}
@@ -146,7 +152,7 @@ func newRootCmd() *cobra.Command {
 				return fmt.Errorf("write triage report: %w", err)
 			}
 			if verbose {
-				if err := printVerbose(cmd.OutOrStdout(), packets, filtersActive); err != nil {
+				if err := printVerbose(cmd.OutOrStdout(), packets); err != nil {
 					return fmt.Errorf("write packet table: %w", err)
 				}
 			}

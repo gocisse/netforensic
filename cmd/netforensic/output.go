@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
 	"sort"
@@ -101,17 +102,40 @@ func printIssueSummary(w io.Writer, issues []models.Issue) {
 	}
 }
 
-// printVerbose prints the packet table followed by a blank line, or, when
-// filters removed every packet, a message saying so instead of an empty table.
-func printVerbose(w io.Writer, packets []models.PacketInfo, filtersActive bool) error {
-	if len(packets) == 0 && filtersActive {
-		_, err := fmt.Fprintln(w, "0 packets matched the specified filters")
-		fmt.Fprintln(w)
-		return err
-	}
+// printVerbose prints the packet table followed by a blank line.
+func printVerbose(w io.Writer, packets []models.PacketInfo) error {
 	if err := printPacketTable(w, packets); err != nil {
 		return err
 	}
 	fmt.Fprintln(w)
 	return nil
+}
+
+// nothingToAnalyze is the JSON result when no packets were left to analyze.
+type nothingToAnalyze struct {
+	FileName     string         `json:"file_name"`
+	TotalPackets int            `json:"total_packets"`
+	TotalFlows   int            `json:"total_flows"`
+	Issues       []models.Issue `json:"issues"`
+	Message      string         `json:"message"`
+}
+
+// printNothingToAnalyze reports that no packets remain to analyze, in place
+// of a triage report: when filters removed them all, or the capture holds
+// none. It is not an error.
+func printNothingToAnalyze(w io.Writer, file string, asJSON, filtersActive bool, notes []models.Issue) error {
+	msg := "The capture contains no analyzable packets"
+	if filtersActive {
+		msg = "No packets matched the specified filters"
+	}
+	if !asJSON {
+		_, err := fmt.Fprintf(w, "%s. Nothing to analyze.\n", msg)
+		return err
+	}
+	if notes == nil {
+		notes = []models.Issue{}
+	}
+	enc := json.NewEncoder(w)
+	enc.SetIndent("", "  ")
+	return enc.Encode(nothingToAnalyze{FileName: file, Issues: notes, Message: msg})
 }

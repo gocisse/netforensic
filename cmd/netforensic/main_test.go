@@ -10,6 +10,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/google/gopacket/layers"
+	"github.com/google/gopacket/pcapgo"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -113,8 +115,8 @@ func TestRootCmdJSON(t *testing.T) {
 		cmd.SetOut(&out)
 		cmd.SetArgs([]string{"--output", "json", "-s", "tls", sample})
 		require.NoError(t, cmd.Execute())
-		assert.Contains(t, out.String(), `"issues": []`)
-		assert.Contains(t, out.String(), `"top_talkers": []`)
+		assert.Contains(t, out.String(), `"issues": []`, "an empty selection still has an issues array, never null")
+		assert.Contains(t, out.String(), `"message": "No packets matched the specified filters"`)
 	})
 
 	t.Run("invalid format", func(t *testing.T) {
@@ -144,8 +146,7 @@ func TestRootCmdServiceFilterAppliesToTableAndAnalysis(t *testing.T) {
 		t.Run("-s "+svc+" matches nothing", func(t *testing.T) {
 			out, errOut, err := run("-v", "-s", svc)
 			require.NoError(t, err)
-			assert.Contains(t, out, "Analyzed 0 packets in 0 flows, found 0 issues")
-			assert.Contains(t, out, "0 packets matched the specified filters")
+			assert.Equal(t, "No packets matched the specified filters. Nothing to analyze.\n", out)
 			assert.NotContains(t, out, "186.15.230.24:80", "no port 80 traffic may be shown")
 			assert.NotContains(t, out, "SOURCE", "no table header for an empty selection")
 			assert.Contains(t, errOut, "no packets match the filters (202 packets in the capture)")
@@ -179,7 +180,7 @@ func TestRootCmdServiceFilterAppliesToTableAndAnalysis(t *testing.T) {
 	t.Run("service and ip filters combine", func(t *testing.T) {
 		out, _, err := run("-v", "-s", "443", "--src-ip", "10.0.0.145")
 		require.NoError(t, err)
-		assert.Contains(t, out, "Analyzed 0 packets")
+		assert.Contains(t, out, "No packets matched the specified filters")
 		assert.NotContains(t, out, "10.0.0.145:54436")
 	})
 
@@ -187,7 +188,7 @@ func TestRootCmdServiceFilterAppliesToTableAndAnalysis(t *testing.T) {
 		out, errOut, err := run("-v", "-o", "json", "-s", "443")
 		require.NoError(t, err)
 		assert.Contains(t, out, `"total_packets": 0`)
-		assert.Contains(t, errOut, "0 packets matched the specified filters")
+		assert.Empty(t, errOut[strings.Index(errOut, "\n")+1:], "no table either: only the warning line")
 		assert.NotContains(t, errOut, "186.15.230.24:80")
 	})
 
@@ -198,5 +199,87 @@ func TestRootCmdServiceFilterAppliesToTableAndAnalysis(t *testing.T) {
 		out, _, err := run("-s", "80", "--follow", "10.0.0.145:54436-186.15.230.24:80")
 		require.NoError(t, err)
 		assert.Contains(t, out, "Following stream")
+	})
+}
+
+func TestRootCmdNothingToAnalyze(t *testing.T) {
+	const lab3 = "../../testdata/Lab-3-TCP-Retrans.pcapng" // port 80 only
+	run := func(args ...string) (string, string, error) {
+		var out, errOut bytes.Buffer
+		cmd := newRootCmd()
+		cmd.SetOut(&out)
+		cmd.SetErr(&errOut)
+		cmd.SetArgs(append(args, lab3))
+		err := cmd.Execute()
+		return out.String(), errOut.String(), err
+	}
+
+	t.Run("text: no health score, clean exit", func(t *testing.T) {
+		out, errOut, err := run("-s", "443")
+		require.NoError(t, err, "an empty selection is not an error")
+		assert.Equal(t, "No packets matched the specified filters. Nothing to analyze.\n", out)
+		assert.NotContains(t, out, "Health Score")
+		assert.NotContains(t, out, "100/100")
+		assert.NotContains(t, out, "HEALTHY")
+		assert.NotContains(t, out, "TRIAGE REPORT")
+		assert.Contains(t, errOut, "warning: no packets match the filters (202 packets in the capture)")
+	})
+	t.Run("text with -v prints no table", func(t *testing.T) {
+		out, _, err := run("-v", "-s", "443")
+		require.NoError(t, err)
+		assert.NotContains(t, out, "SOURCE")
+		assert.NotContains(t, out, "Health Score")
+	})
+	t.Run("ip and port filters too", func(t *testing.T) {
+		for _, args := range [][]string{{"--src-ip", "9.9.9.9"}, {"--dst-port", "443"}, {"--src-port", "1"}} {
+			out, _, err := run(args...)
+			require.NoError(t, err, args)
+			assert.Contains(t, out, "No packets matched the specified filters. Nothing to analyze.", args)
+			assert.NotContains(t, out, "Health Score", args)
+		}
+	})
+	t.Run("json: minimal object", func(t *testing.T) {
+		out, _, err := run("-o", "json", "-s", "443")
+		require.NoError(t, err)
+		var got map[string]any
+		require.NoError(t, json.Unmarshal([]byte(out), &got))
+		assert.Equal(t, map[string]any{
+			"file_name":     lab3,
+			"total_packets": float64(0),
+			"total_flows":   float64(0),
+			"issues":        []any{},
+			"message":       "No packets matched the specified filters",
+		}, got)
+		assert.NotContains(t, out, "health_score")
+		assert.NotContains(t, out, "diagnosis")
+	})
+	t.Run("matching traffic still gets a full report", func(t *testing.T) {
+		out, _, err := run("-s", "80")
+		require.NoError(t, err)
+		assert.Contains(t, out, "Health Score: 80/100")
+		assert.NotContains(t, out, "Nothing to analyze")
+	})
+	t.Run("a capture with no packets at all", func(t *testing.T) {
+		path := filepath.Join(t.TempDir(), "empty.pcap")
+		f, err := os.Create(path)
+		require.NoError(t, err)
+		require.NoError(t, pcapgo.NewWriter(f).WriteFileHeader(65535, layers.LinkTypeEthernet))
+		require.NoError(t, f.Close())
+
+		var out bytes.Buffer
+		cmd := newRootCmd()
+		cmd.SetOut(&out)
+		cmd.SetErr(&bytes.Buffer{})
+		cmd.SetArgs([]string{path})
+		require.NoError(t, cmd.Execute())
+		assert.Equal(t, "The capture contains no analyzable packets. Nothing to analyze.\n", out.String(), "no filter was involved, so it does not blame one")
+
+		out.Reset()
+		cmd = newRootCmd()
+		cmd.SetOut(&out)
+		cmd.SetErr(&bytes.Buffer{})
+		cmd.SetArgs([]string{"-o", "json", path})
+		require.NoError(t, cmd.Execute())
+		assert.Contains(t, out.String(), `"message": "The capture contains no analyzable packets"`)
 	})
 }
