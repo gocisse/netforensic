@@ -141,6 +141,50 @@ func canonicalKey(p models.PacketInfo) (key flowKey, forward bool) {
 	return flowKey{src, dst, p.Protocol}, true
 }
 
+// retransmitDetector flags TCP segments that reuse a sequence number already
+// seen in the same direction of the same flow. It is fed packets in capture
+// order.
+type retransmitDetector struct {
+	seen    map[retransSeqKey]struct{}
+	nextSeq map[retransDirKey]uint32 // sequence number following the highest segment seen
+}
+
+type retransDirKey struct {
+	flow    flowKey
+	forward bool
+}
+
+type retransSeqKey struct {
+	dir retransDirKey
+	seq uint32
+}
+
+// observe reports whether p is a retransmission. Only packets that consume
+// sequence space (payload, SYN or FIN) are considered, since bare ACKs
+// legitimately repeat sequence numbers, and keep-alive probes are ignored
+// because they deliberately reuse the last sequence number.
+func (d *retransmitDetector) observe(key flowKey, forward bool, p models.PacketInfo) bool {
+	if p.Protocol != models.ProtocolTCP || !consumesSeq(p) {
+		return false
+	}
+	if d.seen == nil {
+		d.seen = make(map[retransSeqKey]struct{})
+		d.nextSeq = make(map[retransDirKey]uint32)
+	}
+	dk := retransDirKey{key, forward}
+	next, haveNext := d.nextSeq[dk]
+	if isKeepAlive(p, next, haveNext) {
+		return false
+	}
+	sk := retransSeqKey{dk, p.TCPSeq}
+	_, dup := d.seen[sk]
+	d.seen[sk] = struct{}{}
+	if end := p.TCPSeq + seqLen(p); !haveNext || int32(end-next) > 0 {
+		d.nextSeq[dk] = end
+	}
+	return dup
+}
+
 // aggregateFlows groups packets into bidirectional flows. Packets A->B and
 // B->A share one flow whose canonical source is the lesser (IP, port)
 // endpoint. BytesSent counts bytes from the canonical source and BytesRecv
@@ -151,18 +195,8 @@ func canonicalKey(p models.PacketInfo) (key flowKey, forward bool) {
 // packets that consume sequence space (payload, SYN or FIN) are considered;
 // bare ACKs legitimately repeat sequence numbers.
 func aggregateFlows(packets []models.PacketInfo) []models.Flow {
-	type seqKey struct {
-		flow    flowKey
-		forward bool
-		seq     uint32
-	}
-	type dirKey = struct {
-		flow    flowKey
-		forward bool
-	}
 	byKey := make(map[flowKey]*models.Flow)
-	seen := make(map[seqKey]struct{})
-	nextSeq := make(map[dirKey]uint32) // sequence number following the highest segment seen
+	var rd retransmitDetector
 
 	for _, p := range packets {
 		key, forward := canonicalKey(p)
@@ -188,22 +222,8 @@ func aggregateFlows(packets []models.PacketInfo) []models.Flow {
 		} else {
 			f.BytesRecv += p.Size
 		}
-		if p.Protocol == models.ProtocolTCP && consumesSeq(p) {
-			dk := dirKey{key, forward}
-			next, haveNext := nextSeq[dk]
-			if isKeepAlive(p, next, haveNext) {
-				// Keep-alive probes deliberately reuse the last sequence
-				// number; they are neither retransmissions nor new data.
-			} else {
-				sk := seqKey{key, forward, p.TCPSeq}
-				if _, dup := seen[sk]; dup {
-					f.Retransmits++
-				}
-				seen[sk] = struct{}{}
-				if end := p.TCPSeq + seqLen(p); !haveNext || int32(end-next) > 0 {
-					nextSeq[dk] = end
-				}
-			}
+		if rd.observe(key, forward, p) {
+			f.Retransmits++
 		}
 		if p.Timestamp.Before(f.StartTime) {
 			f.StartTime = p.Timestamp

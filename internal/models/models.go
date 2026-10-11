@@ -45,6 +45,9 @@ type PacketInfo struct {
 	// PayloadPreview holds the first bytes (at most 512) of the TCP or UDP
 	// payload for stream display. It is not serialized.
 	PayloadPreview []byte `json:"-"`
+	// Payload is the complete transport payload. It is only filled when the
+	// capture is read with pcap.ReadOptions.FullPayload.
+	Payload []byte `json:"-"`
 
 	// TCP handshake timeline of the flow this packet belongs to. The reader
 	// fills these on every packet of a flow once the whole capture has been

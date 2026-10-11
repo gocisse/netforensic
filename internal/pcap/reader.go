@@ -43,6 +43,19 @@ func (e *TruncatedError) Unwrap() error { return e.Err }
 // layer are skipped. If the file is cut off mid-record, the packets read so
 // far are returned together with a *TruncatedError.
 func ReadPackets(filePath string) ([]models.PacketInfo, error) {
+	return ReadPacketsWithOptions(filePath, ReadOptions{})
+}
+
+// ReadOptions tunes ReadPacketsWithOptions.
+type ReadOptions struct {
+	// FullPayload keeps the complete TCP/UDP payload of every packet in
+	// PacketInfo.Payload (needed to reconstruct streams), at the cost of
+	// memory proportional to the capture size.
+	FullPayload bool
+}
+
+// ReadPacketsWithOptions is ReadPackets with explicit options.
+func ReadPacketsWithOptions(filePath string, opts ReadOptions) ([]models.PacketInfo, error) {
 	f, err := os.Open(filePath)
 	if err != nil {
 		return nil, fmt.Errorf("open pcap file: %w", err)
@@ -74,6 +87,9 @@ func ReadPackets(filePath string) ([]models.PacketInfo, error) {
 		info, ok := packetInfo(pkt)
 		if !ok {
 			continue
+		}
+		if opts.FullPayload {
+			info.Payload = fullPayload(pkt)
 		}
 		info.Timestamp = ci.Timestamp
 		info.Size = ci.Length
@@ -239,6 +255,20 @@ func icmpMessage(typ, code uint8) string {
 
 // maxPayloadPreview bounds the payload bytes kept per packet.
 const maxPayloadPreview = 512
+
+// fullPayload returns a copy of the whole TCP or UDP payload of pkt, or nil.
+func fullPayload(pkt gopacket.Packet) []byte {
+	var payload []byte
+	if l := pkt.Layer(layers.LayerTypeTCP); l != nil {
+		payload = l.(*layers.TCP).Payload
+	} else if l := pkt.Layer(layers.LayerTypeUDP); l != nil {
+		payload = l.(*layers.UDP).Payload
+	}
+	if len(payload) == 0 {
+		return nil
+	}
+	return append([]byte(nil), payload...)
+}
 
 // previewPayload returns a copy of the first bytes of payload, or nil.
 func previewPayload(payload []byte) []byte {

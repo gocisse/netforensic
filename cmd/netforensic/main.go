@@ -44,10 +44,11 @@ func normalizeArgs(args []string) []string {
 // newRootCmd builds the netforensic root command.
 func newRootCmd() *cobra.Command {
 	var (
-		service string
-		verbose bool
-		output  string
-		follow  string
+		service    string
+		verbose    bool
+		output     string
+		follow     string
+		followPkts string
 
 		srcIP, dstIP string
 		srcPort      int
@@ -83,11 +84,15 @@ func newRootCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if follow != "" && output != "text" {
-				return fmt.Errorf("--follow only supports text output")
+			if follow != "" && followPkts != "" {
+				return fmt.Errorf("--follow and --follow-packets are mutually exclusive")
+			}
+			if (follow != "" || followPkts != "") && output != "text" {
+				return fmt.Errorf("--follow and --follow-packets only support text output")
 			}
 
-			packets, err := pcap.ReadPackets(args[0])
+			// Stream reconstruction needs whole payloads, not previews.
+			packets, err := pcap.ReadPacketsWithOptions(args[0], pcap.ReadOptions{FullPayload: follow != ""})
 			var truncated *pcap.TruncatedError
 			if errors.As(err, &truncated) {
 				fmt.Fprintf(cmd.ErrOrStderr(), "warning: %s is truncated; analyzing the %d packets read before the cut\n", args[0], len(packets))
@@ -108,6 +113,9 @@ func newRootCmd() *cobra.Command {
 
 			if follow != "" {
 				return followStream(cmd.OutOrStdout(), packets, follow)
+			}
+			if followPkts != "" {
+				return followPackets(cmd.OutOrStdout(), packets, followPkts)
 			}
 
 			res := analyzer.AnalyzeWithIssues(packets, service, notes...)
@@ -151,7 +159,8 @@ func newRootCmd() *cobra.Command {
 	cmd.Flags().StringVar(&dstIP, "dst-ip", "", "only analyze packets to this destination IP")
 	cmd.Flags().IntVar(&srcPort, "src-port", 0, "only analyze packets from this source port")
 	cmd.Flags().IntVar(&dstPort, "dst-port", 0, "only analyze packets to this destination port")
-	cmd.Flags().StringVar(&follow, "follow", "", "show the full conversation of a flow, e.g. 10.0.0.1:43210-10.0.0.2:443[/tcp]")
+	cmd.Flags().StringVar(&follow, "follow", "", "show the reconstructed application-layer conversation of a flow, e.g. 10.0.0.1:43210-10.0.0.2:443[/tcp]")
+	cmd.Flags().StringVar(&followPkts, "follow-packets", "", "show a flow packet by packet (flags, seq, payload dump, [RETRANS] markers)")
 	cmd.Flags().BoolVarP(&verbose, "verbose", "v", false, "print every packet read before the summary")
 
 	return cmd

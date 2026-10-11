@@ -33,6 +33,8 @@ type StreamEvent struct {
 	Summary   string   // one-line description
 	Detail    []string // extra lines such as HTTP headers and body preview
 	Payload   []byte   // first bytes of payload for generic TCP/UDP traffic
+
+	Retransmit bool // TCP segment that repeats an already-seen sequence number
 }
 
 // Conversation is the reconstructed packet exchange of a single flow.
@@ -40,7 +42,12 @@ type Conversation struct {
 	FlowID string
 	Client string // "ip:port" of the first sender
 	Server string
-	Events []StreamEvent
+	Events []StreamEvent // packet-level view, filled by Follow
+
+	// Messages is the reconstructed application-level view, filled by
+	// FollowStream. Retransmits counts the duplicate segments it dropped.
+	Messages    []StreamMessage
+	Retransmits int
 }
 
 // FollowError reports why a flow could not be followed and lists the flows
@@ -120,13 +127,14 @@ func parseFlowID(id string) (a, b endpoint, proto models.Protocol, err error) {
 	return eps[0], eps[1], proto, nil
 }
 
-// Follow reconstructs the conversation of the flow named by flowID, in
-// either direction, from packets. The returned error is a *FollowError
-// listing the available flows if flowID is malformed or matches nothing.
-func Follow(packets []models.PacketInfo, flowID string) (*Conversation, error) {
+// matchFlow returns the packets of the flow named by flowID, in either
+// direction and in chronological order, together with its conversation
+// header. The returned error is a *FollowError listing the available flows
+// if flowID is malformed or matches nothing.
+func matchFlow(packets []models.PacketInfo, flowID string) ([]models.PacketInfo, *Conversation, error) {
 	a, b, proto, err := parseFlowID(flowID)
 	if err != nil {
-		return nil, &FollowError{Reason: err.Error(), Available: ListFlows(packets)}
+		return nil, nil, &FollowError{Reason: err.Error(), Available: ListFlows(packets)}
 	}
 
 	var matched []models.PacketInfo
@@ -137,16 +145,35 @@ func Follow(packets []models.PacketInfo, flowID string) (*Conversation, error) {
 		}
 	}
 	if len(matched) == 0 {
-		return nil, &FollowError{Reason: fmt.Sprintf("flow %q not found in the capture", flowID), Available: ListFlows(packets)}
+		return nil, nil, &FollowError{Reason: fmt.Sprintf("flow %q not found in the capture", flowID), Available: ListFlows(packets)}
 	}
 	sort.SliceStable(matched, func(i, j int) bool { return matched[i].Timestamp.Before(matched[j].Timestamp) })
 
 	client := endpoint{matched[0].SrcIP, matched[0].SrcPort}
 	server := endpoint{matched[0].DstIP, matched[0].DstPort}
-	conv := &Conversation{FlowID: a.String() + "-" + b.String(), Client: client.String(), Server: server.String()}
+	return matched, &Conversation{FlowID: a.String() + "-" + b.String(), Client: client.String(), Server: server.String()}, nil
+}
+
+// isFromClient reports whether p was sent by the conversation's client.
+func (c *Conversation) isFromClient(p models.PacketInfo) bool {
+	return (endpoint{p.SrcIP, p.SrcPort}).String() == c.Client
+}
+
+// Follow returns the packet-by-packet conversation of the flow named by
+// flowID, with retransmitted segments marked. The returned error is a
+// *FollowError listing the available flows if flowID is malformed or
+// matches nothing.
+func Follow(packets []models.PacketInfo, flowID string) (*Conversation, error) {
+	matched, conv, err := matchFlow(packets, flowID)
+	if err != nil {
+		return nil, err
+	}
+	var rd retransmitDetector
 	for _, p := range matched {
 		ev := describePacket(p)
-		ev.ToServer = (endpoint{p.SrcIP, p.SrcPort}) == client
+		ev.ToServer = conv.isFromClient(p)
+		key, forward := canonicalKey(p)
+		ev.Retransmit = rd.observe(key, forward, p)
 		conv.Events = append(conv.Events, ev)
 	}
 	return conv, nil

@@ -1,6 +1,7 @@
 package pcap
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"io"
@@ -330,4 +331,41 @@ func TestReadPacketsTruncatedPcapng(t *testing.T) {
 	assert.Less(t, len(got), 84)
 	assert.Equal(t, "SYN", got[0].TCPFlags)
 	assert.False(t, got[0].TCPSynAckTime.IsZero(), "handshake annotation still runs on the partial capture")
+}
+
+func TestReadPacketsWithOptionsFullPayload(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "big.pcap")
+	payload := bytes.Repeat([]byte("x"), maxPayloadPreview+100)
+	writeBigTCP(t, path, payload)
+
+	preview, err := ReadPackets(path)
+	require.NoError(t, err)
+	require.Len(t, preview, 1)
+	assert.Len(t, preview[0].PayloadPreview, maxPayloadPreview)
+	assert.Nil(t, preview[0].Payload)
+
+	full, err := ReadPacketsWithOptions(path, ReadOptions{FullPayload: true})
+	require.NoError(t, err)
+	require.Len(t, full, 1)
+	assert.Equal(t, payload, full[0].Payload)
+	assert.Len(t, full[0].PayloadPreview, maxPayloadPreview)
+}
+
+// writeBigTCP writes a one-packet pcap holding a TCP segment with payload.
+func writeBigTCP(t *testing.T, path string, payload []byte) {
+	t.Helper()
+	buf := gopacket.NewSerializeBuffer()
+	ip := &layers.IPv4{Version: 4, IHL: 5, TTL: 64, Protocol: layers.IPProtocolTCP, SrcIP: net.IPv4(10, 0, 0, 1), DstIP: net.IPv4(10, 0, 0, 2)}
+	tcp := &layers.TCP{SrcPort: 1234, DstPort: 80, Seq: 1, ACK: true}
+	require.NoError(t, tcp.SetNetworkLayerForChecksum(ip))
+	require.NoError(t, gopacket.SerializeLayers(buf, gopacket.SerializeOptions{FixLengths: true, ComputeChecksums: true},
+		&layers.Ethernet{SrcMAC: net.HardwareAddr{0, 1, 2, 3, 4, 5}, DstMAC: net.HardwareAddr{6, 7, 8, 9, 10, 11}, EthernetType: layers.EthernetTypeIPv4},
+		ip, tcp, gopacket.Payload(payload)))
+
+	f, err := os.Create(path)
+	require.NoError(t, err)
+	defer f.Close()
+	w := pcapgo.NewWriter(f)
+	require.NoError(t, w.WriteFileHeader(65535, layers.LinkTypeEthernet))
+	require.NoError(t, w.WritePacket(gopacket.CaptureInfo{Timestamp: time.Unix(1, 0), CaptureLength: len(buf.Bytes()), Length: len(buf.Bytes())}, buf.Bytes()))
 }
