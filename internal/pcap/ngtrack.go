@@ -11,6 +11,7 @@ import (
 const (
 	ngSectionHeaderType = 0x0a0d0d0a
 	ngByteOrderMagic    = 0x1a2b3c4d
+	ngInterfaceDescType = 0x00000001 // interface description block
 )
 
 // blockTracker passes bytes through while following pcapng block framing, so
@@ -25,6 +26,14 @@ type blockTracker struct {
 	hdrLen    int   // bytes of the current block header collected so far
 	remaining int64 // bytes of the current block still to come after its header
 	invalid   bool  // framing did not make sense; stop judging
+
+	// The link types of the interface description blocks seen so far, as
+	// the 16-bit numbers in the file. gopacket keeps only the low 8 bits, so
+	// this is where the real number of an unsupported link type comes from.
+	linkTypes []uint16
+	blockType uint32  // type of the block whose body is being read
+	bodyPos   int64   // bytes of that body consumed so far
+	ltBuf     [2]byte // the first two body bytes of an interface description
 }
 
 // Read implements io.Reader.
@@ -42,6 +51,10 @@ func (t *blockTracker) feed(b []byte) {
 			if skip > t.remaining {
 				skip = t.remaining
 			}
+			if t.blockType == ngInterfaceDescType {
+				t.collectLinkType(b[:skip])
+			}
+			t.bodyPos += skip
 			t.remaining -= skip
 			b = b[skip:]
 			continue
@@ -86,6 +99,7 @@ func (t *blockTracker) feed(b []byte) {
 			return
 		}
 		t.remaining = total - int64(need)
+		t.blockType, t.bodyPos = t.order.Uint32(t.hdr[:4]), 0
 		t.hdrLen = 0
 	}
 }
@@ -93,4 +107,31 @@ func (t *blockTracker) feed(b []byte) {
 // midBlock reports whether the stream so far ends inside a block.
 func (t *blockTracker) midBlock() bool {
 	return !t.invalid && (t.hdrLen > 0 || t.remaining > 0)
+}
+
+// collectLinkType takes the link type from the first two bytes of an
+// interface description block body, which may arrive in several pieces.
+func (t *blockTracker) collectLinkType(b []byte) {
+	for i := 0; i < len(b) && t.bodyPos+int64(i) < 2; i++ {
+		t.ltBuf[t.bodyPos+int64(i)] = b[i]
+		if t.bodyPos+int64(i) == 1 {
+			t.linkTypes = append(t.linkTypes, t.order.Uint16(t.ltBuf[:]))
+		}
+	}
+}
+
+// realLinkType returns the 16-bit link type number whose low 8 bits are
+// truncated, if the file declares exactly one such type.
+func (t *blockTracker) realLinkType(truncated uint8) (int, bool) {
+	found, n := 0, 0
+	for _, lt := range t.linkTypes {
+		if uint8(lt) != truncated {
+			continue
+		}
+		if n == 0 || int(lt) != found {
+			n++
+		}
+		found = int(lt)
+	}
+	return found, n == 1
 }

@@ -202,10 +202,8 @@ Vite dev server proxies `/api` to `localhost:8181`. After changing the UI, run
   (`cisco-example-lan.pcap` is such a capture, and is flagged this way).
 - **Unsupported frames.** Frames with a link-layer type this tool cannot decode
   (for example Ethernet mPackets) and non-IP traffic (spanning tree, LLDP, ...)
-  are skipped. (Note: the tool reports these as "link type 18" because the pcap
-  library truncates link-layer type numbers to 8 bits. The actual type for
-  Ethernet mPackets is 274.) A "Skipped Frames" note says how many; it costs no
-  health points.
+  are skipped. A "Skipped Frames" note says how many, and names the link type
+  (for example "link type 274 (Ethernet mPacket)"); it costs no health points.
 - **Truncated files** are analyzed up to the cut and flagged; a file cut inside
   its first header cannot be read at all.
 - **Health score.** It starts at 100 and drops with every issue. It goes below 0

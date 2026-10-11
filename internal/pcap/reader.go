@@ -4,6 +4,7 @@ package pcap
 import (
 	"bufio"
 	"bytes"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"io"
@@ -62,7 +63,7 @@ type ReadStats struct {
 	Frames int // frames read from the file
 
 	// SkippedUnsupportedLink counts frames whose link-layer type this tool
-	// cannot decode (for example Ethernet mPackets, type 198), and
+	// cannot decode (for example Ethernet mPackets, type 274), and
 	// UnsupportedLinkTypes breaks them down by pcap link type number.
 	SkippedUnsupportedLink int
 	UnsupportedLinkTypes   map[int]int
@@ -72,8 +73,13 @@ type ReadStats struct {
 	SkippedNonIP int
 }
 
+// linkTypeNames names the unsupported link types that turn up in practice.
+var linkTypeNames = map[int]string{
+	274: "Ethernet mPacket",
+}
+
 // Describe says which frames were skipped, for example
-// "10667 frames of unsupported link type 18; 3 non-IP frames". It is empty
+// "10667 frames of unsupported link type 274 (Ethernet mPacket); 3 non-IP frames". It is empty
 // if none were.
 func (s ReadStats) Describe() string {
 	var parts []string
@@ -83,7 +89,11 @@ func (s ReadStats) Describe() string {
 	}
 	sort.Ints(types)
 	for _, lt := range types {
-		parts = append(parts, fmt.Sprintf("%d frames of unsupported link type %d", s.UnsupportedLinkTypes[lt], lt))
+		name := ""
+		if n, ok := linkTypeNames[lt]; ok {
+			name = " (" + n + ")"
+		}
+		parts = append(parts, fmt.Sprintf("%d frames of unsupported link type %d%s", s.UnsupportedLinkTypes[lt], lt, name))
 	}
 	if s.SkippedNonIP > 0 {
 		parts = append(parts, fmt.Sprintf("%d non-IP frames", s.SkippedNonIP))
@@ -145,7 +155,7 @@ func ReadPacketsStats(filePath string, opts ReadOptions) ([]models.PacketInfo, R
 				if stats.UnsupportedLinkTypes == nil {
 					stats.UnsupportedLinkTypes = make(map[int]int)
 				}
-				stats.UnsupportedLinkTypes[int(lt)]++
+				stats.UnsupportedLinkTypes[src.realLinkType(lt)]++
 			}
 			continue
 		}
@@ -429,18 +439,31 @@ func txtStrings(txts [][]byte) []string {
 type source interface {
 	ReadPacketData() ([]byte, gopacket.CaptureInfo, error)
 	linkType(ci gopacket.CaptureInfo) layers.LinkType
+	// realLinkType returns the link type number as written in the file for
+	// lt, which gopacket has cut down to 8 bits, or int(lt) if unknown.
+	realLinkType(lt layers.LinkType) int
 	// cutShort reports, after an io.EOF, whether the file actually ended in
 	// the middle of a record.
 	cutShort() bool
 }
 
-type pcapSource struct{ *pcapgo.Reader }
+type pcapSource struct {
+	*pcapgo.Reader
+	linkNumber int // the link type from the file header, in full
+}
 
 // cutShort is always false: pcapgo reports a record cut short as
 // io.ErrUnexpectedEOF, which ReadPackets handles directly.
 func (s pcapSource) cutShort() bool { return false }
 
 func (s pcapSource) linkType(gopacket.CaptureInfo) layers.LinkType { return s.LinkType() }
+
+func (s pcapSource) realLinkType(lt layers.LinkType) int {
+	if uint8(s.linkNumber) == uint8(lt) {
+		return s.linkNumber
+	}
+	return int(lt)
+}
 
 // ngSource reads pcapng, whose interfaces may each have their own link type.
 type ngSource struct {
@@ -457,6 +480,13 @@ func (s ngSource) linkType(ci gopacket.CaptureInfo) layers.LinkType {
 		return iface.LinkType
 	}
 	return layers.LinkTypeEthernet
+}
+
+func (s ngSource) realLinkType(lt layers.LinkType) int {
+	if n, ok := s.track.realLinkType(uint8(lt)); ok {
+		return n
+	}
+	return int(lt)
 }
 
 // pcapngMagic is the block type of a pcapng section header block.
@@ -477,11 +507,14 @@ func newSource(r io.Reader) (source, error) {
 		}
 		return ngSource{ng, track}, nil
 	}
+	// The pcap header holds the link type as a 32-bit number (its top bits are
+	// flags); gopacket keeps only 8 bits of it.
+	hdr, _ := br.Peek(24)
 	pr, err := pcapgo.NewReader(br)
 	if err != nil {
 		return nil, fmt.Errorf("read pcap header: %w", err)
 	}
-	return pcapSource{pr}, nil
+	return pcapSource{pr, pcapLinkNumber(hdr)}, nil
 }
 
 // tcpPayloadLen returns the TCP payload length the sender put on the wire,
@@ -514,4 +547,22 @@ func tcpPayloadLen(pkt gopacket.Packet, t *layers.TCP) int {
 		return n
 	}
 	return captured
+}
+
+// pcapLinkNumber reads the link type from a classic pcap file header, or
+// returns -1 if hdr is too short or has no known magic number.
+func pcapLinkNumber(hdr []byte) int {
+	if len(hdr) < 24 {
+		return -1
+	}
+	var order binary.ByteOrder
+	switch binary.BigEndian.Uint32(hdr[:4]) {
+	case 0xa1b2c3d4, 0xa1b23c4d: // written big-endian (microsecond / nanosecond)
+		order = binary.BigEndian
+	case 0xd4c3b2a1, 0x4d3cb2a1:
+		order = binary.LittleEndian
+	default:
+		return -1
+	}
+	return int(order.Uint32(hdr[20:24]) & 0x0fffffff)
 }
