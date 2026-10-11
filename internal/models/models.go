@@ -19,6 +19,8 @@ const (
 	ProtocolTLS  Protocol = "TLS"
 	ProtocolARP  Protocol = "ARP"
 	ProtocolSIP  Protocol = "SIP"
+
+	ProtocolDHCPv6 Protocol = "DHCPv6"
 )
 
 // ipProtocolNames names the IP protocols that the tool does not analyze but
@@ -159,6 +161,20 @@ type PacketInfo struct {
 	SIPUserAgent  string `json:"sip_user_agent,omitempty"` // User-Agent, or Server in a response without one
 	SIPCSeq       int    `json:"sip_cseq,omitempty"`       // the CSeq number
 	SIPCSeqMethod string `json:"sip_cseq_method,omitempty"`
+
+	// DHCPv6 fields are set on UDP packets that carry a DHCPv6 message
+	// (DHCPv6MsgType != 0). A relay message (types 12 and 13) wraps the
+	// client or server message it relays: DHCPv6MsgType is the wrapper's
+	// type, and the fields below it describe the innermost message.
+	DHCPv6MsgType    int    `json:"dhcpv6_msg_type,omitempty"`    // 1-13, as on the wire
+	DHCPv6InnerType  int    `json:"dhcpv6_inner_type,omitempty"`  // the innermost message's type (the same, unless relayed)
+	DHCPv6XID        uint32 `json:"dhcpv6_xid,omitempty"`         // 24-bit transaction ID of the innermost message
+	DHCPv6ClientID   string `json:"dhcpv6_client_id,omitempty"`   // client DUID in hex
+	DHCPv6ServerID   string `json:"dhcpv6_server_id,omitempty"`   // server DUID in hex
+	DHCPv6IAs        string `json:"dhcpv6_ias,omitempty"`         // identity associations asked for or given: IA_NA, IA_TA, IA_PD
+	DHCPv6Elapsed    uint16 `json:"dhcpv6_elapsed,omitempty"`     // Elapsed Time option, in hundredths of a second
+	DHCPv6StatusCode int    `json:"dhcpv6_status_code,omitempty"` // the first non-zero Status Code in the message, in an IA option or not
+	DHCPv6StatusMsg  string `json:"dhcpv6_status_msg,omitempty"`  // its message text
 }
 
 // Flow represents an aggregated view of a network connection (e.g., a TCP stream).
@@ -189,6 +205,13 @@ type Flow struct {
 	SIPMethod    string `json:"sip_method,omitempty"`
 	SIPCallID    string `json:"sip_call_id,omitempty"`
 	SIPUserAgent string `json:"sip_user_agent,omitempty"`
+
+	// DHCPv6 details of a flow that carries DHCPv6: the message types seen
+	// (each once, in order, by name, joined by commas) and the first client
+	// and server identifiers.
+	DHCPv6MessageTypes string `json:"dhcpv6_message_types,omitempty"`
+	DHCPv6ClientID     string `json:"dhcpv6_client_id,omitempty"`
+	DHCPv6ServerID     string `json:"dhcpv6_server_id,omitempty"`
 
 	// Retransmits split by trigger: sent after three or more duplicate
 	// ACKs, or after the connection had been silent (an RTO). The remainder

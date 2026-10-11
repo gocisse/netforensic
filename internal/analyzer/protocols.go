@@ -18,6 +18,7 @@ type flowClass struct {
 	transport models.Protocol // TCP, UDP, ICMP, ARP, or "" for other IP protocols
 	app       models.Protocol // DNS, HTTP, TLS or SIP if recognized in the flow, else ""
 	sipPort   bool            // a packet used a well-known SIP port (5060, 5061)
+	dhcpPort  bool            // a UDP packet used a DHCPv6 port (546, 547)
 }
 
 // transportName is the transport protocol as shown to users.
@@ -42,7 +43,8 @@ func (c *flowClass) primary() string {
 //
 // The application protocol comes from the content: a flow is DNS if any of
 // its packets carries a DNS message, TLS if any carries a TLS record, HTTP if
-// any carries an HTTP request or response, SIP if any carries a SIP request
+// any carries an HTTP request or response, SIP if any carries a SIP request,
+// DHCPv6 if any carries a DHCPv6 message
 // or response. If several apply, DNS beats TLS beats HTTP (a CONNECT tunnel
 // starts as HTTP and carries TLS). A flow that never showed a SIP message but
 // uses a well-known SIP port (5060, 5061) and was recognized as nothing else
@@ -72,14 +74,23 @@ func classifyFlows(packets []models.PacketInfo) (map[string]*flowClass, []*flowC
 			c.app = models.ProtocolHTTP
 		case (p.SIPMethod != "" || p.SIPStatusCode != 0) && c.app != models.ProtocolDNS:
 			c.app = models.ProtocolSIP
+		case p.DHCPv6MsgType != 0 && c.app != models.ProtocolDNS:
+			c.app = models.ProtocolDHCPv6
 		}
 		if isSIPPort(p) {
 			c.sipPort = true
 		}
+		if isDHCPv6Port(p) {
+			c.dhcpPort = true
+		}
 	}
 	for _, c := range classes {
-		if c.app == "" && c.sipPort {
+		switch {
+		case c.app != "":
+		case c.sipPort:
 			c.app = models.ProtocolSIP
+		case c.dhcpPort:
+			c.app = models.ProtocolDHCPv6
 		}
 	}
 	return classes, perPacket
@@ -97,6 +108,12 @@ func isSIPPort(p models.PacketInfo) bool {
 		return false
 	}
 	return p.SrcPort == sipPort || p.DstPort == sipPort || p.SrcPort == sipTLSPort || p.DstPort == sipTLSPort
+}
+
+// isDHCPv6Port reports whether p is UDP traffic to or from a DHCPv6 port: 546
+// (clients) or 547 (servers and relay agents).
+func isDHCPv6Port(p models.PacketInfo) bool {
+	return p.Protocol == models.ProtocolUDP && (p.SrcPort == 546 || p.SrcPort == 547 || p.DstPort == 546 || p.DstPort == 547)
 }
 
 // protocolStats computes the traffic composition: packets, flows and share of
@@ -249,6 +266,8 @@ func protocolsOf(is *models.Issue, subject string, classes map[string]*flowClass
 		return string(models.ProtocolTLS), []string{string(models.ProtocolTLS), string(models.ProtocolTCP)}
 	case "SIP":
 		return string(models.ProtocolSIP), []string{string(models.ProtocolSIP)}
+	case "DHCPv6":
+		return string(models.ProtocolDHCPv6), []string{string(models.ProtocolDHCPv6), string(models.ProtocolUDP)}
 	}
 	return "", nil
 }

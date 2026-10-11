@@ -40,6 +40,11 @@ export default function FlowTable({ title, flows, emptyMessage, testId }: Props)
                     <div className="truncate font-mono text-theme-xs" title={f.id}>
                       {f.id}
                     </div>
+                    {f.app_protocol === 'DHCPv6' && (
+                      <div className="truncate text-theme-xs text-gray-500 dark:text-gray-400" title={f.dhcpv6_client_id} data-testid="dhcpv6-details">
+                        {f.dhcpv6_message_types}
+                      </div>
+                    )}
                     {f.app_protocol === 'SIP' && (
                       <div className="truncate text-theme-xs text-gray-500 dark:text-gray-400" title={f.sip_call_id} data-testid="sip-details">
                         {[f.sip_method, f.sip_user_agent].filter(Boolean).join(' · ')}

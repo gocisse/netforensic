@@ -46,6 +46,7 @@ func AnalyzeWithIssues(packets []models.PacketInfo, service string, extra ...mod
 	issues = append(issues, analyzeHTTP(packets)...)
 	issues = append(issues, analyzeTLS(packets)...)
 	issues = append(issues, analyzeSIP(packets)...)
+	issues = append(issues, analyzeDHCPv6(packets)...)
 	issues = append(issues, analyzeICMP(packets)...)
 	issues = append(issues, analyzeARP(packets)...)
 	issues = append(issues, analyzeConnections(packets)...)
@@ -257,6 +258,7 @@ func aggregateFlows(packets []models.PacketInfo) []models.Flow {
 
 		f.PacketCount++
 		noteSIP(f, p)
+		noteDHCPv6(f, p)
 		if forward {
 			f.BytesSent += p.Size
 		} else {

@@ -61,6 +61,9 @@ func printTriageReport(w io.Writer, res *models.AnalysisResult) error {
 	if err := printSIPFlows(w, res.Flows); err != nil {
 		return err
 	}
+	if err := printDHCPv6Flows(w, res.Flows); err != nil {
+		return err
+	}
 
 	fmt.Fprintln(w, "\nRECOMMENDATIONS")
 	for i, r := range d.Recommendations {
@@ -153,42 +156,77 @@ func describeInterface(ifc models.InterfaceInfo) string {
 	return fmt.Sprintf("%s (%s)", name, strings.Join(details, ", "))
 }
 
-// maxSIPFlowsShown is how many SIP flows the report lists.
-const maxSIPFlowsShown = 5
+// maxAppFlowsShown is how many flows of one application protocol the report lists.
+const maxAppFlowsShown = 5
+
+// appFlowTable describes the table of an application protocol's flows.
+type appFlowTable struct {
+	app     models.Protocol
+	heading string
+	columns []string // after FLOW and PACKETS
+	row     func(models.Flow) []string
+}
+
+var sipFlowTable = appFlowTable{
+	app: models.ProtocolSIP, heading: "SIP FLOWS",
+	columns: []string{"METHODS", "USER-AGENT", "CALL-ID"},
+	row: func(f models.Flow) []string {
+		return []string{dash(f.SIPMethod), dash(f.SIPUserAgent), dash(f.SIPCallID)}
+	},
+}
+
+var dhcpv6FlowTable = appFlowTable{
+	app: models.ProtocolDHCPv6, heading: "DHCPV6 FLOWS",
+	columns: []string{"MESSAGES", "CLIENT-ID", "SERVER-ID"},
+	row: func(f models.Flow) []string {
+		return []string{dash(f.DHCPv6MessageTypes), dash(f.DHCPv6ClientID), dash(f.DHCPv6ServerID)}
+	},
+}
 
 // printSIPFlows lists the busiest flows that carry SIP, with the request
-// methods, the User-Agent and the Call-ID of their first message. It prints
-// nothing if there are none.
+// methods, the User-Agent and the Call-ID of their first message.
 func printSIPFlows(w io.Writer, flows []models.Flow) error {
-	var sip []models.Flow
+	return printAppFlows(w, flows, sipFlowTable)
+}
+
+// printDHCPv6Flows lists the busiest flows that carry DHCPv6, with the
+// message types and the client and server identifiers.
+func printDHCPv6Flows(w io.Writer, flows []models.Flow) error {
+	return printAppFlows(w, flows, dhcpv6FlowTable)
+}
+
+// printAppFlows lists the busiest flows of one application protocol. It
+// prints nothing if there are none.
+func printAppFlows(w io.Writer, flows []models.Flow, t appFlowTable) error {
+	var matching []models.Flow
 	for _, f := range flows {
-		if f.AppProtocol == string(models.ProtocolSIP) {
-			sip = append(sip, f)
+		if f.AppProtocol == string(t.app) {
+			matching = append(matching, f)
 		}
 	}
-	if len(sip) == 0 {
+	if len(matching) == 0 {
 		return nil
 	}
-	sort.SliceStable(sip, func(i, j int) bool {
-		if sip[i].PacketCount != sip[j].PacketCount {
-			return sip[i].PacketCount > sip[j].PacketCount
+	sort.SliceStable(matching, func(i, j int) bool {
+		if matching[i].PacketCount != matching[j].PacketCount {
+			return matching[i].PacketCount > matching[j].PacketCount
 		}
-		return sip[i].ID < sip[j].ID
+		return matching[i].ID < matching[j].ID
 	})
-	fmt.Fprintf(w, "\nSIP FLOWS (%d)\n", len(sip))
+	fmt.Fprintf(w, "\n%s (%d)\n", t.heading, len(matching))
 	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(tw, "  FLOW\tPACKETS\tMETHODS\tUSER-AGENT\tCALL-ID")
-	for i, f := range sip {
-		if i == maxSIPFlowsShown {
+	fmt.Fprintf(tw, "  FLOW\tPACKETS\t%s\n", strings.Join(t.columns, "\t"))
+	for i, f := range matching {
+		if i == maxAppFlowsShown {
 			break
 		}
-		fmt.Fprintf(tw, "  %s\t%d\t%s\t%s\t%s\n", f.ID, f.PacketCount, dash(f.SIPMethod), dash(f.SIPUserAgent), dash(f.SIPCallID))
+		fmt.Fprintf(tw, "  %s\t%d\t%s\n", f.ID, f.PacketCount, strings.Join(t.row(f), "\t"))
 	}
 	if err := tw.Flush(); err != nil {
 		return err
 	}
-	if len(sip) > maxSIPFlowsShown {
-		fmt.Fprintf(w, "  ... and %d more\n", len(sip)-maxSIPFlowsShown)
+	if len(matching) > maxAppFlowsShown {
+		fmt.Fprintf(w, "  ... and %d more\n", len(matching)-maxAppFlowsShown)
 	}
 	return nil
 }

@@ -99,6 +99,32 @@ message of a packet is read, and a message that IP fragmentation split across
 packets (a large INVITE with SDP can exceed the MTU) is not reassembled, so
 that request is not seen.
 
+**DHCPv6**: DHCPv6 messages (UDP ports 546 and 547, or any port if the
+payload is a well-formed message with a Client Identifier) are decoded:
+message type, transaction ID, client and server identifiers, the identity
+associations asked for (IA_NA, IA_TA, IA_PD), the Elapsed Time and any Status
+Code, including one inside an IA option, where servers usually put it. Relayed
+messages (Relay-forward, Relay-reply) are unwrapped to the message inside. DHCPv6
+appears as an application protocol in the protocol distribution, and its flows
+carry `dhcpv6_message_types`, `dhcpv6_client_id` and `dhcpv6_server_id` (a
+"DHCPV6 FLOWS" table in the report). Requests and answers are matched by
+transaction ID and client identifier, not by flow, since a client sends to a
+multicast address and the server answers from its own.
+
+| Issue | Meaning |
+|---|---|
+| `DHCPv6 No Addresses Available` (warning) | A server answered with `NoAddrsAvail` (2), `NoBinding` (3) or `NoPrefixAvail` (6). One issue per server. |
+| `DHCPv6 Configuration Error` (warning) | `NotOnLink` (4), `UseMulticast` (5), `NotConfigured` (9) or `NotAllowed` (10). One issue per server. |
+| `High DHCPv6 Failure Rate` (warning) | Servers whose responses (Advertise and Reply) carried an error status more than 20% of the time, out of at least 10 responses; any status except Success and `CatchUpComplete` counts, `UnspecFail` included. |
+| `DHCPv6 Timeout` (warning) | A Solicit or Request that got no Advertise or Reply within 30 seconds (or only a later one), one issue per destination address. |
+
+The status code numbers are those of RFC 8415. A request is only called
+unanswered if the capture session it is in lasted 30 seconds beyond it; a
+silence of more than an hour, or time running backwards, ends a session, so a
+merged capture does not make every request look unanswered. Retransmitted
+requests (same transaction ID) count once. Other messages (Renew, Rebind,
+Confirm, ...) are not checked for timeouts.
+
 **Verbose packet table** (`-v`): print every packet that is analyzed before the
 summary.
 

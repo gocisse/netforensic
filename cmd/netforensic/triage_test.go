@@ -278,3 +278,32 @@ func TestPrintSIPFlows(t *testing.T) {
 		assert.Less(t, strings.Index(out, "SIP FLOWS"), strings.Index(out, "RECOMMENDATIONS"))
 	})
 }
+
+func TestPrintDHCPv6Flows(t *testing.T) {
+	d6 := func(id string, packets int, types, client, server string) models.Flow {
+		return models.Flow{ID: id, AppProtocol: "DHCPv6", PacketCount: packets, DHCPv6MessageTypes: types, DHCPv6ClientID: client, DHCPv6ServerID: server}
+	}
+
+	var none bytes.Buffer
+	require.NoError(t, printDHCPv6Flows(&none, []models.Flow{{ID: "a", AppProtocol: "SIP", PacketCount: 3}}))
+	assert.Empty(t, none.String())
+
+	var buf bytes.Buffer
+	require.NoError(t, printDHCPv6Flows(&buf, []models.Flow{
+		d6("[fe80::1]:546-[ff02::1:2]:547", 4, "Solicit,Request", "00030001aabbccddeeff", ""),
+		d6("[fe80::2]:547-[fe80::1]:546", 9, "Advertise,Reply", "", "000100010102030405060708"),
+		{ID: "10.0.0.1:5060-10.0.0.2:5060", AppProtocol: "SIP", PacketCount: 100},
+	}))
+	out := buf.String()
+	assert.Contains(t, out, "DHCPV6 FLOWS (2)")
+	assert.Regexp(t, `FLOW\s+PACKETS\s+MESSAGES\s+CLIENT-ID\s+SERVER-ID`, out)
+	assert.Regexp(t, `\[fe80::2\]:547-\[fe80::1\]:546\s+9\s+Advertise,Reply\s+-\s+000100010102030405060708`, out)
+	assert.Regexp(t, `\[fe80::1\]:546-\[ff02::1:2\]:547\s+4\s+Solicit,Request\s+00030001aabbccddeeff\s+-`, out)
+	assert.NotContains(t, out, "10.0.0.1:5060", "other protocols are not listed")
+	assert.Less(t, strings.Index(out, "[fe80::2]"), strings.Index(out, "[fe80::1]:546-"), "busiest first")
+
+	var report bytes.Buffer
+	require.NoError(t, printTriageReport(&report, &models.AnalysisResult{Flows: []models.Flow{d6("a", 1, "Solicit", "c", "")}}))
+	assert.Less(t, strings.Index(report.String(), "TOP SLOW FLOWS"), strings.Index(report.String(), "DHCPV6 FLOWS"))
+	assert.Less(t, strings.Index(report.String(), "DHCPV6 FLOWS"), strings.Index(report.String(), "RECOMMENDATIONS"))
+}
