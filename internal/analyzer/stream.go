@@ -61,14 +61,15 @@ func (e *FollowError) Error() string { return e.Reason }
 
 // ListFlows returns the distinct flows in packets, busiest first.
 func ListFlows(packets []models.PacketInfo) []FlowSummary {
-	counts := make(map[flowKey]int)
-	for _, p := range packets {
-		key, _ := canonicalKey(p)
-		counts[key]++
+	counts := make(map[instKey]int)
+	insts := models.ConnectionInstances(packets)
+	for i, p := range packets {
+		fk, _ := canonicalKey(p)
+		counts[instKey{fk, insts[i]}]++
 	}
 	out := make([]FlowSummary, 0, len(counts))
 	for key, n := range counts {
-		out = append(out, FlowSummary{ID: key.a.String() + "-" + key.b.String(), Protocol: key.proto, Packets: n})
+		out = append(out, FlowSummary{ID: key.id(), Protocol: key.proto, Packets: n})
 	}
 	sort.Slice(out, func(i, j int) bool {
 		if out[i].Packets != out[j].Packets {
@@ -82,10 +83,12 @@ func ListFlows(packets []models.PacketInfo) []FlowSummary {
 	return out
 }
 
-// parseFlowID parses "ip:port-ip:port" with an optional "/PROTO" suffix
-// (for example "10.0.0.1:1234-10.0.0.2:80/TCP"). The protocol is empty if
-// the suffix is absent. Endpoints are returned in canonical order.
-func parseFlowID(id string) (a, b endpoint, proto models.Protocol, err error) {
+// parseFlowID parses "ip:port-ip:port" with optional "#N" and "/PROTO"
+// suffixes (for example "10.0.0.1:1234-10.0.0.2:80#2/TCP"). "#N" selects
+// the Nth connection (N >= 1) when the 4-tuple was reused; inst is the
+// zero-based index, 0 if absent. The protocol is empty if the suffix is
+// absent. Endpoints are returned in canonical order.
+func parseFlowID(id string) (a, b endpoint, proto models.Protocol, inst int, err error) {
 	bad := func(why string) error {
 		return fmt.Errorf("invalid flow ID %q: %s (expected ip:port-ip:port[/proto])", id, why)
 	}
@@ -97,34 +100,43 @@ func parseFlowID(id string) (a, b endpoint, proto models.Protocol, err error) {
 		switch proto {
 		case models.ProtocolTCP, models.ProtocolUDP, models.ProtocolICMP, models.ProtocolARP:
 		default:
-			return a, b, "", bad("unknown protocol " + strconv.Quote(string(proto)))
+			return a, b, "", 0, bad("unknown protocol " + strconv.Quote(string(proto)))
 		}
+	}
+
+	if i := strings.LastIndex(rest, "#"); i >= 0 {
+		n, convErr := strconv.Atoi(rest[i+1:])
+		if convErr != nil || n < 1 {
+			return a, b, "", 0, bad(strconv.Quote(rest[i+1:]) + " is not a valid connection number")
+		}
+		inst = n - 1
+		rest = rest[:i]
 	}
 
 	parts := strings.Split(rest, "-")
 	if len(parts) != 2 {
-		return a, b, "", bad("need exactly one '-' between the two endpoints")
+		return a, b, "", 0, bad("need exactly one '-' between the two endpoints")
 	}
 	var eps [2]endpoint
 	for i, part := range parts {
 		c := strings.LastIndex(part, ":")
 		if c < 0 {
-			return a, b, "", bad(strconv.Quote(part) + " has no port")
+			return a, b, "", 0, bad(strconv.Quote(part) + " has no port")
 		}
 		ip, portStr := part[:c], part[c+1:]
 		if net.ParseIP(ip) == nil {
-			return a, b, "", bad(strconv.Quote(ip) + " is not an IP address")
+			return a, b, "", 0, bad(strconv.Quote(ip) + " is not an IP address")
 		}
 		port, convErr := strconv.ParseUint(portStr, 10, 16)
 		if convErr != nil {
-			return a, b, "", bad(strconv.Quote(portStr) + " is not a valid port")
+			return a, b, "", 0, bad(strconv.Quote(portStr) + " is not a valid port")
 		}
 		eps[i] = endpoint{ip, uint16(port)}
 	}
 	if eps[1].less(eps[0]) {
 		eps[0], eps[1] = eps[1], eps[0]
 	}
-	return eps[0], eps[1], proto, nil
+	return eps[0], eps[1], proto, inst, nil
 }
 
 // matchFlow returns the packets of the flow named by flowID, in either
@@ -132,15 +144,16 @@ func parseFlowID(id string) (a, b endpoint, proto models.Protocol, err error) {
 // header. The returned error is a *FollowError listing the available flows
 // if flowID is malformed or matches nothing.
 func matchFlow(packets []models.PacketInfo, flowID string) ([]models.PacketInfo, *Conversation, error) {
-	a, b, proto, err := parseFlowID(flowID)
+	a, b, proto, inst, err := parseFlowID(flowID)
 	if err != nil {
 		return nil, nil, &FollowError{Reason: err.Error(), Available: ListFlows(packets)}
 	}
 
 	var matched []models.PacketInfo
-	for _, p := range packets {
+	insts := models.ConnectionInstances(packets)
+	for i, p := range packets {
 		key, _ := canonicalKey(p)
-		if key.a == a && key.b == b && (proto == "" || key.proto == proto) {
+		if key.a == a && key.b == b && (proto == "" || key.proto == proto) && insts[i] == inst {
 			matched = append(matched, p)
 		}
 	}
@@ -151,7 +164,7 @@ func matchFlow(packets []models.PacketInfo, flowID string) ([]models.PacketInfo,
 
 	client := endpoint{matched[0].SrcIP, matched[0].SrcPort}
 	server := endpoint{matched[0].DstIP, matched[0].DstPort}
-	return matched, &Conversation{FlowID: a.String() + "-" + b.String(), Client: client.String(), Server: server.String()}, nil
+	return matched, &Conversation{FlowID: instKey{flowKey{a, b, matched[0].Protocol}, inst}.id(), Client: client.String(), Server: server.String()}, nil
 }
 
 // isFromClient reports whether p was sent by the conversation's client.
@@ -173,7 +186,7 @@ func Follow(packets []models.PacketInfo, flowID string) (*Conversation, error) {
 		ev := describePacket(p)
 		ev.ToServer = conv.isFromClient(p)
 		key, forward := canonicalKey(p)
-		ev.Retransmit = rd.observe(key, forward, p)
+		ev.Retransmit = rd.observe(instKey{key, 0}, forward, p)
 		conv.Events = append(conv.Events, ev)
 	}
 	return conv, nil

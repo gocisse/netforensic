@@ -49,6 +49,13 @@ type PacketInfo struct {
 	// capture is read with pcap.ReadOptions.FullPayload.
 	Payload []byte `json:"-"`
 
+	// Conn is the zero-based index of the TCP connection attempt this
+	// packet belongs to on its 4-tuple; ConnKnown reports that it was set
+	// (see AssignConnections). The reader sets it on the whole capture so
+	// that later filtering cannot merge reused ports again.
+	Conn      int  `json:"-"`
+	ConnKnown bool `json:"-"`
+
 	// TCP handshake timeline of the flow this packet belongs to. The reader
 	// fills these on every packet of a flow once the whole capture has been
 	// read; a zero time means the event was not observed (for example a

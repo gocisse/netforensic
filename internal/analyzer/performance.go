@@ -30,13 +30,15 @@ const (
 // first reverse-direction ACK covering it; retransmitted segments are
 // skipped because their ACK is ambiguous.
 func applyPerformanceMetrics(packets []models.PacketInfo, flows []models.Flow) ([]models.Flow, []models.Issue) {
-	byKey := make(map[flowKey][]models.PacketInfo)
-	for _, p := range packets {
+	byID := make(map[string][]models.PacketInfo)
+	insts := models.ConnectionInstances(packets)
+	for i, p := range packets {
 		if p.Protocol != models.ProtocolTCP {
 			continue
 		}
 		k, _ := canonicalKey(p)
-		byKey[k] = append(byKey[k], p)
+		id := instKey{k, insts[i]}.id()
+		byID[id] = append(byID[id], p)
 	}
 
 	out := append([]models.Flow(nil), flows...)
@@ -47,7 +49,7 @@ func applyPerformanceMetrics(packets []models.PacketInfo, flows []models.Flow) (
 		if f.Protocol != models.ProtocolTCP {
 			continue
 		}
-		pkts := byKey[flowKey{endpoint{f.SrcIP, f.SrcPort}, endpoint{f.DstIP, f.DstPort}, f.Protocol}]
+		pkts := byID[f.ID]
 		if len(pkts) == 0 {
 			continue
 		}

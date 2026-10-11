@@ -76,6 +76,7 @@ func ReadPacketsWithOptions(filePath string, opts ReadOptions) ([]models.PacketI
 		if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
 			// The file was cut off mid-record, as happens with ring buffers
 			// and crashed captures. Keep what was read.
+			models.AssignConnections(packets)
 			annotateHandshakes(packets)
 			return packets, &TruncatedError{Packets: len(packets), Err: err}
 		}
@@ -95,6 +96,7 @@ func ReadPacketsWithOptions(filePath string, opts ReadOptions) ([]models.PacketI
 		info.Size = ci.Length
 		packets = append(packets, info)
 	}
+	models.AssignConnections(packets)
 	annotateHandshakes(packets)
 	return packets, nil
 }

@@ -130,6 +130,23 @@ type flowKey struct {
 	proto models.Protocol
 }
 
+// instKey identifies one connection: a flowKey plus the index of the TCP
+// connection attempt on that 4-tuple (see models.ConnectionInstances).
+type instKey struct {
+	flowKey
+	inst int
+}
+
+// id is the flow ID shown to users: "ip:port-ip:port", with "#N" appended
+// from the second connection on a reused 4-tuple, e.g. "...#2".
+func (k instKey) id() string {
+	id := k.a.String() + "-" + k.b.String()
+	if k.inst > 0 {
+		id += "#" + strconv.Itoa(k.inst+1)
+	}
+	return id
+}
+
 // canonicalKey returns the direction-independent flow key of p and whether p
 // travels from the canonical source endpoint to the canonical destination.
 func canonicalKey(p models.PacketInfo) (key flowKey, forward bool) {
@@ -150,7 +167,7 @@ type retransmitDetector struct {
 }
 
 type retransDirKey struct {
-	flow    flowKey
+	flow    instKey
 	forward bool
 }
 
@@ -163,7 +180,7 @@ type retransSeqKey struct {
 // sequence space (payload, SYN or FIN) are considered, since bare ACKs
 // legitimately repeat sequence numbers, and keep-alive probes are ignored
 // because they deliberately reuse the last sequence number.
-func (d *retransmitDetector) observe(key flowKey, forward bool, p models.PacketInfo) bool {
+func (d *retransmitDetector) observe(key instKey, forward bool, p models.PacketInfo) bool {
 	if p.Protocol != models.ProtocolTCP || !consumesSeq(p) {
 		return false
 	}
@@ -195,16 +212,18 @@ func (d *retransmitDetector) observe(key flowKey, forward bool, p models.PacketI
 // packets that consume sequence space (payload, SYN or FIN) are considered;
 // bare ACKs legitimately repeat sequence numbers.
 func aggregateFlows(packets []models.PacketInfo) []models.Flow {
-	byKey := make(map[flowKey]*models.Flow)
+	byKey := make(map[instKey]*models.Flow)
 	var rd retransmitDetector
+	insts := models.ConnectionInstances(packets)
 
-	for _, p := range packets {
-		key, forward := canonicalKey(p)
+	for i, p := range packets {
+		fk, forward := canonicalKey(p)
+		key := instKey{fk, insts[i]}
 		a, b := key.a, key.b
 		f, ok := byKey[key]
 		if !ok {
 			f = &models.Flow{
-				ID:        a.String() + "-" + b.String(),
+				ID:        key.id(),
 				SrcIP:     a.ip,
 				DstIP:     b.ip,
 				SrcPort:   a.port,

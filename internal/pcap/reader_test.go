@@ -369,3 +369,30 @@ func writeBigTCP(t *testing.T, path string, payload []byte) {
 	require.NoError(t, w.WriteFileHeader(65535, layers.LinkTypeEthernet))
 	require.NoError(t, w.WritePacket(gopacket.CaptureInfo{Timestamp: time.Unix(1, 0), CaptureLength: len(buf.Bytes()), Length: len(buf.Bytes())}, buf.Bytes()))
 }
+
+func TestAnnotateHandshakesPerConnection(t *testing.T) {
+	t0 := time.Unix(1700000000, 0)
+	pk := func(ms int, fromClient bool, flags string) models.PacketInfo {
+		p := models.PacketInfo{Timestamp: t0.Add(time.Duration(ms) * time.Millisecond), Protocol: models.ProtocolTCP, TCPFlags: flags}
+		if fromClient {
+			p.SrcIP, p.SrcPort, p.DstIP, p.DstPort = "10.0.0.1", 5000, "10.0.0.2", 443
+		} else {
+			p.SrcIP, p.SrcPort, p.DstIP, p.DstPort = "10.0.0.2", 443, "10.0.0.1", 5000
+		}
+		return p
+	}
+	packets := []models.PacketInfo{
+		pk(0, true, "SYN"), pk(1, false, "RST,ACK"), // refused
+		pk(1000, true, "SYN"), pk(1020, false, "SYN,ACK"), pk(1040, true, "ACK"), // accepted
+	}
+	annotateHandshakes(packets)
+
+	assert.Equal(t, t0, packets[0].TCPSynTime)
+	assert.True(t, packets[0].TCPSynAckTime.IsZero(), "the refused attempt never got a SYN-ACK")
+	assert.True(t, packets[1].TCPAckTime.IsZero())
+	for _, p := range packets[2:] {
+		assert.Equal(t, t0.Add(time.Second), p.TCPSynTime)
+		assert.Equal(t, t0.Add(1020*time.Millisecond), p.TCPSynAckTime)
+		assert.Equal(t, t0.Add(1040*time.Millisecond), p.TCPAckTime)
+	}
+}

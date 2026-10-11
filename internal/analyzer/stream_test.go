@@ -38,25 +38,29 @@ func TestParseFlowID(t *testing.T) {
 		wantB     endpoint
 		wantProto models.Protocol
 		wantErr   string
+		wantInst  int
 	}{
-		{"ipv4", "10.0.0.1:1234-10.0.0.2:80", endpoint{"10.0.0.1", 1234}, endpoint{"10.0.0.2", 80}, "", ""},
-		{"endpoints are canonicalized", "10.0.0.2:80-10.0.0.1:1234", endpoint{"10.0.0.1", 1234}, endpoint{"10.0.0.2", 80}, "", ""},
-		{"protocol suffix", "10.0.0.1:1234-10.0.0.2:80/tcp", endpoint{"10.0.0.1", 1234}, endpoint{"10.0.0.2", 80}, models.ProtocolTCP, ""},
-		{"udp suffix", "1.1.1.1:5-8.8.8.8:53/UDP", endpoint{"1.1.1.1", 5}, endpoint{"8.8.8.8", 53}, models.ProtocolUDP, ""},
-		{"ipv6", "fe80::1:1234-fe80::2:80", endpoint{"fe80::1", 1234}, endpoint{"fe80::2", 80}, "", ""},
-		{"surrounding whitespace", "  10.0.0.1:1-10.0.0.2:2 ", endpoint{"10.0.0.1", 1}, endpoint{"10.0.0.2", 2}, "", ""},
-		{"no dash", "10.0.0.1:1", endpoint{}, endpoint{}, "", "exactly one '-'"},
-		{"too many dashes", "invalid-flow-id", endpoint{}, endpoint{}, "", "exactly one '-'"},
-		{"missing port", "10.0.0.1-10.0.0.2:80", endpoint{}, endpoint{}, "", "has no port"},
-		{"bad ip", "nope:1-10.0.0.2:80", endpoint{}, endpoint{}, "", "not an IP address"},
-		{"bad port", "10.0.0.1:abc-10.0.0.2:80", endpoint{}, endpoint{}, "", "not a valid port"},
-		{"port out of range", "10.0.0.1:70000-10.0.0.2:80", endpoint{}, endpoint{}, "", "not a valid port"},
-		{"unknown protocol", "10.0.0.1:1-10.0.0.2:80/xyz", endpoint{}, endpoint{}, "", "unknown protocol"},
-		{"empty", "", endpoint{}, endpoint{}, "", "exactly one '-'"},
+		{"ipv4", "10.0.0.1:1234-10.0.0.2:80", endpoint{"10.0.0.1", 1234}, endpoint{"10.0.0.2", 80}, "", "", 0},
+		{"endpoints are canonicalized", "10.0.0.2:80-10.0.0.1:1234", endpoint{"10.0.0.1", 1234}, endpoint{"10.0.0.2", 80}, "", "", 0},
+		{"protocol suffix", "10.0.0.1:1234-10.0.0.2:80/tcp", endpoint{"10.0.0.1", 1234}, endpoint{"10.0.0.2", 80}, models.ProtocolTCP, "", 0},
+		{"udp suffix", "1.1.1.1:5-8.8.8.8:53/UDP", endpoint{"1.1.1.1", 5}, endpoint{"8.8.8.8", 53}, models.ProtocolUDP, "", 0},
+		{"ipv6", "fe80::1:1234-fe80::2:80", endpoint{"fe80::1", 1234}, endpoint{"fe80::2", 80}, "", "", 0},
+		{"surrounding whitespace", "  10.0.0.1:1-10.0.0.2:2 ", endpoint{"10.0.0.1", 1}, endpoint{"10.0.0.2", 2}, "", "", 0},
+		{"connection number", "10.0.0.1:1234-10.0.0.2:80#3/tcp", endpoint{"10.0.0.1", 1234}, endpoint{"10.0.0.2", 80}, models.ProtocolTCP, "", 2},
+		{"connection number zero", "10.0.0.1:1-10.0.0.2:2#0", endpoint{}, endpoint{}, "", "not a valid connection number", 0},
+		{"connection number junk", "10.0.0.1:1-10.0.0.2:2#x", endpoint{}, endpoint{}, "", "not a valid connection number", 0},
+		{"no dash", "10.0.0.1:1", endpoint{}, endpoint{}, "", "exactly one '-'", 0},
+		{"too many dashes", "invalid-flow-id", endpoint{}, endpoint{}, "", "exactly one '-'", 0},
+		{"missing port", "10.0.0.1-10.0.0.2:80", endpoint{}, endpoint{}, "", "has no port", 0},
+		{"bad ip", "nope:1-10.0.0.2:80", endpoint{}, endpoint{}, "", "not an IP address", 0},
+		{"bad port", "10.0.0.1:abc-10.0.0.2:80", endpoint{}, endpoint{}, "", "not a valid port", 0},
+		{"port out of range", "10.0.0.1:70000-10.0.0.2:80", endpoint{}, endpoint{}, "", "not a valid port", 0},
+		{"unknown protocol", "10.0.0.1:1-10.0.0.2:80/xyz", endpoint{}, endpoint{}, "", "unknown protocol", 0},
+		{"empty", "", endpoint{}, endpoint{}, "", "exactly one '-'", 0},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			a, b, proto, err := parseFlowID(tt.id)
+			a, b, proto, inst, err := parseFlowID(tt.id)
 			if tt.wantErr != "" {
 				require.Error(t, err)
 				assert.Contains(t, err.Error(), tt.wantErr)
@@ -66,6 +70,7 @@ func TestParseFlowID(t *testing.T) {
 			assert.Equal(t, tt.wantA, a)
 			assert.Equal(t, tt.wantB, b)
 			assert.Equal(t, tt.wantProto, proto)
+			assert.Equal(t, tt.wantInst, inst)
 		})
 	}
 }

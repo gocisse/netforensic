@@ -40,12 +40,20 @@ func hasFlag(flags, want string) bool {
 //   - FirstDataTime: the first packet with payload from the server after that ACK
 //
 // Events that were not captured stay zero. Packets are processed in capture
-// order, so the capture must be in chronological order.
+// order, so the capture must be in chronological order. A 4-tuple reused
+// after a FIN or RST (see models.ConnectionInstances) is annotated as a
+// separate connection per SYN.
 func annotateHandshakes(packets []models.PacketInfo) {
-	flows := make(map[hsKey][]int)
+	// Each connection attempt on a reused 4-tuple gets its own handshake.
+	type connKey struct {
+		hsKey
+		inst int
+	}
+	flows := make(map[connKey][]int)
+	insts := models.ConnectionInstances(packets)
 	for i, p := range packets {
 		if p.Protocol == models.ProtocolTCP {
-			k := hsFlowKey(p)
+			k := connKey{hsFlowKey(p), insts[i]}
 			flows[k] = append(flows[k], i)
 		}
 	}

@@ -165,3 +165,124 @@ func TestTopTalkers(t *testing.T) {
 	assert.Equal(t, "c", got[1].ID)
 	assert.Len(t, flows, 6, "input must not be modified")
 }
+
+// TestPortReuseAfterRefusal is the Lab-6 pattern: a client SYN is refused
+// with RST,ACK and the client retries from the same source port.
+func TestPortReuseAfterRefusal(t *testing.T) {
+	t0 := time.Unix(1700000000, 0)
+	pkt := func(ms int, fromClient bool, flags string, seq uint32) models.PacketInfo {
+		p := models.PacketInfo{Timestamp: t0.Add(time.Duration(ms) * time.Millisecond), Protocol: models.ProtocolTCP, Size: 66, TCPFlags: flags, TCPSeq: seq}
+		if fromClient {
+			p.SrcIP, p.SrcPort, p.DstIP, p.DstPort = "192.168.1.1", 49979, "53.235.100.201", 443
+		} else {
+			p.SrcIP, p.SrcPort, p.DstIP, p.DstPort = "53.235.100.201", 443, "192.168.1.1", 49979
+		}
+		return p
+	}
+
+	t.Run("refused SYN then new SYN is two flows", func(t *testing.T) {
+		flows := aggregateFlows([]models.PacketInfo{
+			pkt(0, true, "SYN", 1000),
+			pkt(1, false, "RST,ACK", 2000),
+			pkt(500, true, "SYN", 3000),
+		})
+		require.Len(t, flows, 2)
+		assert.Equal(t, "192.168.1.1:49979-53.235.100.201:443", flows[0].ID)
+		assert.Equal(t, "192.168.1.1:49979-53.235.100.201:443#2", flows[1].ID)
+		assert.Equal(t, 2, flows[0].PacketCount)
+		assert.Equal(t, 1, flows[1].PacketCount)
+		assert.Zero(t, flows[0].Retransmits)
+		assert.Zero(t, flows[1].Retransmits, "the second SYN is a new attempt, not a retransmission")
+	})
+
+	t.Run("same SYN sequence number after a reset is still a new flow", func(t *testing.T) {
+		flows := aggregateFlows([]models.PacketInfo{
+			pkt(0, true, "SYN", 1000),
+			pkt(1, false, "RST,ACK", 0),
+			pkt(500, true, "SYN", 1000),
+		})
+		require.Len(t, flows, 2)
+		assert.Zero(t, flows[0].Retransmits+flows[1].Retransmits)
+	})
+
+	t.Run("a SYN repeated without a close is a retransmission", func(t *testing.T) {
+		flows := aggregateFlows([]models.PacketInfo{
+			pkt(0, true, "SYN", 1000),
+			pkt(1000, true, "SYN", 1000),
+			pkt(1030, false, "SYN,ACK", 5000),
+		})
+		require.Len(t, flows, 1)
+		assert.Equal(t, 1, flows[0].Retransmits)
+	})
+
+	t.Run("full analysis reports no packet loss and per-attempt handshake timing", func(t *testing.T) {
+		// attempt 1 refused; attempt 2 completes in 40ms, 1s after the first SYN
+		packets := []models.PacketInfo{
+			pkt(0, true, "SYN", 1000),
+			pkt(1, false, "RST,ACK", 0),
+			pkt(1000, true, "SYN", 3000),
+			pkt(1020, false, "SYN,ACK", 5000),
+			pkt(1040, true, "ACK", 3001),
+		}
+		// the reader stamps handshake times per connection; mimic that
+		insts := models.ConnectionInstances(packets)
+		for i := range packets {
+			if insts[i] == 1 {
+				packets[i].TCPSynTime = t0.Add(1000 * time.Millisecond)
+				packets[i].TCPSynAckTime = t0.Add(1020 * time.Millisecond)
+				packets[i].TCPAckTime = t0.Add(1040 * time.Millisecond)
+			}
+		}
+		res := Analyze(packets, "all")
+		assert.Equal(t, 2, res.TotalFlows)
+		for _, is := range res.Issues {
+			assert.NotEqual(t, "PacketLoss", is.Category, is.Description)
+			assert.NotEqual(t, "Slow TCP Handshake", is.Title, is.Description)
+		}
+	})
+}
+
+func TestListFlowsAndFollowSeparateReusedPorts(t *testing.T) {
+	t0 := time.Unix(1700000000, 0)
+	mk := func(ms int, fromClient bool, flags string, payload string) models.PacketInfo {
+		p := models.PacketInfo{Timestamp: t0.Add(time.Duration(ms) * time.Millisecond), Protocol: models.ProtocolTCP, TCPFlags: flags,
+			PayloadSize: len(payload), Payload: []byte(payload)}
+		if fromClient {
+			p.SrcIP, p.SrcPort, p.DstIP, p.DstPort = "1.1.1.1", 5000, "2.2.2.2", 80
+			p.TCPSeq = 100
+			if payload == "second" {
+				p.TCPSeq = 101 // follows the SYN, which uses 100
+			}
+		} else {
+			p.SrcIP, p.SrcPort, p.DstIP, p.DstPort = "2.2.2.2", 80, "1.1.1.1", 5000
+			p.TCPSeq = 900
+		}
+		return p
+	}
+	packets := []models.PacketInfo{
+		mk(0, true, "PSH,ACK", "first"), mk(1, false, "RST,ACK", ""),
+		mk(10, true, "SYN", ""), mk(11, true, "PSH,ACK", "second"),
+	}
+
+	var ids []string
+	for _, f := range ListFlows(packets) {
+		ids = append(ids, f.ID)
+	}
+	assert.ElementsMatch(t, []string{"1.1.1.1:5000-2.2.2.2:80", "1.1.1.1:5000-2.2.2.2:80#2"}, ids)
+
+	conv, err := FollowStream(packets, "1.1.1.1:5000-2.2.2.2:80")
+	require.NoError(t, err)
+	require.Len(t, conv.Messages, 1)
+	assert.Equal(t, "first", string(conv.Messages[0].Data))
+	assert.Equal(t, "1.1.1.1:5000-2.2.2.2:80", conv.FlowID)
+
+	conv, err = FollowStream(packets, "1.1.1.1:5000-2.2.2.2:80#2")
+	require.NoError(t, err)
+	require.Len(t, conv.Messages, 1)
+	assert.Equal(t, "second", string(conv.Messages[0].Data))
+	assert.Equal(t, "1.1.1.1:5000-2.2.2.2:80#2", conv.FlowID)
+	assert.Zero(t, conv.Retransmits, "same sequence number as the first connection is not a retransmit")
+
+	_, err = Follow(packets, "1.1.1.1:5000-2.2.2.2:80#3")
+	assert.Error(t, err)
+}
