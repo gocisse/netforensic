@@ -72,7 +72,7 @@ func TestPrintTriageReportEmptyAndTruncated(t *testing.T) {
 }
 
 func TestHealthLabel(t *testing.T) {
-	tests := map[int]string{100: "HEALTHY", 90: "HEALTHY", 89: "DEGRADED", 70: "DEGRADED", 69: "UNHEALTHY", 40: "UNHEALTHY", 39: "CRITICAL", 0: "CRITICAL"}
+	tests := map[int]string{100: "HEALTHY", 90: "HEALTHY", 89: "DEGRADED", 70: "DEGRADED", 69: "UNHEALTHY", 40: "UNHEALTHY", 39: "CRITICAL", 0: "CRITICAL", -1: "CATASTROPHIC", -50: "CATASTROPHIC"}
 	for score, want := range tests {
 		assert.Equal(t, want, healthLabel(score), score)
 	}
@@ -106,4 +106,13 @@ func TestRootCmdTriageOnlyInTextMode(t *testing.T) {
 	assert.NotContains(t, js.String(), "TRIAGE REPORT")
 	assert.Contains(t, js.String(), `"diagnosis"`)
 	assert.Contains(t, js.String(), `"health_score": 100`)
+}
+
+func TestPrintTriageReportNegativeHealth(t *testing.T) {
+	for score, want := range map[int]string{-1: "Health Score: -1/100 (CATASTROPHIC)", -50: "Health Score: -50/100 (CATASTROPHIC)", 0: "Health Score: 0/100 (CRITICAL)"} {
+		var buf bytes.Buffer
+		res := &models.AnalysisResult{Diagnosis: models.RootCauseAnalysis{HealthScore: score, PrimaryCause: "x", Confidence: "low"}}
+		require.NoError(t, printTriageReport(&buf, res))
+		assert.Contains(t, buf.String(), want)
+	}
 }

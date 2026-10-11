@@ -132,7 +132,12 @@ type Flow struct {
 	// of Retransmits has neither trigger. DupAcks counts duplicate ACKs.
 	FastRetransmits    int `json:"fast_retransmits,omitempty"`
 	TimeoutRetransmits int `json:"timeout_retransmits,omitempty"`
-	DupAcks            int `json:"dup_acks,omitempty"`
+
+	// RecoveryRetransmits counts the segments resent during the recovery
+	// that a fast or timeout retransmission started; they are not counted in
+	// FastRetransmits or TimeoutRetransmits.
+	RecoveryRetransmits int `json:"recovery_retransmits,omitempty"`
+	DupAcks             int `json:"dup_acks,omitempty"`
 
 	// RetransmitEvents lists every retransmission in capture order.
 	RetransmitEvents []RetransmitEvent `json:"-"`
@@ -186,7 +191,7 @@ type TimelineEvent struct {
 
 // RootCauseAnalysis is the correlated diagnosis of a capture.
 type RootCauseAnalysis struct {
-	HealthScore     int             `json:"health_score"` // 0-100, 100 is healthy
+	HealthScore     int             `json:"health_score"` // 100 is healthy; heavily troubled captures go below 0, down to -50
 	PrimaryCause    string          `json:"primary_cause"`
 	Confidence      string          `json:"confidence"` // "high", "medium" or "low"
 	Summary         string          `json:"summary"`

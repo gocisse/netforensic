@@ -347,12 +347,37 @@ func TestZeroWindowThenResetIsOneError(t *testing.T) { // Lab-7 pattern
 	assert.Equal(t, models.SeverityError, is.Severity)
 	assert.Equal(t, rstT0.Add(10*time.Millisecond), is.Timestamp, "anchored at the stall")
 	assert.Contains(t, is.Description, "the client (10.0.0.1) advertised a zero window 1 time(s)")
-	assert.Contains(t, is.Description, "the client (10.0.0.1) reset the connection 890ms later")
+	assert.Contains(t, is.Description, "the window had not reopened when the client (10.0.0.1) reset the connection at 22:13:20.900, 890ms later")
 	assert.Contains(t, is.Description, "2 RST packets in total")
 	assert.Equal(t, 80, res.Diagnosis.HealthScore)
 	assert.Equal(t, titleZeroWindowReset, res.Diagnosis.PrimaryCause)
 	assert.Equal(t, []string{"The receiver's buffer filled up, causing the sender to stall, and the connection was eventually reset. Investigate receiver application processing speed or buffer sizing."},
 		res.Diagnosis.Recommendations)
+}
+
+func TestZeroWindowReopenedBeforeResetIsSaid(t *testing.T) {
+	packets := append(established(),
+		zw(tcpEv(10, 5000, true, "ACK", 0), 0),
+		zw(tcpEv(800, 5000, true, "ACK", 0), 62780), // window update from the same side
+		zw(tcpEv(808, 5000, true, "RST,ACK", 0), 0),
+	)
+	got := connectionIssues(Analyze(packets, "all"))
+	require.Len(t, got, 1)
+	assert.Equal(t, titleZeroWindowReset, got[0].Title)
+	assert.Contains(t, got[0].Description, "advertised a zero window 1 time(s), first at 22:13:20.010")
+	assert.Contains(t, got[0].Description, "the window reopened at 22:13:20.800 (790ms later), but the client (10.0.0.1) reset the connection at 22:13:20.808, 8ms after it reopened")
+	assert.NotContains(t, got[0].Description, "had not reopened")
+}
+
+func TestZeroWindowReopenedByTheOtherSideDoesNotCount(t *testing.T) {
+	packets := append(established(),
+		zw(tcpEv(10, 5000, true, "ACK", 0), 0), // the client's window closes
+		tcpEv(20, 5000, false, "ACK", 0),       // the server has plenty of window: irrelevant
+		zw(tcpEv(30, 5000, true, "RST", 0), 0),
+	)
+	got := connectionIssues(Analyze(packets, "all"))
+	require.Len(t, got, 1)
+	assert.Contains(t, got[0].Description, "the window had not reopened when the client (10.0.0.1) reset the connection")
 }
 
 func TestZeroWindowDetectionIgnoresNonStalls(t *testing.T) {
@@ -394,6 +419,8 @@ func TestZeroWindowRealLab7(t *testing.T) {
 	require.Len(t, got, 1)
 	assert.Equal(t, titleZeroWindowReset, got[0].Title)
 	assert.Contains(t, got[0].Description, "the client (10.0.2.15) advertised a zero window 1 time(s)")
+	assert.Contains(t, got[0].Description, "the window reopened at 23:50:29.649 (808ms later), but the client (10.0.2.15) reset the connection at 23:50:29.657, 9ms after it reopened",
+		"Wireshark: zero window at frame 50, window update at frame 51 (+1.33344s), RST at frame 61 (+1.34206s)")
 	assert.Contains(t, got[0].Description, "3 RST packets in total")
 	assert.Equal(t, 80, res.Diagnosis.HealthScore)
 	assert.Equal(t, titleZeroWindowReset, res.Diagnosis.PrimaryCause)
@@ -500,9 +527,13 @@ func TestRetransmitClassification(t *testing.T) {
 			data(0, 1000), data(1, 1100), ack(2, 1100), ack(3, 1100), data(500, 1000)}, []string{"other"}, 1},
 		{"an advancing ACK resets the dup count", []models.PacketInfo{
 			data(0, 1000), data(1, 1100), ack(2, 1100), ack(3, 1100), ack(4, 1100), ack(5, 1200), ack(6, 1200), data(7, 1100)}, []string{"other"}, 3},
-		{"later segments of a fast recovery inherit its kind", []models.PacketInfo{
+		{"later segments of a fast recovery are counted as recovery, not as fast", []models.PacketInfo{
 			data(0, 1000), data(1, 1100), data(2, 1200), ack(3, 1000), ack(4, 1000), ack(5, 1000), ack(6, 1000), data(7, 1000), ack(8, 1100), data(9, 1100)},
-			[]string{"fast", "fast"}, 3},
+			[]string{"fast", "fast-recovery"}, 3},
+		{"recovery segments keep the episode alive", []models.PacketInfo{
+			data(0, 1000), data(1, 1100), data(2, 1200), data(3, 1300), ack(4, 1000), ack(5, 1000), ack(6, 1000), ack(7, 1000),
+			data(8, 1000), data(600, 1100), data(1100, 1200)},
+			[]string{"fast", "fast-recovery", "fast-recovery"}, 3},
 		{"a recovery stops inheriting after a second", []models.PacketInfo{
 			data(0, 1000), data(1, 1100), ack(2, 1000), ack(3, 1000), ack(4, 1000), ack(5, 1000), data(6, 1000), data(1500, 1100)}, []string{"fast", "other"}, 3},
 		{"data the receiver already acknowledged is spurious", []models.PacketInfo{
@@ -579,7 +610,7 @@ func TestRetransmitHoleFill(t *testing.T) {
 			data(0, 1000), ack(1, 1100), data(2, 1400), // 1100..1399 missing
 			data(900, 1100), data(901, 1200), data(902, 1300),
 		})
-		assert.Equal(t, []string{"timeout", "timeout", "timeout"}, kinds)
+		assert.Equal(t, []string{"timeout", "timeout-recovery", "timeout-recovery"}, kinds)
 	})
 	t.Run("a bare ACK reveals data lost before the capture point", func(t *testing.T) {
 		// the first thing seen is an ACK saying the sender is already at 1500
@@ -640,7 +671,8 @@ func TestUnansweredSYN(t *testing.T) { // Test A
 	assert.Contains(t, is.Description, "10.0.0.1:5000 sent a SYN to 10.0.0.2:443")
 	assert.Contains(t, is.Description, "no SYN-ACK or RST")
 	assert.Equal(t, titleUnansweredSYN, res.Diagnosis.PrimaryCause)
-	assert.Equal(t, []string{"Verify if a firewall is silently dropping packets, or if the server is down/unreachable."}, res.Diagnosis.Recommendations)
+	assert.Equal(t, []string{"Verify if a firewall is silently dropping packets, or if the server is down/unreachable. Also check that the capture point sees traffic in both directions: a one-sided capture looks the same."}, res.Diagnosis.Recommendations)
+	assert.Contains(t, is.Title, "may be firewall drop, server unreachable, or asymmetric capture")
 	assert.Equal(t, 90, res.Diagnosis.HealthScore)
 }
 

@@ -328,9 +328,19 @@ func (c *connState) zeroWindowResetIssue() models.Issue {
 	if c.rstFromCli {
 		by, byRole = c.client, "client"
 	}
-	desc := fmt.Sprintf("flow %s: the %s (%s) advertised a zero window %d time(s), first at %s; the %s (%s) reset the connection %s later at %s",
-		c.id, role, rx.ip, c.zeroWindows, c.firstZero.Timestamp.UTC().Format("15:04:05.000"),
-		byRole, by.ip, c.firstRST.Timestamp.Sub(c.firstZero.Timestamp).Round(time.Millisecond), c.firstRST.Timestamp.UTC().Format("15:04:05.000"))
+	zero, rst := c.firstZero.Timestamp, c.firstRST.Timestamp
+	desc := fmt.Sprintf("flow %s: the %s (%s) advertised a zero window %d time(s), first at %s",
+		c.id, role, rx.ip, c.zeroWindows, zero.UTC().Format("15:04:05.000"))
+	if !c.zeroReopened.IsZero() && c.zeroReopened.Before(rst) {
+		// The stall had already ended when the reset came; saying only
+		// "reset after the stall" would make the stall look like the cause.
+		desc += fmt.Sprintf("; the window reopened at %s (%s later), but the %s (%s) reset the connection at %s, %s after it reopened",
+			c.zeroReopened.UTC().Format("15:04:05.000"), c.zeroReopened.Sub(zero).Round(time.Millisecond),
+			byRole, by.ip, rst.UTC().Format("15:04:05.000"), rst.Sub(c.zeroReopened).Round(time.Millisecond))
+	} else {
+		desc += fmt.Sprintf("; the window had not reopened when the %s (%s) reset the connection at %s, %s later",
+			byRole, by.ip, rst.UTC().Format("15:04:05.000"), rst.Sub(zero).Round(time.Millisecond))
+	}
 	if c.rsts > 1 {
 		desc += fmt.Sprintf("; %d RST packets in total", c.rsts)
 	}

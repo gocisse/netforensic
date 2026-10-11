@@ -34,7 +34,24 @@ const (
 	retransFast                // after three or more duplicate ACKs
 	retransTimeout             // after silence, with no duplicate ACKs
 	retransOther               // neither trigger, or data that was already acknowledged
+
+	// Later segments resent during the recovery that a fast or timeout
+	// retransmission started. They did not trigger it themselves, so they are
+	// counted apart and never inflate the fast or timeout counts.
+	retransFastRecovery
+	retransTimeoutRecovery
 )
+
+// family maps the recovery kinds to the kind that started the recovery.
+func (k retransKind) family() retransKind {
+	switch k {
+	case retransFastRecovery:
+		return retransFast
+	case retransTimeoutRecovery:
+		return retransTimeout
+	}
+	return k
+}
 
 func (k retransKind) String() string {
 	switch k {
@@ -44,6 +61,10 @@ func (k retransKind) String() string {
 		return "timeout"
 	case retransOther:
 		return "other"
+	case retransFastRecovery:
+		return "fast-recovery"
+	case retransTimeoutRecovery:
+		return "timeout-recovery"
 	}
 	return ""
 }
@@ -181,11 +202,17 @@ func (d *retransmitDetector) observe(key instKey, forward bool, p models.PacketI
 	case acked:
 		res.kind = retransOther // the receiver had it already: a spurious resend
 	case (me.lastKind == retransFast || me.lastKind == retransTimeout) && p.Timestamp.Sub(me.lastRetrans) <= episodeWindow:
-		res.kind = me.lastKind // later segment of the same recovery
+		// A later segment of the same recovery: it did not trigger anything
+		// itself, so it must not be counted as a fast or timeout retransmit.
+		if me.lastKind == retransFast {
+			res.kind = retransFastRecovery
+		} else {
+			res.kind = retransTimeoutRecovery
+		}
 	default:
 		res.kind = retransOther
 	}
-	me.lastRetrans, me.lastKind = p.Timestamp, res.kind
+	me.lastRetrans, me.lastKind = p.Timestamp, res.kind.family()
 	return res
 }
 
@@ -230,6 +257,8 @@ func recordRetransmit(f *models.Flow, r segmentResult, p models.PacketInfo) {
 		f.FastRetransmits++
 	case retransTimeout:
 		f.TimeoutRetransmits++
+	case retransFastRecovery, retransTimeoutRecovery:
+		f.RecoveryRetransmits++
 	}
 	f.RetransmitEvents = append(f.RetransmitEvents, models.RetransmitEvent{Time: p.Timestamp, Seq: p.TCPSeq, Kind: r.kind.String()})
 }
@@ -246,19 +275,33 @@ const (
 func retransmitIssue(f models.Flow, k retransKind) (models.Issue, bool) {
 	var first, last time.Time
 	var firstSeq uint32
-	n := 0
+	n, recovery := 0, 0 // segments that triggered / segments resent in the same recovery
+	recoveryKind := ""
+	if k == retransFast || k == retransTimeout {
+		recoveryKind = k.String() + "-recovery"
+	}
 	for _, ev := range f.RetransmitEvents {
-		if ev.Kind != k.String() {
+		isRecovery := recoveryKind != "" && ev.Kind == recoveryKind
+		if ev.Kind != k.String() && !isRecovery {
 			continue
 		}
-		if n == 0 {
+		if n+recovery == 0 {
 			first, firstSeq = ev.Time, ev.Seq
 		}
 		last = ev.Time
-		n++
+		if isRecovery {
+			recovery++
+		} else {
+			n++
+		}
 	}
-	if n == 0 {
+	if n+recovery == 0 {
 		return models.Issue{}, false
+	}
+	total := n + recovery
+	also := ""
+	if recovery > 0 {
+		also = fmt.Sprintf(", plus %d more resent during the same recovery", recovery)
 	}
 
 	is := models.Issue{
@@ -266,24 +309,24 @@ func retransmitIssue(f models.Flow, k retransKind) (models.Issue, bool) {
 		Category:  "PacketLoss",
 		Timestamp: first,
 		FlowID:    f.ID,
-		Count:     n,
+		Count:     total,
 	}
 	span := ""
-	if n > 1 {
+	if total > 1 {
 		span = fmt.Sprintf(" (last at %s)", last.UTC().Format("15:04:05.000"))
 	}
 	switch k {
 	case retransFast:
 		is.Severity, is.Title = models.SeverityWarning, titleFastRetransmit
-		is.Description = fmt.Sprintf("flow %s had %d segment(s) retransmitted after %d or more duplicate ACKs, first seq %d at %s%s; the receiver kept asking for a missing segment",
-			f.ID, n, fastRetransmitDupAcks, firstSeq, first.UTC().Format("15:04:05.000"), span)
+		is.Description = fmt.Sprintf("flow %s had %d segment(s) retransmitted after %d or more duplicate ACKs%s, first seq %d at %s%s; the receiver kept asking for a missing segment",
+			f.ID, n, fastRetransmitDupAcks, also, firstSeq, first.UTC().Format("15:04:05.000"), span)
 	case retransTimeout:
 		is.Severity, is.Title = models.SeverityError, titleTimeoutRetransmit
-		is.Description = fmt.Sprintf("flow %s had %d segment(s) retransmitted after the connection went silent for over %s with no duplicate ACKs, first seq %d at %s%s; the sender waited for a retransmission timeout",
-			f.ID, n, rtoSilence, firstSeq, first.UTC().Format("15:04:05.000"), span)
+		is.Description = fmt.Sprintf("flow %s had %d segment(s) retransmitted after the connection went silent for over %s with no duplicate ACKs%s, first seq %d at %s%s; the sender waited for a retransmission timeout",
+			f.ID, n, rtoSilence, also, firstSeq, first.UTC().Format("15:04:05.000"), span)
 	default:
 		is.Severity, is.Title = models.SeverityWarning, titleRetransmissions
-		is.Description = fmt.Sprintf("flow %s had %d retransmitted packets", f.ID, n)
+		is.Description = fmt.Sprintf("flow %s had %d retransmitted packets", f.ID, total)
 	}
 	return is, true
 }

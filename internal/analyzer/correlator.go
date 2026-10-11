@@ -280,15 +280,19 @@ func (d *diagnosis) fromIssue(is models.Issue, confidence string) {
 
 func severityRank(s models.Severity) int { return severityPenalty[s] }
 
+// minHealthScore is the floor of the health score. A capture can score
+// below 0 so that "very bad" and "catastrophic" stay distinguishable.
+const minHealthScore = -50
+
 // healthScore starts at 100 and subtracts a penalty per issue, never going
-// below 0.
+// below minHealthScore.
 func healthScore(issues []models.Issue) int {
 	score := 100
 	for _, is := range issues {
 		score -= severityPenalty[is.Severity]
 	}
-	if score < 0 {
-		return 0
+	if score < minHealthScore {
+		return minHealthScore
 	}
 	return score
 }
@@ -405,7 +409,7 @@ var categoryRecommendations = map[string][]string{
 		"Severe congestion or blackhole detected. The sender waited for an RTO (Retransmission Timeout) before retrying. Investigate link quality or MTU issues.",
 	},
 	titleUnansweredSYN: {
-		"Verify if a firewall is silently dropping packets, or if the server is down/unreachable.",
+		"Verify if a firewall is silently dropping packets, or if the server is down/unreachable. Also check that the capture point sees traffic in both directions: a one-sided capture looks the same.",
 	},
 	titleSYNFlood: {
 		"Multiple connection attempts are being silently dropped. This may indicate a firewall blocking the source, a server overload, or a SYN flood attack.",

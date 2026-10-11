@@ -73,8 +73,10 @@ func healthLabel(score int) string {
 		return "DEGRADED"
 	case score >= 40:
 		return "UNHEALTHY"
+	case score >= 0:
+		return "CRITICAL"
 	}
-	return "CRITICAL"
+	return "CATASTROPHIC"
 }
 
 // fmtMs formats a millisecond metric, using "-" when it was not measured.

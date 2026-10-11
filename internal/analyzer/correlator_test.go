@@ -204,7 +204,10 @@ func TestHealthScore(t *testing.T) {
 		{"error", mk(models.SeverityError), 80},
 		{"critical", mk(models.SeverityCritical), 70},
 		{"one of each", mk(models.SeverityCritical, models.SeverityError, models.SeverityWarning, models.SeverityInfo), 38},
-		{"capped at zero", mk(models.SeverityCritical, models.SeverityCritical, models.SeverityCritical, models.SeverityCritical), 0},
+		{"goes below zero", mk(models.SeverityCritical, models.SeverityCritical, models.SeverityCritical, models.SeverityCritical), -20},
+		{"exactly zero", mk(models.SeverityCritical, models.SeverityCritical, models.SeverityCritical, models.SeverityInfo, models.SeverityInfo, models.SeverityInfo, models.SeverityInfo, models.SeverityInfo), 0},
+		{"capped at -50", mk(models.SeverityCritical, models.SeverityCritical, models.SeverityCritical, models.SeverityCritical, models.SeverityCritical, models.SeverityCritical), -50},
+		{"far beyond the floor", append(mk(models.SeverityCritical), mk(models.SeverityWarning, models.SeverityWarning, models.SeverityWarning, models.SeverityWarning, models.SeverityWarning, models.SeverityWarning, models.SeverityWarning, models.SeverityWarning, models.SeverityWarning, models.SeverityWarning, models.SeverityWarning, models.SeverityWarning)...), -50},
 		{"unknown severity costs nothing", mk(models.Severity("WEIRD")), 100},
 	}
 	for _, tt := range tests {
@@ -319,10 +322,17 @@ func TestCorrelateRealLab3TCPRetransmissions(t *testing.T) {
 	// duplicate ACKs (frame 60), a follow-up hole fill (64) and a spurious
 	// resend of data the receiver already had (87).
 	assert.Equal(t, 3, flow.Retransmits)
-	assert.Equal(t, 2, flow.FastRetransmits)
+	assert.Equal(t, 1, flow.FastRetransmits, "only the first retransmit followed three duplicate ACKs; Wireshark agrees")
+	assert.Equal(t, 1, flow.RecoveryRetransmits, "frame 64 is a further hole filled during that recovery")
 	assert.Zero(t, flow.TimeoutRetransmits)
 	assert.Equal(t, 4, flow.DupAcks, "Wireshark counts four duplicate ACKs")
 	assert.Equal(t, []string{titleFastRetransmit, titleRetransmissions}, packetLossTitles(res))
+	for _, is := range res.Issues {
+		if is.Title == titleFastRetransmit {
+			assert.Equal(t, 2, is.Count, "the fast retransmit and the segment resent in its recovery")
+			assert.Contains(t, is.Description, "1 segment(s) retransmitted after 3 or more duplicate ACKs, plus 1 more resent during the same recovery")
+		}
+	}
 	assert.Equal(t, 80, res.Diagnosis.HealthScore, "two warnings")
 	assert.Equal(t, "Fast Retransmit (isolated packet loss)", res.Diagnosis.PrimaryCause)
 	assert.Equal(t, categoryRecommendations[titleFastRetransmit], res.Diagnosis.Recommendations)
@@ -452,10 +462,12 @@ func TestCorrelateRealLab4TimeoutRetransmits(t *testing.T) {
 	require.Equal(t, 1, res.TotalFlows)
 	flow := res.TopTalkers[0]
 	assert.Equal(t, 6, flow.Retransmits)
-	assert.Equal(t, 6, flow.TimeoutRetransmits)
+	assert.Equal(t, 4, flow.TimeoutRetransmits, "SYN, SYN-ACK, request and the first data segment each followed a silence")
+	assert.Equal(t, 2, flow.RecoveryRetransmits, "the next two data segments were resent back to back")
 	assert.Zero(t, flow.FastRetransmits)
 	assert.Equal(t, 1, flow.DupAcks)
 	assert.Equal(t, []string{titleTimeoutRetransmit}, packetLossTitles(res))
+	assert.Contains(t, res.Issues[len(res.Issues)-1].Description+res.Diagnosis.Summary, "4 segment(s) retransmitted after the connection went silent for over 200ms with no duplicate ACKs, plus 2 more resent during the same recovery")
 	assert.Equal(t, "Timeout Retransmit (severe congestion or blackhole)", res.Diagnosis.PrimaryCause)
 	assert.Equal(t, categoryRecommendations[titleTimeoutRetransmit], res.Diagnosis.Recommendations)
 	assert.Equal(t, 58, res.Diagnosis.HealthScore, "timeout error, slow handshake, slow response and the retried SYN note")

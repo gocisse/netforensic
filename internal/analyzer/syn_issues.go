@@ -11,7 +11,7 @@ import (
 
 // Titles of the handshake-failure issues.
 const (
-	titleUnansweredSYN = "Unanswered SYN (Firewall drop or server unreachable)"
+	titleUnansweredSYN = "Unanswered SYN (No reply captured: may be firewall drop, server unreachable, or asymmetric capture)"
 	titleSYNFlood      = "Possible SYN Flood (multiple unanswered SYNs)"
 	titleSYNRetried    = "SYN Retried Before Answer"
 
@@ -31,8 +31,9 @@ const (
 //     ip:port inside a 10-second window got no SYN-ACK and no RST. One issue
 //     per such destination.
 //   - Unanswered SYN (warning): the client sent a SYN and neither a SYN-ACK
-//     nor an RST ever came, although the capture ran on for at least a
-//     second. All remaining unanswered attempts are folded into one issue
+//     nor an RST was captured, although the capture ran on for at least a
+//     second. The title stays neutral about why, since a capture that sees
+//     only one direction looks the same as a firewall drop. All remaining unanswered attempts are folded into one issue
 //     that names the most affected destinations, so a port sweep does not
 //     bury the report.
 //   - SYN Retried Before Answer (info): the handshake did complete, but only
