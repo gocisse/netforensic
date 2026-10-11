@@ -235,6 +235,11 @@ func (d *diagnosis) congestion(flows []models.Flow, issues []models.Issue) bool 
 		if _, ok := hot[is.FlowID]; ok {
 			d.roles[is.ID] = eventRootCause
 		}
+		for _, o := range is.Occurrences { // aggregated latency and jitter issues
+			if _, ok := hot[o.Subject]; ok && is.Category == "Performance" {
+				d.roles[is.ID] = eventRootCause
+			}
+		}
 	}
 	return true
 }

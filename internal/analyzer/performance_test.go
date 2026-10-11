@@ -1,6 +1,7 @@
 package analyzer
 
 import (
+	"fmt"
 	"path/filepath"
 	"testing"
 	"time"
@@ -160,14 +161,12 @@ func TestPerformanceIssues(t *testing.T) {
 		{"all thresholds exactly met are not exceeded", models.Flow{ID: "f", SetupTimeMs: 500, TTFBMs: 1000, AvgRTTMs: 200, MaxRTTMs: 500}, nil},
 		{"slow handshake", models.Flow{ID: "f", SetupTimeMs: 500.01}, []string{"Slow TCP Handshake"}},
 		{"slow ttfb", models.Flow{ID: "f", TTFBMs: 1000.01}, []string{"Slow Server Response"}},
-		{"high latency", models.Flow{ID: "f", AvgRTTMs: 200.01}, []string{"High Network Latency"}},
-		{"high jitter", models.Flow{ID: "f", MaxRTTMs: 500.01}, []string{"High Jitter"}},
-		{"everything", models.Flow{ID: "f", SetupTimeMs: 900, TTFBMs: 2000, AvgRTTMs: 300, MaxRTTMs: 900},
-			[]string{"Slow TCP Handshake", "Slow Server Response", "High Network Latency", "High Jitter"}},
+		{"latency and jitter are aggregated elsewhere", models.Flow{ID: "f", AvgRTTMs: 900, MaxRTTMs: 900}, nil},
+		{"both per-flow issues", models.Flow{ID: "f", SetupTimeMs: 900, TTFBMs: 2000, AvgRTTMs: 300, MaxRTTMs: 900},
+			[]string{"Slow TCP Handshake", "Slow Server Response"}},
 	}
 	sev := map[string]models.Severity{
 		"Slow TCP Handshake": models.SeverityWarning, "Slow Server Response": models.SeverityWarning,
-		"High Network Latency": models.SeverityInfo, "High Jitter": models.SeverityWarning,
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -229,4 +228,116 @@ func TestPerformanceRealLab5Handshake(t *testing.T) {
 	assert.Contains(t, titles, "Slow Server Response")
 	assert.NotContains(t, titles, "Slow TCP Handshake", "104ms is under the 500ms threshold")
 
+}
+
+func slowRTTFlows(n int, avg, max float64) []models.Flow {
+	flows := make([]models.Flow, n)
+	for i := range flows {
+		flows[i] = models.Flow{ID: fmt.Sprintf("10.0.0.%d:1000-10.0.1.1:443", i), Protocol: models.ProtocolTCP,
+			StartTime: at(float64(i)), AvgRTTMs: avg + float64(i), MaxRTTMs: max + float64(i)}
+	}
+	return flows
+}
+
+func perfIssuesByTitle(issues []models.Issue) map[string][]models.Issue {
+	out := map[string][]models.Issue{}
+	for _, is := range issues {
+		out[is.Title] = append(out[is.Title], is)
+	}
+	return out
+}
+
+func TestAggregatePerformance50Flows(t *testing.T) {
+	// 50 flows, every one above the latency and the jitter threshold
+	issues := aggregatePerformance(slowRTTFlows(50, 250, 600))
+	by := perfIssuesByTitle(issues)
+	require.Len(t, issues, 2, "two aggregated issues, not 100")
+
+	lat := by["High Network Latency"]
+	require.Len(t, lat, 1)
+	assert.Equal(t, models.SeverityInfo, lat[0].Severity)
+	assert.Equal(t, "Performance", lat[0].Category)
+	assert.Equal(t, 50, lat[0].Count)
+	assert.Len(t, lat[0].Occurrences, 50)
+	assert.Empty(t, lat[0].FlowID)
+	assert.Equal(t, "10.0.0.49:1000-10.0.1.1:443", lat[0].Target, "the worst flow")
+	assert.Equal(t, at(0), lat[0].Timestamp)
+	assert.Equal(t, "50 flows experienced average RTT > 200ms (Max observed: 299ms). Worst: "+
+		"10.0.0.49:1000-10.0.1.1:443 (299ms), 10.0.0.48:1000-10.0.1.1:443 (298ms), 10.0.0.47:1000-10.0.1.1:443 (297ms)", lat[0].Description)
+
+	jit := by["High Jitter"]
+	require.Len(t, jit, 1)
+	assert.Equal(t, models.SeverityWarning, jit[0].Severity)
+	assert.Equal(t, 50, jit[0].Count)
+	assert.Contains(t, jit[0].Description, "50 flows experienced max RTT > 500ms (Max observed: 649ms)")
+}
+
+func TestAggregatePerformanceViaAnalyze(t *testing.T) {
+	// 50 TCP flows, each with a 300ms request/ACK round trip, through the full pipeline
+	var packets []models.PacketInfo
+	for i := 0; i < 50; i++ {
+		port := uint16(2000 + i)
+		c := func(sec float64, flags string, seq, ack uint32, payload int, fromClient bool) models.PacketInfo {
+			p := models.PacketInfo{Timestamp: at(float64(i) + sec), Protocol: models.ProtocolTCP, TCPFlags: flags, TCPSeq: seq, TCPAck: ack,
+				PayloadSize: payload, Size: 60 + payload, TCPWindow: 1000}
+			if fromClient {
+				p.SrcIP, p.SrcPort, p.DstIP, p.DstPort = "10.0.0.1", port, "10.0.0.2", 80
+			} else {
+				p.SrcIP, p.SrcPort, p.DstIP, p.DstPort = "10.0.0.2", 80, "10.0.0.1", port
+			}
+			return p
+		}
+		packets = append(packets,
+			c(0, "PSH,ACK", 100, 1, 50, true),
+			c(0.3, "ACK", 1, 150, 0, false), // 300ms RTT
+		)
+	}
+	res := Analyze(packets, "all")
+	require.Equal(t, 50, res.TotalFlows)
+	by := perfIssuesByTitle(res.Issues)
+	require.Len(t, by["High Network Latency"], 1, "one latency issue for 50 flows")
+	assert.Equal(t, 50, by["High Network Latency"][0].Count)
+	assert.Len(t, res.SlowFlows, topTalkerCount, "the TOP SLOW FLOWS table still lists the worst offenders")
+	assert.Equal(t, 98, res.Diagnosis.HealthScore, "one info issue, not fifty")
+}
+
+func TestAggregatePerformanceDetails(t *testing.T) {
+	t.Run("nothing over the thresholds", func(t *testing.T) {
+		assert.Empty(t, aggregatePerformance([]models.Flow{{ID: "a", AvgRTTMs: 200, MaxRTTMs: 500}, {ID: "b"}}))
+		assert.Empty(t, aggregatePerformance(nil))
+	})
+	t.Run("a single flow keeps its flow ID", func(t *testing.T) {
+		issues := aggregatePerformance([]models.Flow{{ID: "a", AvgRTTMs: 300, StartTime: at(5)}, {ID: "b", AvgRTTMs: 10}})
+		require.Len(t, issues, 1)
+		assert.Equal(t, "a", issues[0].FlowID)
+		assert.Equal(t, "1 flow experienced average RTT > 200ms (Max observed: 300ms). Worst: a (300ms)", issues[0].Description)
+	})
+	t.Run("latency and jitter are independent", func(t *testing.T) {
+		issues := perfIssuesByTitle(aggregatePerformance([]models.Flow{
+			{ID: "lat", AvgRTTMs: 250, MaxRTTMs: 300}, {ID: "jit", AvgRTTMs: 50, MaxRTTMs: 800}}))
+		assert.Equal(t, 1, issues["High Network Latency"][0].Count)
+		assert.Equal(t, "lat", issues["High Network Latency"][0].FlowID)
+		assert.Equal(t, 1, issues["High Jitter"][0].Count)
+		assert.Equal(t, "jit", issues["High Jitter"][0].FlowID)
+	})
+	t.Run("extreme latency becomes a warning", func(t *testing.T) {
+		issues := aggregatePerformance([]models.Flow{{ID: "a", AvgRTTMs: 1000}, {ID: "b", AvgRTTMs: 1000.5}})
+		assert.Equal(t, models.SeverityWarning, issues[0].Severity)
+		issues = aggregatePerformance([]models.Flow{{ID: "a", AvgRTTMs: 1000}})
+		assert.Equal(t, models.SeverityInfo, issues[0].Severity, "exactly 1s is still info")
+	})
+	t.Run("only the three worst flows are named", func(t *testing.T) {
+		is := aggregatePerformance(slowRTTFlows(4, 300, 0))[0]
+		assert.NotContains(t, is.Description, "10.0.0.0:")
+		assert.Len(t, is.Occurrences, 4)
+	})
+}
+
+func TestCongestionMarksAggregatedLatencyAsRootCause(t *testing.T) {
+	hot := models.Flow{ID: "hot", AvgRTTMs: 400, Retransmits: 2, StartTime: at(0)}
+	lat := aggregatePerformance([]models.Flow{hot, {ID: "other", AvgRTTMs: 300, StartTime: at(1)}})
+	require.Len(t, lat, 1)
+	d := diagnosis{roles: map[string]string{}}
+	require.True(t, d.congestion([]models.Flow{hot}, lat))
+	assert.Equal(t, eventRootCause, d.roles[lat[0].ID])
 }

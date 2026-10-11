@@ -15,6 +15,10 @@ const (
 	slowTTFBMs  = 1000.0
 	highRTTMs   = 200.0
 	highJitter  = 500.0 // max RTT
+
+	// latencyWarnMs is the worst average RTT from which the aggregated
+	// latency issue becomes a warning instead of an info.
+	latencyWarnMs = 1000.0
 )
 
 // applyPerformanceMetrics fills the timing metrics of every TCP flow and
@@ -22,7 +26,12 @@ const (
 // metrics that exceed their thresholds:
 //   - setup time over 500ms: slow TCP handshake (warning)
 //   - TTFB over 1000ms: slow server response (warning)
-//   - average RTT over 200ms: high network latency (info)
+//
+// Per-flow issues are raised for the first two. Latency and jitter are
+// common across many flows at once, so they are aggregated into at most one
+// issue each (see aggregatePerformance):
+//   - average RTT over 200ms: high network latency (info, or warning if the
+//     worst flow averages over 1s)
 //   - max RTT over 500ms: high jitter (warning)
 //
 // Setup time and TTFB come from the handshake timestamps on the packets.
@@ -59,6 +68,7 @@ func applyPerformanceMetrics(packets []models.PacketInfo, flows []models.Flow) (
 		f.AvgRTTMs, f.MaxRTTMs = rttMetrics(pkts)
 		issues = append(issues, performanceIssues(*f)...)
 	}
+	issues = append(issues, aggregatePerformance(out)...)
 	return out, issues
 }
 
@@ -183,13 +193,14 @@ func hasTCPFlag(flags, flag string) bool {
 	return false
 }
 
-// performanceIssues returns the threshold violations of one flow.
+// performanceIssues returns the per-flow threshold violations of one flow:
+// a slow handshake and a slow first response.
 func performanceIssues(f models.Flow) []models.Issue {
 	var issues []models.Issue
-	add := func(kind string, sev models.Severity, title, desc string) {
+	add := func(kind string, title, desc string) {
 		issues = append(issues, models.Issue{
 			ID:          "perf-" + kind + "-" + f.ID,
-			Severity:    sev,
+			Severity:    models.SeverityWarning,
 			Category:    "Performance",
 			Title:       title,
 			Description: desc,
@@ -198,22 +209,91 @@ func performanceIssues(f models.Flow) []models.Issue {
 		})
 	}
 	if f.SetupTimeMs > slowSetupMs {
-		add("setup", models.SeverityWarning, "Slow TCP Handshake",
+		add("setup", "Slow TCP Handshake",
 			fmt.Sprintf("flow %s took %.0fms to complete the TCP handshake (threshold %.0fms)", f.ID, f.SetupTimeMs, slowSetupMs))
 	}
 	if f.TTFBMs > slowTTFBMs {
-		add("ttfb", models.SeverityWarning, "Slow Server Response",
+		add("ttfb", "Slow Server Response",
 			fmt.Sprintf("flow %s waited %.0fms for the first server data after the handshake (threshold %.0fms)", f.ID, f.TTFBMs, slowTTFBMs))
 	}
-	if f.AvgRTTMs > highRTTMs {
-		add("latency", models.SeverityInfo, "High Network Latency",
-			fmt.Sprintf("flow %s has an average RTT of %.0fms (threshold %.0fms)", f.ID, f.AvgRTTMs, highRTTMs))
+	return issues
+}
+
+// aggregatePerformance folds the latency and jitter violations of all flows
+// into one issue each:
+//   - High Network Latency: flows with an average RTT over 200ms
+//   - High Jitter: flows with a maximum RTT over 500ms
+//
+// The issues name the number of flows, the worst value observed and the
+// three worst flows; the full list is in Occurrences. The slowest flows are
+// also shown by the TOP SLOW FLOWS table.
+func aggregatePerformance(flows []models.Flow) []models.Issue {
+	var issues []models.Issue
+	if is, ok := aggregateFlowMetric(flows, "latency", "High Network Latency",
+		func(f models.Flow) float64 { return f.AvgRTTMs }, highRTTMs, "average RTT"); ok {
+		is.Severity = models.SeverityInfo
+		if is.worstValue > latencyWarnMs {
+			is.Severity = models.SeverityWarning
+		}
+		issues = append(issues, is.Issue)
 	}
-	if f.MaxRTTMs > highJitter {
-		add("jitter", models.SeverityWarning, "High Jitter",
-			fmt.Sprintf("flow %s has a maximum RTT of %.0fms (average %.0fms, threshold %.0fms)", f.ID, f.MaxRTTMs, f.AvgRTTMs, highJitter))
+	if is, ok := aggregateFlowMetric(flows, "jitter", "High Jitter",
+		func(f models.Flow) float64 { return f.MaxRTTMs }, highJitter, "max RTT"); ok {
+		is.Severity = models.SeverityWarning
+		issues = append(issues, is.Issue)
 	}
 	return issues
+}
+
+// aggregated is an aggregate issue plus the value that decides its severity.
+type aggregated struct {
+	models.Issue
+	worstValue float64
+}
+
+func aggregateFlowMetric(flows []models.Flow, kind, title string, value func(models.Flow) float64, threshold float64, what string) (aggregated, bool) {
+	var hit []models.Flow
+	for _, f := range flows {
+		if value(f) > threshold {
+			hit = append(hit, f)
+		}
+	}
+	if len(hit) == 0 {
+		return aggregated{}, false
+	}
+	sort.SliceStable(hit, func(i, j int) bool { return value(hit[i]) > value(hit[j]) })
+
+	first := hit[0].StartTime
+	occ := make([]models.Occurrence, len(hit))
+	for i, f := range hit {
+		occ[i] = models.Occurrence{Time: f.StartTime, Subject: f.ID}
+		if f.StartTime.Before(first) {
+			first = f.StartTime
+		}
+	}
+	worst := make([]string, 0, 3)
+	for i, f := range hit {
+		if i == 3 {
+			break
+		}
+		worst = append(worst, fmt.Sprintf("%s (%.0fms)", f.ID, value(f)))
+	}
+
+	is := models.Issue{
+		ID:          "perf-" + kind,
+		Category:    "Performance",
+		Title:       title,
+		Timestamp:   first,
+		Target:      hit[0].ID,
+		Count:       len(hit),
+		Occurrences: occ,
+	}
+	if len(hit) == 1 {
+		is.FlowID = hit[0].ID
+	}
+	is.Description = fmt.Sprintf("%s experienced %s > %.0fms (Max observed: %.0fms). Worst: %s",
+		count(len(hit), "flow", "flows"), what, threshold, value(hit[0]), strings.Join(worst, ", "))
+	return aggregated{is, value(hit[0])}, true
 }
 
 // slowFlows returns up to n flows ordered by their worst timing metric.
