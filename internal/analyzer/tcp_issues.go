@@ -13,6 +13,11 @@ import (
 const (
 	titleRefused = "Connection Refused (Port Closed)"
 	titleAborted = "Connection Abruptly Closed"
+	titleIdle    = "Connection Idle Timeout"
+
+	// idleResetGap is how long a connection must have been silent before an
+	// RST is read as an idle-timeout cleanup rather than a failure.
+	idleResetGap = 10 * time.Second
 )
 
 // connState follows one TCP connection (see models.ConnectionInstances).
@@ -47,6 +52,9 @@ type connState struct {
 //     handshake or exchanged data and was then torn down by an RST, unless
 //     both sides had already sent a FIN (a normal close followed by a stray
 //     RST). One issue per connection.
+//   - Connection Idle Timeout (info): the same, but the RST came more than
+//     10 seconds after the last payload in either direction, which looks
+//     like an idle-timeout cleanup rather than a failure.
 func analyzeResets(packets []models.PacketInfo) []models.Issue {
 	conns := make(map[instKey]*connState)
 	var order []instKey
@@ -143,6 +151,15 @@ func (c *connState) established() bool {
 	return (c.sawSynAck && c.sawAck) || c.data
 }
 
+// idleFor returns how long the connection had been silent when the first RST
+// arrived, and whether any data had been exchanged at all.
+func (c *connState) idleFor() (time.Duration, bool) {
+	if c.lastData.IsZero() {
+		return 0, false
+	}
+	return c.firstRST.Timestamp.Sub(c.lastData), true
+}
+
 func (c *connState) abortedIssue() models.Issue {
 	who := c.server
 	role := "server"
@@ -162,11 +179,17 @@ func (c *connState) abortedIssue() models.Issue {
 	if c.rsts > 1 {
 		desc += fmt.Sprintf("; %d RST packets in total", c.rsts)
 	}
+	sev, title := models.SeverityError, titleAborted
+	if idle, ok := c.idleFor(); ok && idle > idleResetGap {
+		sev, title = models.SeverityInfo, titleIdle
+		desc = fmt.Sprintf("flow %s was reset by the %s (%s) at %s, %s after the last data; likely a firewall, NAT or load-balancer idle timeout cleaning up an idle connection",
+			c.id, role, who.ip, p.Timestamp.UTC().Format("15:04:05.000"), idle.Round(time.Millisecond))
+	}
 	return models.Issue{
 		ID:          "reset-" + c.id,
-		Severity:    models.SeverityError,
+		Severity:    sev,
 		Category:    "Connection",
-		Title:       titleAborted,
+		Title:       title,
 		Description: desc,
 		Timestamp:   p.Timestamp,
 		FlowID:      c.id,

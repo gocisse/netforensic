@@ -229,3 +229,50 @@ func TestResetIssueFallbackRecommendations(t *testing.T) {
 	assert.Equal(t, fmt.Sprintf("reset-%s", aborted[1].FlowID), aborted[1].ID)
 	assert.Contains(t, aborted[1].FlowID, "#2")
 }
+
+func TestResetAfterIdleIsInfoNotFailure(t *testing.T) {
+	flow := func(gapMs int) []models.PacketInfo {
+		return []models.PacketInfo{
+			tcpEv(0, 5000, true, "SYN", 0), tcpEv(1, 5000, false, "SYN,ACK", 0), tcpEv(2, 5000, true, "ACK", 0),
+			tcpEv(3, 5000, true, "PSH,ACK", 100), tcpEv(4, 5000, false, "PSH,ACK", 200),
+			tcpEv(4+gapMs, 5000, false, "RST,ACK", 0),
+		}
+	}
+	tests := []struct {
+		name      string
+		gapMs     int
+		wantTitle string
+		wantSev   models.Severity
+	}{
+		{"immediately after data", 1, titleAborted, models.SeverityError},
+		{"9.9s of silence", 9900, titleAborted, models.SeverityError},
+		{"exactly 10s is not yet idle", 10000, titleAborted, models.SeverityError},
+		{"10.001s of silence", 10001, titleIdle, models.SeverityInfo},
+		{"41s of silence", 41000, titleIdle, models.SeverityInfo},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			res := Analyze(flow(tt.gapMs), "all")
+			var got []models.Issue
+			for _, is := range res.Issues {
+				if is.Category == "Connection" {
+					got = append(got, is)
+				}
+			}
+			require.Len(t, got, 1)
+			assert.Equal(t, tt.wantTitle, got[0].Title)
+			assert.Equal(t, tt.wantSev, got[0].Severity)
+		})
+	}
+
+	res := Analyze(flow(41000), "all")
+	assert.Contains(t, res.Issues[len(res.Issues)-1].Description, "idle timeout")
+	assert.Equal(t, 98, res.Diagnosis.HealthScore)
+	assert.Contains(t, res.Diagnosis.Recommendations[0], "idle-timeout settings of firewalls")
+
+	t.Run("an idle reset does not hijack a real failure", func(t *testing.T) {
+		packets := append(flow(41000), models.PacketInfo{Timestamp: rstT0, Protocol: models.ProtocolUDP, SrcIP: "10.0.0.53", SrcPort: 53, DstIP: "10.0.0.1", DstPort: 4444,
+			DNSQueryName: "x.example", DNSResponseCode: "SERVFAIL"})
+		assert.Equal(t, "DNS SERVFAIL", Analyze(packets, "all").Diagnosis.PrimaryCause)
+	})
+}

@@ -353,18 +353,21 @@ func TestPerformanceRealLab5SlowApplication(t *testing.T) {
 	assert.Contains(t, issueTitles(res), "Slow Server Response")
 	assert.Zero(t, flow.Retransmits, "keep-alive probes are not retransmissions")
 	assert.NotContains(t, issueTitles(res), "TCP Retransmissions detected")
-	// The capture ends with the server resetting the connection (frame 84,
-	// 5m24s in). That error outranks the slow-response warning, which stays
-	// in the timeline and the issue list.
-	assert.Contains(t, issueTitles(res), titleAborted)
-	assert.Equal(t, titleAborted, res.Diagnosis.PrimaryCause)
-	assert.Equal(t, 70, res.Diagnosis.HealthScore)
+	// The capture ends with the server resetting the connection (frame 84),
+	// 41s after the last data: an idle-timeout cleanup, reported as Info
+	// so it cannot take over from the slow response.
+	assert.Contains(t, issueTitles(res), titleIdle)
+	assert.NotContains(t, issueTitles(res), titleAborted)
+	assert.Equal(t, "Slow Server Response", res.Diagnosis.PrimaryCause)
+	assert.Equal(t, 88, res.Diagnosis.HealthScore)
 
-	var slowInTimeline bool
+	var inTimeline, idleInTimeline bool
 	for _, e := range res.Diagnosis.Timeline {
-		slowInTimeline = slowInTimeline || (e.EventType == eventIssue && strings.Contains(e.Description, "Slow Server Response"))
+		inTimeline = inTimeline || (e.EventType == eventRootCause && strings.Contains(e.Description, "Slow Server Response"))
+		idleInTimeline = idleInTimeline || (e.EventType == eventIssue && e.Severity == models.SeverityInfo && strings.Contains(e.Description, titleIdle))
 	}
-	assert.True(t, slowInTimeline, "the slow response is still reported in the timeline")
+	assert.True(t, inTimeline, "slow response is the root-cause event in the timeline")
+	assert.True(t, idleInTimeline, "the idle reset is an info note in the timeline")
 
 	require.NotEmpty(t, res.SlowFlows)
 	assert.Equal(t, flow.ID, res.SlowFlows[0].ID)

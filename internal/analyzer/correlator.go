@@ -377,6 +377,9 @@ var categoryRecommendations = map[string][]string{
 	titleRefused: {
 		"Verify if the service is running on the target port, or if a firewall is actively rejecting connections with an RST instead of dropping them.",
 	},
+	titleIdle: {
+		"Check the idle-timeout settings of firewalls, NAT gateways and load balancers on the path, and enable TCP keep-alives if long-idle connections are expected.",
+	},
 	titleAborted: {
 		"Investigate application-level crashes, firewall state-table evictions, or middleboxes forcefully tearing down the connection.",
 	},
