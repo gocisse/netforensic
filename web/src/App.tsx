@@ -1,5 +1,9 @@
-import { useRef, useState } from 'react'
-import type { ChangeEvent, DragEvent } from 'react'
+import { useEffect, useRef, useState } from 'react'
+import type { ChangeEvent, DragEvent, ReactNode } from 'react'
+import { analyzeCapture, ApiError } from './api'
+import { healthTone, NOTE_TITLES, severityBadge, sortIssues } from './format'
+import type { AnalysisResult, ApiResult, EmptyResult, Issue } from './types'
+import { isEmptyResult } from './types'
 
 const ACCEPTED_EXTENSIONS = ['.pcap', '.pcapng']
 
@@ -147,33 +151,178 @@ function UploadCard({ file, loading, error, onSelect, onAnalyze }: UploadCardPro
   )
 }
 
-interface ResultsCardProps {
-  loading: boolean
-  analyzedName: string | null
+const TOP_ISSUES = 10
+
+function HealthScore({ score }: { score: number }) {
+  const tone = healthTone(score)
+  return (
+    <div
+      className={`flex h-32 w-32 flex-none flex-col items-center justify-center rounded-full border-4 ${tone.ring} ${tone.bg}`}
+      role="img"
+      aria-label={`Health score ${score} out of 100, ${tone.label}`}
+    >
+      <span data-testid="health-score" className={`text-4xl font-bold ${tone.text}`}>
+        {score}
+      </span>
+      <span className={`text-xs font-semibold uppercase tracking-wide ${tone.text}`}>{tone.label}</span>
+    </div>
+  )
 }
 
-function ResultsCard({ loading, analyzedName }: ResultsCardProps) {
+function Notice({ tone, children }: { tone: 'warning' | 'info'; children: ReactNode }) {
+  const style =
+    tone === 'warning'
+      ? 'border-yellow-300 bg-yellow-50 text-yellow-900'
+      : 'border-sky-200 bg-sky-50 text-sky-900'
+  return <div className={`rounded-lg border px-4 py-3 text-sm ${style}`}>{children}</div>
+}
+
+/** Banners for problems with the capture file itself. */
+function CaptureNotes({ issues }: { issues: Issue[] }) {
+  const notes = issues.filter((i) => (NOTE_TITLES as readonly string[]).includes(i.title))
   return (
-    <section
-      aria-live="polite"
-      className="rounded-xl border border-slate-200 bg-white p-10 text-center shadow-sm"
-    >
-      {loading ? (
-        <p className="text-sm text-slate-600">Analyzing capture…</p>
-      ) : analyzedName ? (
-        <>
-          <p className="text-sm font-medium text-slate-900">{analyzedName}</p>
-          <p className="mt-1 text-sm text-slate-500">
-            Analysis is not connected to a server yet. Results will appear here.
+    <>
+      {notes.map((n) => (
+        <Notice key={n.id} tone={n.title === 'Truncated Capture' ? 'warning' : 'info'}>
+          <span className="font-semibold">{n.title}.</span> {n.description}
+        </Notice>
+      ))}
+    </>
+  )
+}
+
+function IssueList({ issues }: { issues: Issue[] }) {
+  const [showAll, setShowAll] = useState(false)
+  const rows = sortIssues(issues.filter((i) => !(NOTE_TITLES as readonly string[]).includes(i.title)))
+  if (rows.length === 0) {
+    return <p className="text-sm text-slate-500">No issues were found in this capture.</p>
+  }
+  const shown = showAll ? rows : rows.slice(0, TOP_ISSUES)
+  return (
+    <div>
+      <ul className="divide-y divide-slate-100 rounded-lg border border-slate-200">
+        {shown.map((issue) => (
+          <li key={issue.id} className="px-4 py-3">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className={`rounded px-2 py-0.5 text-xs font-semibold ${severityBadge(issue.severity)}`}>
+                {issue.severity}
+              </span>
+              <span className="text-xs font-medium uppercase tracking-wide text-slate-500">{issue.category}</span>
+              <span className="text-sm font-medium text-slate-900">{issue.title}</span>
+              {(issue.count ?? 1) > 1 && (
+                <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-600">
+                  ×{issue.count}
+                </span>
+              )}
+            </div>
+            <p className="mt-1 line-clamp-2 text-sm text-slate-500" title={issue.description}>
+              {issue.description}
+            </p>
+          </li>
+        ))}
+      </ul>
+      {rows.length > TOP_ISSUES && (
+        <button
+          type="button"
+          onClick={() => setShowAll((v) => !v)}
+          className="mt-3 text-sm font-medium text-indigo-600 hover:text-indigo-500"
+        >
+          {showAll ? `Show the top ${TOP_ISSUES} only` : `Show all ${rows.length} issues`}
+        </button>
+      )}
+    </div>
+  )
+}
+
+function Report({ result }: { result: AnalysisResult }) {
+  const d = result.diagnosis
+  return (
+    <div className="space-y-6" data-testid="report">
+      <CaptureNotes issues={result.issues} />
+
+      <div className="flex flex-wrap items-center gap-6">
+        <HealthScore score={d.health_score} />
+        <div className="min-w-0 flex-1">
+          <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Primary cause</p>
+          <p data-testid="primary-cause" className="mt-1 text-xl font-semibold text-slate-900">
+            {d.primary_cause}
           </p>
+          <p className="mt-1 text-sm text-slate-600">
+            Confidence: <span className="font-medium">{d.confidence}</span>
+          </p>
+          <p className="mt-2 text-sm text-slate-600">{d.summary}</p>
+        </div>
+      </div>
+
+      <dl className="grid grid-cols-3 gap-4 rounded-lg bg-slate-50 p-4 text-center">
+        <div>
+          <dt className="text-xs uppercase tracking-wide text-slate-500">Packets</dt>
+          <dd className="text-lg font-semibold">{result.total_packets.toLocaleString()}</dd>
+        </div>
+        <div>
+          <dt className="text-xs uppercase tracking-wide text-slate-500">Flows</dt>
+          <dd className="text-lg font-semibold">{result.total_flows.toLocaleString()}</dd>
+        </div>
+        <div>
+          <dt className="text-xs uppercase tracking-wide text-slate-500">Duration</dt>
+          <dd className="text-lg font-semibold">{result.duration}</dd>
+        </div>
+      </dl>
+
+      <div>
+        <h3 className="mb-2 text-sm font-semibold text-slate-900">Top issues</h3>
+        <IssueList issues={result.issues} />
+      </div>
+
+      {d.recommendations.length > 0 && (
+        <div>
+          <h3 className="mb-2 text-sm font-semibold text-slate-900">Recommendations</h3>
+          <ol className="list-decimal space-y-1 pl-5 text-sm text-slate-600">
+            {d.recommendations.map((r) => (
+              <li key={r}>{r}</li>
+            ))}
+          </ol>
+        </div>
+      )}
+    </div>
+  )
+}
+
+/** The answer for a capture with nothing to analyze: no score, just why. */
+function NothingToAnalyze({ result }: { result: EmptyResult }) {
+  return (
+    <div className="space-y-4 text-center" data-testid="nothing-to-analyze">
+      <CaptureNotes issues={result.issues} />
+      <p className="text-base font-medium text-slate-700">{result.message}</p>
+      <p className="text-sm text-slate-500">There is nothing to score, so no health score is shown.</p>
+    </div>
+  )
+}
+
+interface ResultsCardProps {
+  loading: boolean
+  result: ApiResult | null
+}
+
+function ResultsCard({ loading, result }: ResultsCardProps) {
+  return (
+    <section aria-live="polite" className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
+      {loading ? (
+        <p className="py-6 text-center text-sm text-slate-600">Analyzing capture…</p>
+      ) : result ? (
+        <>
+          <h2 className="mb-4 truncate text-base font-semibold text-slate-900" title={result.file_name}>
+            {result.file_name}
+          </h2>
+          {isEmptyResult(result) ? <NothingToAnalyze result={result} /> : <Report result={result} />}
         </>
       ) : (
-        <>
+        <div className="py-6 text-center">
           <p className="text-base font-medium text-slate-700">Upload a capture to begin analysis</p>
           <p className="mt-1 text-sm text-slate-500">
-            The health score, root cause, timeline and issues will appear here.
+            The health score, root cause and issues will appear here.
           </p>
-        </>
+        </div>
       )}
     </section>
   )
@@ -181,12 +330,16 @@ function ResultsCard({ loading, analyzedName }: ResultsCardProps) {
 
 export default function App() {
   const [file, setFile] = useState<File | null>(null)
-  const [loading, setLoading] = useState(false)
+  const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [analyzedName, setAnalyzedName] = useState<string | null>(null)
+  const [result, setResult] = useState<ApiResult | null>(null)
+  const inFlight = useRef<AbortController | null>(null)
+
+  // Abandon a running upload if the page goes away.
+  useEffect(() => () => inFlight.current?.abort(), [])
 
   const handleSelect = (selected: File | null) => {
-    setAnalyzedName(null)
+    setResult(null)
     if (selected && !isCaptureFile(selected)) {
       setFile(null)
       setError(`"${selected.name}" is not a capture file. Choose a .pcap or .pcapng file.`)
@@ -196,14 +349,24 @@ export default function App() {
     setFile(selected)
   }
 
-  // Placeholder: the upload endpoint arrives with the Go server.
   const handleAnalyze = async () => {
-    if (!file) return
-    setLoading(true)
+    if (!file || isLoading) return
+    const controller = new AbortController()
+    inFlight.current = controller
+    setIsLoading(true)
     setError(null)
-    await new Promise((resolve) => setTimeout(resolve, 800))
-    setAnalyzedName(file.name)
-    setLoading(false)
+    setResult(null)
+    try {
+      setResult(await analyzeCapture(file, controller.signal))
+    } catch (err) {
+      if (controller.signal.aborted) return
+      setError(err instanceof ApiError ? err.message : 'Something went wrong while analyzing the capture.')
+    } finally {
+      if (inFlight.current === controller) {
+        inFlight.current = null
+        setIsLoading(false)
+      }
+    }
   }
 
   return (
@@ -212,12 +375,12 @@ export default function App() {
       <main className="mx-auto max-w-5xl space-y-6 px-6 py-8">
         <UploadCard
           file={file}
-          loading={loading}
+          loading={isLoading}
           error={error}
           onSelect={handleSelect}
           onAnalyze={handleAnalyze}
         />
-        <ResultsCard loading={loading} analyzedName={analyzedName} />
+        <ResultsCard loading={isLoading} result={result} />
       </main>
     </div>
   )

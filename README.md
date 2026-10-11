@@ -1,28 +1,164 @@
 # netforensic
 
-A command-line forensic tool for `.pcap` and `.pcapng` captures. It reads a
-capture, follows flows, and reports what went wrong: retransmissions, resets,
-unanswered SYNs, zero windows, DNS and ICMP failures, slow handshakes and
-responses, with a root-cause summary.
+A single-binary Go forensic tool that analyzes `.pcap` and `.pcapng` captures
+and provides actionable network diagnostics. It reads a capture, follows every
+flow, and tells you what went wrong and why: retransmissions (fast or timeout),
+connection resets and refusals, zero-window stalls, unanswered SYNs and SYN
+floods, DNS failures, ICMP errors, slow handshakes and server responses. It
+ends with a health score, a root-cause summary, a timeline and recommendations.
 
-```
+It runs in two modes from the same binary:
+
+- **CLI mode:** `netforensic [flags] capture.pcap` prints a triage report.
+- **Web UI mode:** `netforensic --web :8181` serves an embedded web page where
+  you upload a capture and see the same analysis in your browser.
+
+## Prerequisites
+
+- **Go 1.22 or newer** to build the binary.
+- **Node.js and npm** (Node 20+ recommended) to build the web UI that is
+  embedded into the binary. Not needed to run the CLI from a binary that was
+  already built with the UI.
+- `tshark` is *not* required; it is only useful for cross-checking results.
+
+## Installation
+
+```bash
+git clone https://github.com/gocisse/netforensic.git
+cd netforensic
+go mod tidy
+
+# build the web UI (it is embedded into the Go binary)
+cd web
+npm install
+npm run build
+cd ..
+
 go build -o netforensic ./cmd/netforensic
-./netforensic capture.pcapng                 # triage report
-./netforensic -o json capture.pcapng         # every issue, machine-readable
-./netforensic --follow "10.0.0.1:5000-10.0.0.2:80" capture.pcapng          # reconstructed stream
-./netforensic --follow-packets "10.0.0.1:5000-10.0.0.2:80" capture.pcapng  # packet by packet
 ```
+
+The result is a single self-contained `netforensic` executable. If you skip the
+`npm` steps the binary still builds and the CLI works; the web server then
+answers `503` at `/` with a reminder to build the UI, while `/api/analyze`
+keeps working.
+
+Run the tests with `go test ./...`.
+
+## Usage: CLI mode
+
+```bash
+./netforensic capture.pcapng                 # triage report
+./netforensic -o json capture.pcapng         # the same analysis as JSON
+```
+
+The triage report shows the health score, the root cause, a timeline, the
+slowest flows, recommendations and a compact count of issues by kind. The JSON
+output holds every issue in full, including the individual events behind
+aggregated issues (`occurrences`).
+
+**Verbose packet table** (`-v`): print every packet that is analyzed before the
+summary.
+
+```bash
+./netforensic -v capture.pcap
+```
+
+**Service filter** (`-s`): analyze only one service. Accepted values are `all`
+(default), `dns`, `http` (port 80), `tls` or `https` (port 443), or any port
+number. The filter applies to the analysis and to `-v` alike.
+
+```bash
+./netforensic -s dns capture.pcap
+./netforensic -v -s 443 capture.pcap
+./netforensic -s 8080 capture.pcap
+```
+
+**IP and port filters:** `--src-ip`, `--dst-ip`, `--src-port` and `--dst-port`
+combine with each other and with `-s`.
+
+```bash
+./netforensic --src-ip 10.0.0.145 capture.pcap
+./netforensic --dst-ip 8.8.8.8 --dst-port 53 capture.pcap
+```
+
+If nothing matches the filters, the tool says "No packets matched the specified
+filters. Nothing to analyze." instead of printing a health score.
+
+**Follow a flow** (`--follow`): reconstruct the application-layer conversation
+of one flow, much like Wireshark's "Follow TCP Stream": HTTP requests and
+responses and DNS queries as text, binary data summarized by size, retransmitted
+segments left out. Flow IDs look like `ip:port-ip:port`, with IPv6 addresses in
+brackets (`[2001:db8::1]:443-[2001:db8::2]:50000`); add `/udp` or `/tcp` to pick
+a protocol, and `#2` for the second connection when a port was reused. A wrong
+or unknown ID lists the flows that exist.
+
+```bash
+./netforensic --follow "10.0.0.145:54436-186.15.230.24:80" capture.pcapng
+```
+
+`--follow-packets` shows the same flow packet by packet instead, with flags,
+sequence numbers, payload dumps and a `[RETRANS]` mark on retransmitted
+segments:
+
+```bash
+./netforensic --follow-packets "10.0.0.145:54436-186.15.230.24:80" capture.pcapng
+```
+
+## Usage: Web UI mode
+
+```bash
+./netforensic --web :8181
+```
+
+This prints `Web UI available at http://localhost:8181` and keeps running until
+you press Ctrl-C. Open that address in a browser, choose or drop a `.pcap` or
+`.pcapng` file, and press **Analyze**. The page shows the health score (green
+from 80, yellow from 40, red below that), the primary cause and confidence, the
+top issues, and the recommendations. Truncated captures and skipped frames are
+called out in notices, and a capture with nothing to analyze says so instead of
+showing a score.
+
+`--web` takes an address such as `:8181` or `127.0.0.1:8181`, cannot be
+combined with a capture file or with the analysis flags, and refuses to start if
+the port is taken. Pick a port that is free on your machine.
+
+The same analysis is available over HTTP. `POST /api/analyze` takes a multipart
+upload in the field `file` (`.pcap` or `.pcapng`, up to 512 MiB) and answers
+with the JSON of `-o json`; errors come back as `{"error": "..."}` with status
+400, 413 or 500:
+
+```bash
+curl -F "file=@capture.pcapng" http://localhost:8181/api/analyze
+```
+
+Uploads are kept in a private temporary file that is deleted as soon as the
+analysis is done.
+
+### Developing the UI
+
+Run the server (`./netforensic --web :8181`) and, in `web/`, `npm run dev`. The
+Vite dev server proxies `/api` to `localhost:8181`. After changing the UI, run
+`npm run build` and rebuild the Go binary to embed the new files.
 
 ## Known limitations
 
-- **Tunnels.** Captures containing GRE or IP-in-IP tunnels may show inflated
-  flow and retransmit counts, because the inner traffic is aggregated by the
-  outer IP addresses and the inner ports. Full tunnel decapsulation is planned
-  for a future release. (For example, `The-Ultimate-PCAP.pcapng` reports about
-  three times the retransmissions that Wireshark does.)
-- **One-sided captures.** A capture point that sees only one direction of a
-  conversation (asymmetric routing, a SPAN port on one link) cannot show
-  replies. Such SYNs are reported as "Unanswered SYN (No reply captured ...)"
-  without claiming a cause.
-- **Health score.** It starts at 100 and drops with every issue. It goes below
-  0 for badly troubled captures and stops at -50 (CATASTROPHIC).
+- **Tunnels (GRE, IP-in-IP).** Captures containing GRE or IP-in-IP tunnels may
+  show inflated flow and retransmit counts, because the inner traffic is
+  aggregated by the outer IP addresses and the inner ports. Full tunnel
+  decapsulation is planned for a future release. (`The-Ultimate-PCAP.pcapng`,
+  for example, reports about three times the retransmissions that Wireshark
+  does.)
+- **One-sided (asymmetric) captures.** A capture point that sees only one
+  direction of a conversation (asymmetric routing, a SPAN port on one link)
+  cannot show replies. Such SYNs are reported as "Unanswered SYN (No reply
+  captured ...)" without claiming a cause, and other findings that depend on
+  both directions may be missing.
+- **Unsupported frames.** Frames with a link-layer type this tool cannot decode
+  (for example Ethernet mPackets) and non-IP traffic (spanning tree, LLDP, ...)
+  are skipped. A "Skipped Frames" note says how many; it costs no health points.
+- **Truncated files** are analyzed up to the cut and flagged; a file cut inside
+  its first header cannot be read at all.
+- **Health score.** It starts at 100 and drops with every issue. It goes below 0
+  for badly troubled captures and stops at -50 (CATASTROPHIC).
+- **Capture durations** over 24 hours are shown as "24h+", since they usually
+  mean that interfaces with unsynchronized clocks were merged into one file.
