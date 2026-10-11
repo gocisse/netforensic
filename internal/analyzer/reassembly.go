@@ -61,7 +61,7 @@ func FollowStream(packets []models.PacketInfo, flowID string) (*Conversation, er
 	for _, p := range matched {
 		toServer := conv.isFromClient(p)
 		key, forward := canonicalKey(p)
-		if rd.observe(instKey{key, 0}, forward, p) {
+		if rd.observe(instKey{key, 0}, forward, p).retrans {
 			conv.Retransmits++
 		}
 

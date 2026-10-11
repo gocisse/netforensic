@@ -250,11 +250,14 @@ func (d *diagnosis) worst(issues []models.Issue) bool {
 
 func (d *diagnosis) fromIssue(is models.Issue, confidence string) {
 	d.kind, d.category, d.domain = causeIssue, is.Category, is.Domain
-	if is.Category == "Connection" {
-		d.category = is.Title // refused and reset connections need different advice
+	if _, ok := categoryRecommendations[is.Title]; ok {
+		d.category = is.Title // some issues need advice of their own, not their category's
 	}
 	d.cause, d.confidence, d.summary = is.Title, confidence, is.Description
 	if c, ok := categoryCause[is.Category]; ok {
+		d.cause = c
+	}
+	if c, ok := titleCause[is.Title]; ok {
 		d.cause = c
 	}
 	d.roles[is.ID] = eventRootCause
@@ -373,7 +376,19 @@ var categoryCause = map[string]string{
 	"PacketLoss": "Packet loss",
 }
 
+// titleCause overrides the cause name for specific issues.
+var titleCause = map[string]string{
+	titleFastRetransmit:    "Fast Retransmit (isolated packet loss)",
+	titleTimeoutRetransmit: "Timeout Retransmit (severe congestion or blackhole)",
+}
+
 var categoryRecommendations = map[string][]string{
+	titleFastRetransmit: {
+		"Isolated packet loss detected. The sender recovered quickly via Fast Retransmit. Monitor for increasing frequency.",
+	},
+	titleTimeoutRetransmit: {
+		"Severe congestion or blackhole detected. The sender waited for an RTO (Retransmission Timeout) before retrying. Investigate link quality or MTU issues.",
+	},
 	titleRefused: {
 		"Verify if the service is running on the target port, or if a firewall is actively rejecting connections with an RST instead of dropping them.",
 	},

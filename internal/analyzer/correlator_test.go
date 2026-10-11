@@ -315,18 +315,23 @@ func TestCorrelateRealLab3TCPRetransmissions(t *testing.T) {
 	assert.Equal(t, "10.0.0.145:54436-186.15.230.24:80", flow.ID)
 	assert.Positive(t, flow.Retransmits, "retransmissions must be detected")
 
-	assert.Contains(t, issueTitles(res), "TCP Retransmissions detected")
-	assert.Less(t, res.Diagnosis.HealthScore, 100, "health must be deducted")
-	assert.Equal(t, 90, res.Diagnosis.HealthScore, "one warning")
-	assert.Contains(t, []string{"Packet loss", "Network congestion"}, res.Diagnosis.PrimaryCause)
-	assert.Equal(t, "Packet loss", res.Diagnosis.PrimaryCause, "RTT is <1ms, so this is loss rather than congestion")
+	// Wireshark finds three retransmissions: a fast retransmit after three
+	// duplicate ACKs (frame 60), a follow-up hole fill (64) and a spurious
+	// resend of data the receiver already had (87).
+	assert.Equal(t, 3, flow.Retransmits)
+	assert.Equal(t, 2, flow.FastRetransmits)
+	assert.Zero(t, flow.TimeoutRetransmits)
+	assert.Equal(t, 4, flow.DupAcks, "Wireshark counts four duplicate ACKs")
+	assert.Equal(t, []string{titleFastRetransmit, titleRetransmissions}, packetLossTitles(res))
+	assert.Equal(t, 80, res.Diagnosis.HealthScore, "two warnings")
+	assert.Equal(t, "Fast Retransmit (isolated packet loss)", res.Diagnosis.PrimaryCause)
+	assert.Equal(t, categoryRecommendations[titleFastRetransmit], res.Diagnosis.Recommendations)
 
 	var rootCause bool
 	for _, e := range res.Diagnosis.Timeline {
 		rootCause = rootCause || e.EventType == eventRootCause
 	}
 	assert.True(t, rootCause, "timeline marks the root cause")
-	assert.GreaterOrEqual(t, len(res.Diagnosis.Recommendations), 2)
 
 	// Healthy handshake and RTT: the diagnosis must not blame latency.
 	assert.Less(t, flow.SetupTimeMs, 500.0)
@@ -428,4 +433,30 @@ func TestCorrelateRealDNSCapture(t *testing.T) {
 	assert.Equal(t, 1, res.TotalPackets)
 	assert.Empty(t, res.Issues)
 	assert.Equal(t, 100, res.Diagnosis.HealthScore)
+}
+
+func packetLossTitles(res *models.AnalysisResult) []string {
+	var out []string
+	for _, is := range res.Issues {
+		if is.Category == "PacketLoss" {
+			out = append(out, is.Title)
+		}
+	}
+	return out
+}
+
+// Lab-4: a lost SYN, a lost SYN-ACK and lost data, every one recovered only
+// after a retransmission timeout. Wireshark flags six retransmissions.
+func TestCorrelateRealLab4TimeoutRetransmits(t *testing.T) {
+	res := Analyze(readReal(t, "Lab-4-NetworkCongestion.pcapng"), "all")
+	require.Equal(t, 1, res.TotalFlows)
+	flow := res.TopTalkers[0]
+	assert.Equal(t, 6, flow.Retransmits)
+	assert.Equal(t, 6, flow.TimeoutRetransmits)
+	assert.Zero(t, flow.FastRetransmits)
+	assert.Equal(t, 1, flow.DupAcks)
+	assert.Equal(t, []string{titleTimeoutRetransmit}, packetLossTitles(res))
+	assert.Equal(t, "Timeout Retransmit (severe congestion or blackhole)", res.Diagnosis.PrimaryCause)
+	assert.Equal(t, categoryRecommendations[titleTimeoutRetransmit], res.Diagnosis.Recommendations)
+	assert.Equal(t, 60, res.Diagnosis.HealthScore, "timeout error plus slow handshake and slow response")
 }

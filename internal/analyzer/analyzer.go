@@ -159,50 +159,6 @@ func canonicalKey(p models.PacketInfo) (key flowKey, forward bool) {
 	return flowKey{src, dst, p.Protocol}, true
 }
 
-// retransmitDetector flags TCP segments that reuse a sequence number already
-// seen in the same direction of the same flow. It is fed packets in capture
-// order.
-type retransmitDetector struct {
-	seen    map[retransSeqKey]struct{}
-	nextSeq map[retransDirKey]uint32 // sequence number following the highest segment seen
-}
-
-type retransDirKey struct {
-	flow    instKey
-	forward bool
-}
-
-type retransSeqKey struct {
-	dir retransDirKey
-	seq uint32
-}
-
-// observe reports whether p is a retransmission. Only packets that consume
-// sequence space (payload, SYN or FIN) are considered, since bare ACKs
-// legitimately repeat sequence numbers, and keep-alive probes are ignored
-// because they deliberately reuse the last sequence number.
-func (d *retransmitDetector) observe(key instKey, forward bool, p models.PacketInfo) bool {
-	if p.Protocol != models.ProtocolTCP || !consumesSeq(p) {
-		return false
-	}
-	if d.seen == nil {
-		d.seen = make(map[retransSeqKey]struct{})
-		d.nextSeq = make(map[retransDirKey]uint32)
-	}
-	dk := retransDirKey{key, forward}
-	next, haveNext := d.nextSeq[dk]
-	if isKeepAlive(p, next, haveNext) {
-		return false
-	}
-	sk := retransSeqKey{dk, p.TCPSeq}
-	_, dup := d.seen[sk]
-	d.seen[sk] = struct{}{}
-	if end := p.TCPSeq + seqLen(p); !haveNext || int32(end-next) > 0 {
-		d.nextSeq[dk] = end
-	}
-	return dup
-}
-
 // aggregateFlows groups packets into bidirectional flows. Packets A->B and
 // B->A share one flow whose canonical source is the lesser (IP, port)
 // endpoint. BytesSent counts bytes from the canonical source and BytesRecv
@@ -242,8 +198,8 @@ func aggregateFlows(packets []models.PacketInfo) []models.Flow {
 		} else {
 			f.BytesRecv += p.Size
 		}
-		if rd.observe(key, forward, p) {
-			f.Retransmits++
+		if r := rd.observe(key, forward, p); r.retrans || r.dupAck {
+			recordRetransmit(f, r, p)
 		}
 		if p.Timestamp.Before(f.StartTime) {
 			f.StartTime = p.Timestamp
@@ -301,20 +257,18 @@ func consumesSeq(p models.PacketInfo) bool {
 	return false
 }
 
-// detectIssues inspects flows and returns any anomalies found.
+// detectIssues inspects flows and returns any anomalies found: one issue
+// per flow for each kind of retransmission it contains.
 func detectIssues(flows []models.Flow) []models.Issue {
 	var issues []models.Issue
 	for _, f := range flows {
-		if f.Retransmits > 0 {
-			issues = append(issues, models.Issue{
-				ID:          "packetloss-" + f.ID,
-				Severity:    models.SeverityWarning,
-				Category:    "PacketLoss",
-				Title:       "TCP Retransmissions detected",
-				Description: fmt.Sprintf("flow %s had %d retransmitted packets", f.ID, f.Retransmits),
-				Timestamp:   f.StartTime,
-				FlowID:      f.ID,
-			})
+		if f.Retransmits == 0 {
+			continue
+		}
+		for _, k := range []retransKind{retransTimeout, retransFast, retransOther} {
+			if is, ok := retransmitIssue(f, k); ok {
+				issues = append(issues, is)
+			}
 		}
 	}
 	return issues

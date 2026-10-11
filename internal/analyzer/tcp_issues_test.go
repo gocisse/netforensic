@@ -398,3 +398,204 @@ func TestZeroWindowRealLab7(t *testing.T) {
 	assert.Equal(t, 80, res.Diagnosis.HealthScore)
 	assert.Equal(t, titleZeroWindowReset, res.Diagnosis.PrimaryCause)
 }
+
+// tx builds a TCP packet of the 10.0.0.2:443 -> 10.0.0.1:5000 stream
+// (fromServer) or the reverse. seq/ack are absolute.
+func tx(ms int, fromServer bool, flags string, seq, ack uint32, payload int, win uint32) models.PacketInfo {
+	p := models.PacketInfo{Timestamp: rstT0.Add(time.Duration(ms) * time.Millisecond), Protocol: models.ProtocolTCP, TCPFlags: flags,
+		TCPSeq: seq, TCPAck: ack, PayloadSize: payload, Size: 60 + payload, TCPWindow: win}
+	if fromServer {
+		p.SrcIP, p.SrcPort, p.DstIP, p.DstPort = "10.0.0.2", 443, "10.0.0.1", 5000
+	} else {
+		p.SrcIP, p.SrcPort, p.DstIP, p.DstPort = "10.0.0.1", 5000, "10.0.0.2", 443
+	}
+	return p
+}
+
+func retransmitIssues(res *models.AnalysisResult) []models.Issue {
+	var out []models.Issue
+	for _, is := range res.Issues {
+		if is.Category == "PacketLoss" {
+			out = append(out, is)
+		}
+	}
+	return out
+}
+
+func TestFastRetransmit(t *testing.T) { // Test A
+	packets := []models.PacketInfo{
+		tx(0, true, "PSH,ACK", 1000, 1, 100, 100),
+		tx(1, false, "ACK", 1, 1100, 0, 5000), // ACK for the first segment
+		tx(2, true, "PSH,ACK", 1100, 1, 100, 100),
+		tx(3, true, "PSH,ACK", 1200, 1, 100, 100), // the segment at 1100 was lost
+		tx(4, false, "ACK", 1, 1100, 0, 5000),     // dup ACK 1
+		tx(5, true, "PSH,ACK", 1300, 1, 100, 100),
+		tx(6, false, "ACK", 1, 1100, 0, 5000), // dup ACK 2
+		tx(7, true, "PSH,ACK", 1400, 1, 100, 100),
+		tx(8, false, "ACK", 1, 1100, 0, 5000),     // dup ACK 3
+		tx(9, true, "PSH,ACK", 1100, 1, 100, 100), // retransmit
+	}
+	res := Analyze(packets, "all")
+	flow := res.TopTalkers[0]
+	assert.Equal(t, 3, flow.DupAcks)
+	assert.Equal(t, 1, flow.Retransmits)
+	assert.Equal(t, 1, flow.FastRetransmits)
+	assert.Zero(t, flow.TimeoutRetransmits)
+
+	got := retransmitIssues(res)
+	require.Len(t, got, 1)
+	assert.Equal(t, titleFastRetransmit, got[0].Title)
+	assert.Equal(t, models.SeverityWarning, got[0].Severity)
+	assert.Equal(t, rstT0.Add(9*time.Millisecond), got[0].Timestamp)
+	assert.Contains(t, got[0].Description, "after 3 or more duplicate ACKs, first seq 1100")
+	assert.Equal(t, "Fast Retransmit (isolated packet loss)", res.Diagnosis.PrimaryCause)
+	assert.Equal(t, []string{"Isolated packet loss detected. The sender recovered quickly via Fast Retransmit. Monitor for increasing frequency."},
+		res.Diagnosis.Recommendations)
+	assert.Equal(t, 90, res.Diagnosis.HealthScore)
+}
+
+func TestTimeoutRetransmit(t *testing.T) { // Test B
+	packets := []models.PacketInfo{
+		tx(0, true, "PSH,ACK", 1000, 1, 100, 100),
+		tx(300, true, "PSH,ACK", 1000, 1, 100, 100), // same segment after 300ms of silence
+	}
+	res := Analyze(packets, "all")
+	flow := res.TopTalkers[0]
+	assert.Zero(t, flow.DupAcks)
+	assert.Equal(t, 1, flow.TimeoutRetransmits)
+	assert.Zero(t, flow.FastRetransmits)
+
+	got := retransmitIssues(res)
+	require.Len(t, got, 1)
+	assert.Equal(t, titleTimeoutRetransmit, got[0].Title)
+	assert.Equal(t, models.SeverityError, got[0].Severity)
+	assert.Contains(t, got[0].Description, "went silent for over 200ms with no duplicate ACKs")
+	assert.Equal(t, "Timeout Retransmit (severe congestion or blackhole)", res.Diagnosis.PrimaryCause)
+	assert.Equal(t, []string{"Severe congestion or blackhole detected. The sender waited for an RTO (Retransmission Timeout) before retrying. Investigate link quality or MTU issues."},
+		res.Diagnosis.Recommendations)
+	assert.Equal(t, 80, res.Diagnosis.HealthScore)
+}
+
+func TestRetransmitClassification(t *testing.T) {
+	data := func(ms int, seq uint32) models.PacketInfo { return tx(ms, true, "PSH,ACK", seq, 1, 100, 100) }
+	ack := func(ms int, n uint32) models.PacketInfo { return tx(ms, false, "ACK", 1, n, 0, 5000) }
+
+	tests := []struct {
+		name    string
+		packets []models.PacketInfo
+		kinds   []string // kind of each retransmission, in order
+		dupAcks int
+	}{
+		{"no retransmission", []models.PacketInfo{data(0, 1000), ack(1, 1100), data(2, 1100)}, nil, 0},
+		{"exactly 200ms of silence is not an RTO", []models.PacketInfo{data(0, 1000), data(200, 1000)}, []string{"other"}, 0},
+		{"just over 200ms is", []models.PacketInfo{data(0, 1000), data(201, 1000)}, []string{"timeout"}, 0},
+		{"quick resend without evidence is unclassified", []models.PacketInfo{data(0, 1000), data(10, 1000)}, []string{"other"}, 0},
+		{"two dup ACKs are not enough for fast retransmit", []models.PacketInfo{
+			data(0, 1000), data(1, 1100), ack(2, 1100), ack(3, 1100), ack(4, 1100), data(5, 1100)}, []string{"other"}, 2},
+		{"three dup ACKs make it fast, even after a pause", []models.PacketInfo{
+			data(0, 1000), data(1, 1100), ack(2, 1100), ack(3, 1100), ack(4, 1100), ack(5, 1100), data(500, 1100)}, []string{"fast"}, 3},
+		{"dup ACKs for a different byte do not count", []models.PacketInfo{
+			data(0, 1000), data(1, 1100), data(2, 1200), ack(3, 1200), ack(4, 1200), ack(5, 1200), ack(6, 1200), data(7, 1100)}, []string{"other"}, 3},
+		{"dup ACKs rule out the timeout reading", []models.PacketInfo{
+			data(0, 1000), data(1, 1100), ack(2, 1100), ack(3, 1100), data(500, 1000)}, []string{"other"}, 1},
+		{"an advancing ACK resets the dup count", []models.PacketInfo{
+			data(0, 1000), data(1, 1100), ack(2, 1100), ack(3, 1100), ack(4, 1100), ack(5, 1200), ack(6, 1200), data(7, 1100)}, []string{"other"}, 3},
+		{"later segments of a fast recovery inherit its kind", []models.PacketInfo{
+			data(0, 1000), data(1, 1100), data(2, 1200), ack(3, 1000), ack(4, 1000), ack(5, 1000), ack(6, 1000), data(7, 1000), ack(8, 1100), data(9, 1100)},
+			[]string{"fast", "fast"}, 3},
+		{"a recovery stops inheriting after a second", []models.PacketInfo{
+			data(0, 1000), data(1, 1100), ack(2, 1000), ack(3, 1000), ack(4, 1000), ack(5, 1000), data(6, 1000), data(1500, 1100)}, []string{"fast", "other"}, 3},
+		{"data the receiver already acknowledged is spurious", []models.PacketInfo{
+			data(0, 1000), ack(1, 1100), data(5, 1000)}, []string{"other"}, 0},
+		{"keep-alive probe is not a retransmission", []models.PacketInfo{
+			data(0, 1000), ack(1, 1100), tx(5000, false, "ACK", 0, 1100, 1, 5000)}, nil, 0},
+		{"SYN resent after 1s is a timeout", []models.PacketInfo{
+			tx(0, false, "SYN", 0, 0, 0, 65535), tx(1000, false, "SYN", 0, 0, 0, 65535)}, []string{"timeout"}, 0},
+		{"window updates are not duplicate ACKs", []models.PacketInfo{
+			data(0, 1000), ack(1, 1100), tx(2, false, "ACK", 1, 1100, 0, 9000), tx(3, false, "ACK", 1, 1100, 0, 9500), tx(4, false, "ACK", 1, 1100, 0, 9900)}, nil, 0},
+		{"data segments carrying the same ACK are not duplicate ACKs", []models.PacketInfo{
+			data(0, 1000), ack(1, 1100), tx(2, false, "PSH,ACK", 1, 1100, 10, 5000), tx(3, false, "PSH,ACK", 11, 1100, 10, 5000)}, nil, 0},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var rd retransmitDetector
+			var kinds []string
+			dups := 0
+			for _, p := range tt.packets {
+				k, fwd := canonicalKey(p)
+				r := rd.observe(instKey{k, 0}, fwd, p)
+				if r.dupAck {
+					dups++
+				}
+				if r.retrans {
+					kinds = append(kinds, r.kind.String())
+				}
+			}
+			assert.Equal(t, tt.kinds, kinds)
+			assert.Equal(t, tt.dupAcks, dups)
+		})
+	}
+}
+
+// The receiver-side view of loss: the lost segment never appears, then shows
+// up later as a hole fill (the Lab-3 and Lab-4 pattern).
+func TestRetransmitHoleFill(t *testing.T) {
+	data := func(ms int, seq uint32) models.PacketInfo { return tx(ms, true, "PSH,ACK", seq, 1, 100, 100) }
+	ack := func(ms int, n uint32) models.PacketInfo { return tx(ms, false, "ACK", 1, n, 0, 5000) }
+	run := func(packets []models.PacketInfo) (kinds []string) {
+		var rd retransmitDetector
+		for _, p := range packets {
+			k, fwd := canonicalKey(p)
+			if r := rd.observe(instKey{k, 0}, fwd, p); r.retrans {
+				kinds = append(kinds, r.kind.String())
+			}
+		}
+		return kinds
+	}
+
+	t.Run("segment the receiver asked for, after dup ACKs, is fast", func(t *testing.T) {
+		// 1100 and 1200 were lost upstream of the capture point
+		kinds := run([]models.PacketInfo{
+			data(0, 1000), ack(1, 1100), data(2, 1300), ack(3, 1100), data(4, 1400), ack(5, 1100), data(6, 1500), ack(7, 1100),
+			data(20, 1100), ack(21, 1200),
+			data(30, 1200), // partial ACK, one dup ACK earlier: still part of the recovery
+		})
+		assert.Equal(t, []string{"fast"}, kinds[:1])
+	})
+	t.Run("a delayed original is reordering, not a retransmission", func(t *testing.T) {
+		kinds := run([]models.PacketInfo{data(0, 1000), ack(1, 1100), data(2, 1200), data(3, 1100)})
+		assert.Empty(t, kinds, "arrives within 3ms of the segment that jumped ahead")
+	})
+	t.Run("a late hole fill with no evidence is out-of-order", func(t *testing.T) {
+		kinds := run([]models.PacketInfo{data(0, 1000), ack(1, 1100), data(2, 1200), data(50, 1100)})
+		assert.Empty(t, kinds)
+	})
+	t.Run("a hole fill after silence is a timeout retransmit", func(t *testing.T) {
+		kinds := run([]models.PacketInfo{data(0, 1000), ack(1, 1100), data(2, 1200), data(900, 1100)})
+		assert.Equal(t, []string{"timeout"}, kinds)
+	})
+	t.Run("an RTO recovery resends the whole window back to back", func(t *testing.T) {
+		kinds := run([]models.PacketInfo{
+			data(0, 1000), ack(1, 1100), data(2, 1400), // 1100..1399 missing
+			data(900, 1100), data(901, 1200), data(902, 1300),
+		})
+		assert.Equal(t, []string{"timeout", "timeout", "timeout"}, kinds)
+	})
+	t.Run("a bare ACK reveals data lost before the capture point", func(t *testing.T) {
+		// the first thing seen is an ACK saying the sender is already at 1500
+		kinds := run([]models.PacketInfo{
+			ack(0, 1000), tx(1, true, "ACK", 1500, 1, 0, 100), data(900, 1000)})
+		assert.Equal(t, []string{"timeout"}, kinds)
+	})
+}
+
+func TestRetransmitFollowMarkerAndPortReuse(t *testing.T) {
+	// the second connection reuses the first one's sequence numbers
+	packets := []models.PacketInfo{
+		tx(0, true, "PSH,ACK", 1000, 1, 100, 100), tx(1, true, "RST", 1100, 0, 0, 0),
+		tx(5, false, "SYN", 7, 0, 0, 100), tx(6, true, "SYN,ACK", 55, 8, 0, 100), tx(7, false, "ACK", 8, 56, 0, 100),
+		tx(8, true, "PSH,ACK", 1000, 8, 100, 100),
+	}
+	res := Analyze(packets, "all")
+	assert.Empty(t, retransmitIssues(res), "reusing a sequence number on a new connection is not a retransmission")
+}

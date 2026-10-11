@@ -118,12 +118,29 @@ type Flow struct {
 	BytesRecv   int       `json:"bytes_recv"`
 	Retransmits int       `json:"retransmits"` // Key metric for packet loss/slow connections
 
+	// Retransmits split by trigger: sent after three or more duplicate
+	// ACKs, or after the connection had been silent (an RTO). The remainder
+	// of Retransmits has neither trigger. DupAcks counts duplicate ACKs.
+	FastRetransmits    int `json:"fast_retransmits,omitempty"`
+	TimeoutRetransmits int `json:"timeout_retransmits,omitempty"`
+	DupAcks            int `json:"dup_acks,omitempty"`
+
+	// RetransmitEvents lists every retransmission in capture order.
+	RetransmitEvents []RetransmitEvent `json:"-"`
+
 	// Performance metrics for TCP flows, in milliseconds. Zero means the
 	// metric could not be measured from the capture.
 	SetupTimeMs float64 `json:"setup_time_ms"` // SYN to final handshake ACK
 	TTFBMs      float64 `json:"ttfb_ms"`       // handshake completion to first server data
 	AvgRTTMs    float64 `json:"avg_rtt_ms"`
 	MaxRTTMs    float64 `json:"max_rtt_ms"` // large values relative to the average indicate jitter
+}
+
+// RetransmitEvent is one retransmitted TCP segment.
+type RetransmitEvent struct {
+	Time time.Time
+	Seq  uint32
+	Kind string // "fast", "timeout" or "other"
 }
 
 // Issue represents a detected forensic problem or anomaly.

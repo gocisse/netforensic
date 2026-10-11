@@ -132,24 +132,43 @@ func TestAggregateFlowsRetransmits(t *testing.T) {
 }
 
 func TestDetectIssues(t *testing.T) {
+	ev := func(kind string, n int) []models.RetransmitEvent {
+		var out []models.RetransmitEvent
+		for i := 0; i < n; i++ {
+			out = append(out, models.RetransmitEvent{Time: time.Unix(int64(i), 0), Seq: uint32(i), Kind: kind})
+		}
+		return out
+	}
+	mixed := append(ev("fast", 2), append(ev("timeout", 1), ev("other", 3)...)...)
+
 	tests := []struct {
-		name  string
-		flows []models.Flow
-		want  int
+		name       string
+		flows      []models.Flow
+		wantTitles []string
 	}{
-		{"no flows", nil, 0},
-		{"clean flow", []models.Flow{{ID: "a"}}, 0},
-		{"retransmits", []models.Flow{{ID: "a", Retransmits: 2}, {ID: "b"}}, 1},
+		{"no flows", nil, nil},
+		{"clean flow", []models.Flow{{ID: "a"}}, nil},
+		{"unclassified retransmits", []models.Flow{{ID: "a", Retransmits: 2, RetransmitEvents: ev("other", 2)}, {ID: "b"}}, []string{titleRetransmissions}},
+		{"fast", []models.Flow{{ID: "a", Retransmits: 2, RetransmitEvents: ev("fast", 2)}}, []string{titleFastRetransmit}},
+		{"timeout", []models.Flow{{ID: "a", Retransmits: 1, RetransmitEvents: ev("timeout", 1)}}, []string{titleTimeoutRetransmit}},
+		{"one issue per kind, worst first", []models.Flow{{ID: "a", Retransmits: 6, RetransmitEvents: mixed}},
+			[]string{titleTimeoutRetransmit, titleFastRetransmit, titleRetransmissions}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			issues := detectIssues(tt.flows)
-			assert.Len(t, issues, tt.want)
-			for _, is := range issues {
-				assert.Equal(t, models.SeverityWarning, is.Severity)
+			var got []string
+			for _, is := range detectIssues(tt.flows) {
+				got = append(got, is.Title)
 				assert.Equal(t, "PacketLoss", is.Category)
-				assert.Equal(t, "TCP Retransmissions detected", is.Title)
+				assert.Equal(t, "a", is.FlowID)
+				assert.Positive(t, is.Count)
+				if is.Title == titleTimeoutRetransmit {
+					assert.Equal(t, models.SeverityError, is.Severity)
+				} else {
+					assert.Equal(t, models.SeverityWarning, is.Severity)
+				}
 			}
+			assert.Equal(t, tt.wantTitles, got)
 		})
 	}
 }

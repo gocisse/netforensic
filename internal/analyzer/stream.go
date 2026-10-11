@@ -186,7 +186,7 @@ func Follow(packets []models.PacketInfo, flowID string) (*Conversation, error) {
 		ev := describePacket(p)
 		ev.ToServer = conv.isFromClient(p)
 		key, forward := canonicalKey(p)
-		ev.Retransmit = rd.observe(instKey{key, 0}, forward, p)
+		ev.Retransmit = rd.observe(instKey{key, 0}, forward, p).retrans
 		conv.Events = append(conv.Events, ev)
 	}
 	return conv, nil
