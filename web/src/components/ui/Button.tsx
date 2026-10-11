@@ -20,8 +20,8 @@ const variants: Record<Variant, string> = {
 }
 
 const sizes: Record<Size, string> = {
-  sm: 'px-4 py-2.5 text-sm',
-  md: 'px-5 py-3.5 text-sm',
+  sm: 'px-4 py-3 text-sm',
+  md: 'px-6 py-4 text-sm',
 }
 
 /** A button in the admin theme. */

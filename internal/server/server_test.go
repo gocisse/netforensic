@@ -463,3 +463,74 @@ func TestStartServerRejectsBadAddresses(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "listen on")
 }
+
+// postProgress is post with ?progress=1.
+func postProgress(t *testing.T, h http.Handler, body io.Reader, contentType string) *httptest.ResponseRecorder {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodPost, "/api/analyze?progress=1", body)
+	req.Header.Set("Content-Type", contentType)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	return rec
+}
+
+func TestAnalyzeProgressStream(t *testing.T) {
+	h := authed(t, testAssets, maxUploadBytes)
+
+	decode := func(t *testing.T, rec *httptest.ResponseRecorder) []progressEvent {
+		t.Helper()
+		var out []progressEvent
+		dec := json.NewDecoder(rec.Body)
+		for dec.More() {
+			var ev progressEvent
+			require.NoError(t, dec.Decode(&ev))
+			out = append(out, ev)
+		}
+		return out
+	}
+
+	tests := []struct {
+		name       string
+		data       []byte
+		wantStages []string
+		wantResult bool
+		wantError  string
+	}{
+		{"a capture reports each step, then the result", readFile(t, lab7), []string{"reading", "classifying", "detecting", "reporting"}, true, ""},
+		{"a capture with nothing to analyze ends with a result", pcapBytes(t, lldpFrame()), []string{"reading"}, true, ""},
+		{"an unreadable file ends with an error line", []byte("this is not a capture"), []string{"reading"}, false, "not a readable capture"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			body, ct := upload(t, "file", "x.pcap", tc.data)
+			rec := postProgress(t, h, body, ct)
+			require.Equal(t, http.StatusOK, rec.Code)
+			assert.Equal(t, "application/x-ndjson", rec.Header().Get("Content-Type"))
+			events := decode(t, rec)
+			require.NotEmpty(t, events)
+			var stages []string
+			for _, ev := range events[:len(events)-1] {
+				assert.NotEmpty(t, ev.Stage)
+				stages = append(stages, ev.Stage)
+			}
+			assert.Equal(t, tc.wantStages, stages)
+			last := events[len(events)-1]
+			assert.Equal(t, tc.wantResult, last.Result != nil)
+			if tc.wantError != "" {
+				assert.Contains(t, last.Error, tc.wantError)
+				assert.Equal(t, http.StatusBadRequest, last.Status)
+			}
+		})
+	}
+
+	t.Run("the result is the same as without progress", func(t *testing.T) {
+		body, ct := upload(t, "file", "Lab-7-TCPIssues.pcapng", readFile(t, lab7))
+		events := decode(t, postProgress(t, h, body, ct))
+		raw, err := json.Marshal(events[len(events)-1].Result)
+		require.NoError(t, err)
+		var res models.AnalysisResult
+		require.NoError(t, json.Unmarshal(raw, &res))
+		assert.Equal(t, 64, res.TotalPackets)
+		assert.NotEmpty(t, res.AnalysisID)
+	})
+}

@@ -49,7 +49,7 @@ export default function UserMenu({ username, onChangePassword, onLogout }: Props
         <div role="menu" className="absolute right-0 z-99999 mt-2 w-64 rounded-2xl border border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900 p-3 shadow-theme-lg">
           <div className="px-3 pb-3">
             <span className="block text-theme-sm font-medium text-gray-700 dark:text-gray-300">{username}</span>
-            <span className="mt-0.5 block text-theme-xs text-gray-500 dark:text-gray-400">Signed in</span>
+            <span className="mt-1 block text-theme-xs text-gray-500 dark:text-gray-400">Signed in</span>
           </div>
           <div className="border-t border-gray-200 dark:border-gray-800 pt-2">
             <button

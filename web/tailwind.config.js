@@ -55,6 +55,17 @@ export default {
           500: '#f79009', 600: '#dc6803', 700: '#b54708', 800: '#93370d', 900: '#7a2e0e', 950: '#4e1d09',
         },
       },
+      keyframes: {
+        'fade-in': { from: { opacity: '0', transform: 'translateY(8px)' }, to: { opacity: '1', transform: 'translateY(0)' } },
+        'toast-in': { from: { opacity: '0', transform: 'translateX(24px)' }, to: { opacity: '1', transform: 'translateX(0)' } },
+        'dialog-in': { from: { opacity: '0', transform: 'scale(0.97)' }, to: { opacity: '1', transform: 'scale(1)' } },
+      },
+      animation: {
+        // Page and tab changes: 250 ms. Toasts and dialogs: 200 ms.
+        'fade-in': 'fade-in 250ms ease-out backwards',
+        'toast-in': 'toast-in 200ms ease-out both',
+        'dialog-in': 'dialog-in 200ms ease-out both',
+      },
       boxShadow: {
         'theme-xs': '0px 1px 2px 0px rgba(16, 24, 40, 0.05)',
         'theme-sm': '0px 1px 3px 0px rgba(16, 24, 40, 0.1), 0px 1px 2px 0px rgba(16, 24, 40, 0.06)',

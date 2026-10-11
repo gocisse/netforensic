@@ -15,7 +15,7 @@ export function TableBody({ children }: { children: ReactNode }) {
 
 export function TableRow({ children, className = '', ...rest }: HTMLAttributes<HTMLTableRowElement> & Record<`data-${string}`, string | undefined>) {
   return (
-    <tr className={className} {...rest}>
+    <tr className={`transition-colors duration-150 hover:bg-gray-50 dark:hover:bg-white/[0.04] ${className}`} {...rest}>
       {children}
     </tr>
   )

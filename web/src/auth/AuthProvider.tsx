@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import type { ReactNode } from 'react'
 import { ApiClient } from '../api'
+import { useToast } from '../toast/useToast'
 import { AuthContext } from './context'
 import type { AuthContextValue } from './context'
 import { TokenHolder } from './tokenHolder'
@@ -14,6 +15,7 @@ const MAX_TIMEOUT = 2 ** 31 - 1 // setTimeout cannot wait longer
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [session, setSession] = useState<Session | null>(() => loadSession())
   const [notice, setNotice] = useState<string | null>(null)
+  const toast = useToast()
   // The API client reads the token at call time, so it always sees the latest session.
   const [tokenStore] = useState(() => new TokenHolder(session?.token ?? null))
 
@@ -32,17 +34,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setNotice(null)
   }, [update])
 
-  const api = useMemo(
-    () =>
-      new ApiClient(
-        () => tokenStore.get(),
-        () => {
-          update(null)
-          setNotice(SESSION_EXPIRED)
-        },
-      ),
-    [update, tokenStore],
-  )
+  const expire = useCallback(() => {
+    update(null)
+    setNotice(SESSION_EXPIRED)
+    toast.show('Session expired. Please sign in again.', 'error')
+  }, [update, toast])
+
+  const api = useMemo(() => new ApiClient(() => tokenStore.get(), expire), [expire, tokenStore])
 
   const login = useCallback(
     async (username: string, password: string) => {
@@ -66,12 +64,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (!session) return
     const wait = Math.max(0, Math.min(session.expiresAt - Date.now(), MAX_TIMEOUT))
-    const id = window.setTimeout(() => {
-      update(null)
-      setNotice(SESSION_EXPIRED)
-    }, wait)
+    const id = window.setTimeout(expire, wait)
     return () => window.clearTimeout(id)
-  }, [session, update])
+  }, [session, expire])
 
   const value = useMemo<AuthContextValue>(
     () => ({ session, notice, api, login, changePassword, logout }),

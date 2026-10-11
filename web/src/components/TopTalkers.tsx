@@ -19,7 +19,7 @@ export default function TopTalkers({ talkers, selected, onSelect }: Props) {
   return (
     <Card data-testid="top-talkers">
       <CardHeader title="Top talkers" description="The busiest addresses by bytes. Click one to filter to it." />
-      <div className="grid grid-cols-1 gap-3 border-t border-gray-100 dark:border-gray-800 p-5 sm:grid-cols-2 sm:p-6 xl:grid-cols-5">
+      <div className="grid grid-cols-1 gap-3 border-t border-gray-100 dark:border-gray-800 p-6 sm:grid-cols-2 sm:p-6 xl:grid-cols-5">
         {talkers.map((t) => {
           const active = selected === t.ip
           return (

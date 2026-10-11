@@ -56,18 +56,18 @@ export default function UploadCard({ file, loading, error, onSelect, onAnalyze }
           }}
           onDragLeave={() => setDragging(false)}
           onDrop={handleDrop}
-          className={`flex cursor-pointer flex-col items-center justify-center rounded-xl border border-dashed px-6 py-10 text-center transition-colors ${
+          className={`flex cursor-pointer flex-col items-center justify-center rounded-xl border border-dashed px-6 py-8 text-center transition-colors ${
             dragging ? 'border-brand-500 bg-gray-100 dark:bg-gray-800' : 'border-gray-300 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/60 hover:border-brand-500'
           } ${loading ? 'pointer-events-none opacity-60' : ''}`}
         >
           {file ? (
             <>
-              <span className="mb-3 flex h-14 w-14 items-center justify-center rounded-full bg-brand-50 dark:bg-brand-500/15 text-brand-500">
+              <span className="mb-3 flex h-14 w-14 items-center justify-center rounded-full bg-brand-50 dark:bg-brand-500/15 text-brand-600 dark:text-brand-400">
                 <FileIcon className="h-7 w-7" />
               </span>
               <span className="text-theme-sm font-semibold text-gray-800 dark:text-white/90">{file.name}</span>
               <span className="mt-1 text-theme-xs text-gray-500 dark:text-gray-400">{formatSize(file.size)}</span>
-              <span className="mt-3 text-theme-xs font-medium text-brand-500">Click or drop to choose a different file</span>
+              <span className="mt-3 text-theme-xs font-medium text-brand-600 dark:text-brand-400">Click or drop to choose a different file</span>
             </>
           ) : (
             <>
@@ -97,7 +97,7 @@ export default function UploadCard({ file, loading, error, onSelect, onAnalyze }
           </div>
         )}
 
-        <div className="mt-5 flex items-center justify-end gap-3">
+        <div className="mt-6 flex items-center justify-end gap-3">
           {file && !loading && (
             <Button
               variant="ghost"

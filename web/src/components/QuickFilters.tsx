@@ -39,7 +39,7 @@ export default function QuickFilters({ filters }: { filters: Filters }) {
               data-testid={q.testId}
               aria-pressed={on}
               onClick={() => filters.set(on ? q.off : q.patch)}
-              className={`rounded-full border px-3.5 py-1.5 text-theme-sm font-medium transition-colors ${
+              className={`rounded-full border px-4 py-2 text-theme-sm font-medium transition-colors ${
                 on
                   ? 'border-brand-500 bg-brand-500 text-white'
                   : 'border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900 text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-800/60'

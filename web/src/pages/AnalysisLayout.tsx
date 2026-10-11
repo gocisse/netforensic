@@ -6,7 +6,7 @@ import type { AnalysisView } from '../analysis/view'
 import { useAuth } from '../auth/useAuth'
 import ProtocolNav from '../components/ProtocolNav'
 import Alert from '../components/ui/Alert'
-import { Card } from '../components/ui/Card'
+import { AnalysisSkeleton } from '../components/ui/Skeleton'
 import { toParams } from '../filters/model'
 import { useDashboardMode } from '../mode/useDashboardMode'
 import { useFilters } from '../filters/useFilters'
@@ -15,6 +15,8 @@ import { PROTOCOL_PAGES, involvesProtocol } from '../protocols'
 import type { AnalysisResult } from '../types'
 import { isEmptyResult } from '../types'
 import { saveBlob } from '../download'
+import { isTyping } from '../shortcuts/isTyping'
+import { useToast } from '../toast/useToast'
 
 /**
  * The frame of an analysis (/analysis/:id): the file name, the tabs (the
@@ -28,8 +30,9 @@ export default function AnalysisLayout() {
   const { api } = useAuth()
   const cache = useAnalysisCache()
   const filters = useFilters()
-  const { search } = useLocation()
+  const { search, pathname } = useLocation()
   const { mode } = useDashboardMode()
+  const toast = useToast()
 
   const cached = cache.current?.id === id ? cache.current.result : null
   const [fetched, setFetched] = useState<{ id: string; result: AnalysisResult } | null>(null)
@@ -74,20 +77,41 @@ export default function AnalysisLayout() {
   }, [reportable])
 
   const { applied } = filters
+
+  // Escape clears the filters, unless it is meant for a dialog or for the field being typed in.
+  const { active: filtersActive, reset: resetFilters } = filters
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape' || e.defaultPrevented || !filtersActive) return
+      if (document.querySelector('[role="dialog"]')) return
+      if (isTyping(e.target)) {
+        ;(e.target as HTMLElement).blur()
+        return
+      }
+      resetFilters()
+      toast.show('Filters cleared', 'info')
+    }
+    document.addEventListener('keydown', onKey)
+    return () => document.removeEventListener('keydown', onKey)
+  }, [filtersActive, resetFilters, toast])
   const handleExport = useCallback(async () => {
     if (!result?.analysis_id || exporting) return
     setExporting(true)
     setExportError(null)
+    toast.show('Export started', 'info')
     try {
       const { blob, filename } = await api.exportCsv(result.analysis_id, toParams(applied))
       saveBlob(blob, filename)
+      toast.show('Export complete')
     } catch (err) {
       if (err instanceof SessionExpiredError) return
-      setExportError(err instanceof ApiError ? err.message : 'The export failed.')
+      const message = err instanceof ApiError ? err.message : 'The export failed.'
+      setExportError(message)
+      toast.show(message, 'error')
     } finally {
       setExporting(false)
     }
-  }, [api, result, applied, exporting])
+  }, [api, result, applied, exporting, toast])
 
   const view = useMemo<AnalysisView | null>(
     () =>
@@ -103,34 +127,29 @@ export default function AnalysisLayout() {
         <Alert variant={failed.gone ? 'info' : 'error'} role={failed.gone ? 'status' : 'alert'}>
           {failed.gone ? 'That analysis is no longer on the server (it keeps the latest few for two hours, and forgets them when it restarts). Upload the capture again.' : failed.message}
         </Alert>
-        <Link to={{ pathname: '/', search }} className="inline-block text-theme-sm font-medium text-brand-500 hover:text-brand-600">
+        <Link to={{ pathname: '/', search }} className="inline-block text-theme-sm font-medium text-brand-600 dark:text-brand-400 hover:text-brand-600">
           Analyze a capture
         </Link>
       </div>
     )
   }
-  if (!result || !view) {
-    return (
-      <Card>
-        <p aria-live="polite" className="px-6 py-12 text-center text-theme-sm text-gray-600 dark:text-gray-400">
-          Loading the analysis…
-        </p>
-      </Card>
-    )
-  }
+  if (!result || !view) return <AnalysisSkeleton />
 
   return (
-    <div className="space-y-5" data-testid="analysis">
+    <div className="space-y-6" data-testid="analysis">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <h2 className="min-w-0 truncate text-lg font-semibold text-gray-800 dark:text-white/90" title={result.file_name} data-testid="analysis-file-name">
           {result.file_name}
         </h2>
-        <Link to="/" data-testid="analyze-another" className="text-theme-sm font-medium text-brand-500 hover:text-brand-600 dark:hover:text-brand-400">
+        <Link to="/" data-testid="analyze-another" className="text-theme-sm font-medium text-brand-600 dark:text-brand-400 hover:text-brand-700 dark:hover:text-brand-300">
           Analyze another capture
         </Link>
       </div>
       {mode === 'senior' && <ProtocolNav id={id} counts={counts} search={search} />}
-      <Outlet context={view} />
+      {/* keyed by the page, so that a change of tab fades the new page in */}
+      <div key={pathname} className="animate-fade-in" data-testid="page-transition">
+        <Outlet context={view} />
+      </div>
     </div>
   )
 }

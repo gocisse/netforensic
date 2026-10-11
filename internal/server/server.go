@@ -200,16 +200,52 @@ func (h *handler) analyze(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// With ?progress=1 the answer is a stream of JSON lines: a {"stage": ...}
+	// line as each step of the analysis starts, then one {"result": ...} line.
+	// Without it, the answer is the result alone.
+	var progress func(string)
+	var send func(v any)
+	if r.URL.Query().Get("progress") == "1" {
+		w.Header().Set("Content-Type", "application/x-ndjson")
+		w.Header().Set("Cache-Control", "no-store")
+		w.Header().Set("X-Accel-Buffering", "no")
+		enc := json.NewEncoder(w)
+		flusher, _ := w.(http.Flusher)
+		send = func(v any) {
+			_ = enc.Encode(v) // a failed write has nobody to tell
+			if flusher != nil {
+				flusher.Flush()
+			}
+		}
+		progress = func(stage string) { send(progressEvent{Stage: stage}) }
+		send(progressEvent{Stage: "reading"})
+	}
+
+	fail := func(status int, msg string) {
+		if send != nil {
+			send(progressEvent{Error: msg, Status: status})
+			return
+		}
+		writeError(w, status, msg)
+	}
+	done := func(v any) {
+		if send != nil {
+			send(progressEvent{Result: v})
+			return
+		}
+		writeJSON(w, http.StatusOK, v)
+	}
+
 	packets, stats, err := pcap.ReadPacketsStats(tmpPath, pcap.ReadOptions{})
 	var truncated *pcap.TruncatedError
 	switch {
 	case errors.As(err, &truncated):
 		// analyze what was read, and say so
 	case err != nil && (errors.Is(err, fs.ErrNotExist) || errors.Is(err, fs.ErrPermission)):
-		writeError(w, http.StatusInternalServerError, "could not read the uploaded file")
+		fail(http.StatusInternalServerError, "could not read the uploaded file")
 		return
 	case err != nil:
-		writeError(w, http.StatusBadRequest, "not a readable capture: "+err.Error())
+		fail(http.StatusBadRequest, "not a readable capture: "+err.Error())
 		return
 	}
 
@@ -225,15 +261,23 @@ func (h *handler) analyze(w http.ResponseWriter, r *http.Request) {
 		if notes == nil {
 			notes = []models.Issue{}
 		}
-		writeJSON(w, http.StatusOK, emptyResult{FileName: name, Issues: notes, Message: "The capture contains no analyzable packets"})
+		done(emptyResult{FileName: name, Issues: notes, Message: "The capture contains no analyzable packets"})
 		return
 	}
 
-	res := analyzer.AnalyzeWithIssues(packets, "all", notes...)
+	res := analyzer.AnalyzeWithProgress(packets, "all", progress, notes...)
 	res.FileName = name
 	res.Metadata = stats.Metadata
 	res.AnalysisID = h.analyses.put(res)
-	writeJSON(w, http.StatusOK, analysisResponse{res, res.Flows})
+	done(analysisResponse{res, res.Flows})
+}
+
+// progressEvent is one line of the progress stream of /api/analyze.
+type progressEvent struct {
+	Stage  string `json:"stage,omitempty"`
+	Result any    `json:"result,omitempty"`
+	Error  string `json:"error,omitempty"`
+	Status int    `json:"status,omitempty"`
 }
 
 // analysisResponse is the JSON of an analysis as the web UI gets it: the same

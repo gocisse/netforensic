@@ -32,10 +32,10 @@ function Item({ icon: Icon, label, collapsed, active = false, onClick, to }: Ite
           onClick={onClick}
           title={collapsed ? label : undefined}
           className={`group flex w-full items-center gap-3 rounded-lg px-3 py-2 text-theme-sm font-medium transition ${
-            active ? 'bg-brand-50 dark:bg-brand-500/15 text-brand-500' : 'text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800'
+            active ? 'bg-brand-50 dark:bg-brand-500/15 text-brand-600 dark:text-brand-400' : 'text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800'
           } ${collapsed ? 'xl:justify-center xl:px-0' : ''}`}
         >
-          <Icon className={`h-6 w-6 flex-none ${active ? 'text-brand-500' : 'text-gray-500 dark:text-gray-400'}`} />
+          <Icon className={`h-6 w-6 flex-none ${active ? 'text-brand-600 dark:text-brand-400' : 'text-gray-500 dark:text-gray-400'}`} />
           <span className={collapsed ? 'xl:hidden' : ''}>{label}</span>
         </NavLink>
       </li>
@@ -49,10 +49,10 @@ function Item({ icon: Icon, label, collapsed, active = false, onClick, to }: Ite
         aria-current={active ? 'page' : undefined}
         title={collapsed ? label : undefined}
         className={`group flex w-full items-center gap-3 rounded-lg px-3 py-2 text-theme-sm font-medium transition ${
-          active ? 'bg-brand-50 dark:bg-brand-500/15 text-brand-500' : 'text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800 hover:text-gray-700 dark:hover:text-gray-300'
+          active ? 'bg-brand-50 dark:bg-brand-500/15 text-brand-600 dark:text-brand-400' : 'text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800 hover:text-gray-700 dark:hover:text-gray-300'
         } ${collapsed ? 'xl:justify-center xl:px-0' : ''}`}
       >
-        <Icon className={`h-6 w-6 flex-none ${active ? 'text-brand-500' : 'text-gray-500 dark:text-gray-400 group-hover:text-gray-700 dark:group-hover:text-gray-300'}`} />
+        <Icon className={`h-6 w-6 flex-none ${active ? 'text-brand-600 dark:text-brand-400' : 'text-gray-500 dark:text-gray-400 group-hover:text-gray-700 dark:group-hover:text-gray-300'}`} />
         <span className={collapsed ? 'xl:hidden' : ''}>{label}</span>
       </button>
     </li>
@@ -62,7 +62,7 @@ function Item({ icon: Icon, label, collapsed, active = false, onClick, to }: Ite
 function Group({ title, collapsed, children }: { title: string; collapsed: boolean; children: React.ReactNode }) {
   return (
     <div>
-      <h2 className={`mb-3 px-3 text-xs uppercase leading-5 text-gray-400 ${collapsed ? 'xl:text-center xl:px-0' : ''}`}>
+      <h2 className={`mb-3 px-3 text-xs uppercase leading-5 text-gray-500 dark:text-gray-400 ${collapsed ? 'xl:text-center xl:px-0' : ''}`}>
         <span className={collapsed ? 'xl:hidden' : ''}>{title}</span>
         {collapsed && <span className="hidden xl:inline">···</span>}
       </h2>
@@ -80,7 +80,7 @@ export default function Sidebar({ collapsed, mobileOpen, onChangePassword, onLog
     <aside
       data-testid="sidebar"
       aria-label="Sidebar"
-      className={`fixed left-0 top-0 z-50 flex h-screen w-72.5 flex-col border-r border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900 px-5 transition-all duration-300 ease-in-out xl:translate-x-0 ${
+      className={`fixed left-0 top-0 z-50 flex h-screen w-72.5 flex-col border-r border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900 px-6 transition-all duration-300 ease-in-out xl:translate-x-0 ${
         mobileOpen ? 'translate-x-0' : '-translate-x-full'
       } ${collapsed ? 'xl:w-22.5' : 'xl:w-72.5'}`}
     >
@@ -106,7 +106,7 @@ export default function Sidebar({ collapsed, mobileOpen, onChangePassword, onLog
         </Group>
       </nav>
 
-      <p className={`pb-5 text-theme-xs text-gray-400 ${collapsed ? 'xl:hidden' : ''}`}>Packet capture forensics</p>
+      <p className={`pb-6 text-theme-xs text-gray-500 dark:text-gray-400 ${collapsed ? 'xl:hidden' : ''}`}>Packet capture forensics</p>
     </aside>
   )
 }

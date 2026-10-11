@@ -1,10 +1,12 @@
 import { Navigate, Route, Routes } from 'react-router-dom'
 import { AnalysisProvider } from './analysis/AnalysisProvider'
 import { AuthProvider } from './auth/AuthProvider'
+import { ToastProvider } from './toast/ToastProvider'
 import { DashboardModeProvider } from './mode/DashboardModeProvider'
 import { useAuth } from './auth/useAuth'
 import ForcedPasswordChange from './components/ForcedPasswordChange'
 import LoginPage from './components/LoginPage'
+import Shortcuts from './shortcuts/Shortcuts'
 import DashboardLayout from './layout/DashboardLayout'
 import AnalysisLayout from './pages/AnalysisLayout'
 import Analyzer from './pages/Analyzer'
@@ -32,35 +34,40 @@ function Gate() {
   if (!session) return <LoginPage />
   if (session.mustChangePassword) return <ForcedPasswordChange />
   return (
-    <DashboardLayout>
-      <Routes>
-        <Route path="/" element={<Analyzer />} />
-        <Route path="/analysis/:id" element={<AnalysisLayout />}>
-          <Route index element={<Overview />} />
-          <Route path="tcp" element={<TCPPage />} />
-          <Route path="udp" element={<UDPPage />} />
-          <Route path="dns" element={<DNSPage />} />
-          <Route path="http" element={<HTTPPage />} />
-          <Route path="tls" element={<TLSPage />} />
-          <Route path="sip" element={<SIPPage />} />
-          <Route path="dhcpv6" element={<DHCPv6Page />} />
-          <Route path="quic" element={<QUICPage />} />
-          <Route path="*" element={<Navigate to=".." replace />} />
-        </Route>
-        <Route path="*" element={<Navigate to="/" replace />} />
-      </Routes>
-    </DashboardLayout>
+    <>
+      <Shortcuts />
+      <DashboardLayout>
+        <Routes>
+          <Route path="/" element={<Analyzer />} />
+          <Route path="/analysis/:id" element={<AnalysisLayout />}>
+            <Route index element={<Overview />} />
+            <Route path="tcp" element={<TCPPage />} />
+            <Route path="udp" element={<UDPPage />} />
+            <Route path="dns" element={<DNSPage />} />
+            <Route path="http" element={<HTTPPage />} />
+            <Route path="tls" element={<TLSPage />} />
+            <Route path="sip" element={<SIPPage />} />
+            <Route path="dhcpv6" element={<DHCPv6Page />} />
+            <Route path="quic" element={<QUICPage />} />
+            <Route path="*" element={<Navigate to=".." replace />} />
+          </Route>
+          <Route path="*" element={<Navigate to="/" replace />} />
+        </Routes>
+      </DashboardLayout>
+    </>
   )
 }
 
 export default function App() {
   return (
-    <AuthProvider>
-      <AnalysisProvider>
-        <DashboardModeProvider>
-          <Gate />
-        </DashboardModeProvider>
-      </AnalysisProvider>
-    </AuthProvider>
+    <ToastProvider>
+      <AuthProvider>
+        <AnalysisProvider>
+          <DashboardModeProvider>
+            <Gate />
+          </DashboardModeProvider>
+        </AnalysisProvider>
+      </AuthProvider>
+    </ToastProvider>
   )
 }

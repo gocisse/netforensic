@@ -11,11 +11,11 @@ interface Props {
 }
 
 const tab = (active: boolean, dim: boolean) =>
-  `inline-flex items-center gap-2 whitespace-nowrap rounded-lg border px-3.5 py-2 text-theme-sm font-medium transition-colors ${
+  `inline-flex items-center gap-2 whitespace-nowrap rounded-lg border px-4 py-2 text-theme-sm font-medium transition-colors ${
     active
       ? 'border-brand-500 bg-brand-500 text-white'
       : `border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900 hover:bg-gray-50 dark:hover:bg-gray-800/60 ${
-          dim ? 'text-gray-400 dark:text-gray-500' : 'text-gray-700 dark:text-gray-300'
+          dim ? 'text-gray-500 dark:text-gray-400' : 'text-gray-700 dark:text-gray-300'
         }`
   }`
 
@@ -42,8 +42,8 @@ export default function ProtocolNav({ id, counts, search }: Props) {
                     {p.protocol}
                     <span
                       data-testid={`nav-count-${p.slug}`}
-                      className={`rounded-full px-2 py-0.5 text-theme-xs font-semibold ${
-                        isActive ? 'bg-white/25 text-white' : n > 0 ? 'bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-300' : 'bg-gray-50 dark:bg-gray-800/50 text-gray-400'
+                      className={`rounded-full px-2 py-1 text-theme-xs font-semibold ${
+                        isActive ? 'bg-black/20 text-white' : n > 0 ? 'bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-300' : 'bg-gray-50 dark:bg-gray-800/50 text-gray-500 dark:text-gray-400'
                       }`}
                     >
                       {n}

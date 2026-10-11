@@ -422,6 +422,28 @@ Junior explains the same results in plain words: a traffic-light health summary,
 with "What this means" and numbered "What to do" steps, grouped protocol bars and a
 From / To / What / Status table (Working, Slow, Broken). Switching is instant.
 
+### Keyboard shortcuts, loading and notifications
+
+| Key | What it does |
+|---|---|
+| `Ctrl+K` / `Cmd+K` | Command palette: search the issues of the open analysis, jump to a page, switch mode or theme |
+| `1` – `8` | Jump to the TCP, UDP, DNS, HTTP, TLS, SIP, DHCPv6 or QUIC tab (`0`: the overview) |
+| `Esc` | Close a dialog; otherwise clear the filters |
+| `?` | List the shortcuts |
+
+Number keys and `?` are ignored while you type in a field. While a capture uploads, the page shows the bytes sent and
+the upload speed, then the four steps of the analysis (reading packets, classifying flows, detecting issues, generating
+the report) as the server reaches them, with skeleton placeholders where the results will appear. Copying a filter,
+exporting and an expired session show a toast in the bottom-right corner for three seconds. Animations (tab fades, the
+health score counting up, expanding details) are off for people whose system asks for reduced motion.
+
+`POST /api/analyze?progress=1` answers with JSON lines instead of one document: `{"stage":"reading"}`, then one line
+for each later stage (`classifying`, `detecting`, `reporting`), then `{"result": {...}}` (the same document as without
+the parameter), or `{"error": "...", "status": 400}` when the capture cannot be read.
+
+`npm test` (in `web/`) runs the UI's unit tests, and `npm run check:spacing` checks that padding, margin and gap
+utilities stay on the 4/8/12/16/24/32 px scale.
+
 ### Developing the UI
 
 Run the server (`./netforensic --web :8181`) and, in `web/`, `npm run dev`. The

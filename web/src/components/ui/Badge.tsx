@@ -37,7 +37,7 @@ interface Props {
 export default function Badge({ color = 'primary', variant = 'light', children, className = '' }: Props) {
   const palette = variant === 'solid' ? solid : light
   return (
-    <span className={`inline-flex items-center justify-center gap-1 rounded-full px-2.5 py-0.5 text-theme-xs font-medium ${palette[color]} ${className}`}>
+    <span className={`inline-flex items-center justify-center gap-1 rounded-full px-3 py-1 text-theme-xs font-medium ${palette[color]} ${className}`}>
       {children}
     </span>
   )

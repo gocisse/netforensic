@@ -30,8 +30,8 @@ interface Props {
 const SEVERITY_STYLE: Record<string, string> = {
   CRITICAL: 'text-error-700 dark:text-error-400',
   ERROR: 'text-error-600 dark:text-error-400',
-  WARNING: 'text-warning-600 dark:text-warning-400',
-  INFO: 'text-blue-light-600 dark:text-blue-light-400',
+  WARNING: 'text-warning-700 dark:text-warning-400',
+  INFO: 'text-blue-light-700 dark:text-blue-light-400',
 }
 
 function toggle(list: string[], value: string): string[] {
@@ -41,13 +41,13 @@ function toggle(list: string[], value: string): string[] {
 function Checkbox({ label, checked, onChange, className = '', testId, hint }: { label: string; checked: boolean; onChange: () => void; className?: string; testId?: string; hint?: string }) {
   return (
     <label
-      className={`inline-flex cursor-pointer items-center gap-2 rounded-lg border px-3 py-1.5 text-theme-sm transition-colors ${
+      className={`inline-flex cursor-pointer items-center gap-2 rounded-lg border px-3 py-2 text-theme-sm transition-colors ${
         checked ? 'border-brand-500 bg-brand-25 dark:bg-brand-500/10' : 'border-gray-200 dark:border-gray-800 hover:bg-gray-50 dark:hover:bg-gray-800/60'
       }`}
     >
       <input type="checkbox" checked={checked} onChange={onChange} data-testid={testId} className="h-4 w-4 rounded border-gray-300 dark:border-gray-700 accent-brand-500" />
       <span className={`font-medium ${className}`}>{label}</span>
-      {hint && <span className="text-theme-xs text-gray-400">{hint}</span>}
+      {hint && <span className="text-theme-xs text-gray-500 dark:text-gray-400">{hint}</span>}
     </label>
   )
 }
@@ -70,12 +70,12 @@ export default function FilterPanel({ filters, protocols, categories, severities
       <CardHeader
         title="Filters"
         description="Narrow the issues, flows and protocol distribution below. The health score and root cause always describe the whole capture."
-        action={<FilterIcon className="h-5 w-5 text-gray-400" />}
+        action={<FilterIcon className="h-5 w-5 text-gray-500" />}
       />
-      <CardBody className="space-y-5">
+      <CardBody className="space-y-6">
         <QuickFilters filters={filters} />
 
-        <form onSubmit={onSubmit} className="space-y-5" noValidate>
+        <form onSubmit={onSubmit} className="space-y-6" noValidate>
           <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
             <div data-testid="filter-source-ip">
               <Field
@@ -120,7 +120,7 @@ export default function FilterPanel({ filters, protocols, categories, severities
               />
             </div>
             <div>
-              <label htmlFor="filter-protocol" className="mb-1.5 block text-sm font-medium text-gray-700 dark:text-gray-300">
+              <label htmlFor="filter-protocol" className="mb-2 block text-sm font-medium text-gray-700 dark:text-gray-300">
                 Protocol
               </label>
               <select
@@ -137,11 +137,11 @@ export default function FilterPanel({ filters, protocols, categories, severities
                   </option>
                 ))}
               </select>
-              <p className="mt-1.5 text-theme-xs text-gray-500 dark:text-gray-400">Transport or application protocol.</p>
+              <p className="mt-2 text-theme-xs text-gray-500 dark:text-gray-400">Transport or application protocol.</p>
             </div>
           </div>
 
-          <div className="grid gap-5 lg:grid-cols-2">
+          <div className="grid gap-6 lg:grid-cols-2">
             <fieldset data-testid="filter-severity">
               <legend className="mb-2 text-sm font-medium text-gray-700 dark:text-gray-300">Severity</legend>
               <div className="flex flex-wrap gap-2">

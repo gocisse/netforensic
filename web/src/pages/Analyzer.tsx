@@ -4,7 +4,10 @@ import { ApiError, SessionExpiredError } from '../api'
 import { useAnalysisCache } from '../analysis/useAnalysisCache'
 import { useAuth } from '../auth/useAuth'
 import CaptureAlerts from '../components/analyzer/CaptureAlerts'
+import AnalyzeProgress from '../components/analyzer/AnalyzeProgress'
+import type { Progress } from '../components/analyzer/analysisSteps'
 import UploadCard from '../components/analyzer/UploadCard'
+import { AnalysisSkeleton } from '../components/ui/Skeleton'
 import { Card } from '../components/ui/Card'
 import { isCaptureFile } from '../format'
 import type { ApiResult, EmptyResult } from '../types'
@@ -19,7 +22,7 @@ function NothingToAnalyze({ result }: { result: EmptyResult }) {
       </h2>
       <CaptureAlerts issues={result.issues} />
       <Card>
-        <div className="px-6 py-10 text-center">
+        <div className="px-6 py-8 text-center">
           <p className="text-base font-medium text-gray-800 dark:text-white/90">{result.message}</p>
           <p className="mt-1 text-theme-sm text-gray-500 dark:text-gray-400">There is nothing to score, so no health score is shown.</p>
         </div>
@@ -41,6 +44,7 @@ export default function Analyzer() {
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [empty, setEmpty] = useState<ApiResult | null>(null)
+  const [progress, setProgress] = useState<Progress>({ loaded: 0, total: 0, stage: '' })
   const inFlight = useRef<AbortController | null>(null)
 
   // Abandon a running upload if the page goes away.
@@ -64,8 +68,13 @@ export default function Analyzer() {
     setIsLoading(true)
     setError(null)
     setEmpty(null)
+    setProgress({ loaded: 0, total: file.size, stage: '' })
     try {
-      const r = await api.analyzeCapture(file, controller.signal)
+      const r = await api.analyzeCapture(file, {
+        signal: controller.signal,
+        onUpload: (loaded, total) => setProgress((p) => ({ ...p, loaded, total })),
+        onStage: (stage) => setProgress((p) => ({ ...p, stage })),
+      })
       if (isEmptyResult(r) || !r.analysis_id) {
         setEmpty(r)
         return
@@ -91,16 +100,15 @@ export default function Analyzer() {
       </div>
       <UploadCard file={file} loading={isLoading} error={error} onSelect={handleSelect} onAnalyze={handleAnalyze} />
       {isLoading && (
-        <Card>
-          <p aria-live="polite" className="px-6 py-12 text-center text-theme-sm text-gray-600 dark:text-gray-400">
-            Analyzing capture…
-          </p>
-        </Card>
+        <>
+          <AnalyzeProgress progress={progress} />
+          <AnalysisSkeleton />
+        </>
       )}
       {!isLoading && empty && isEmptyResult(empty) && <NothingToAnalyze result={empty} />}
       {!isLoading && !empty && (
         <Card>
-          <div aria-live="polite" className="px-6 py-12 text-center">
+          <div aria-live="polite" className="px-6 py-8 text-center">
             <p className="text-base font-medium text-gray-800 dark:text-white/90">Upload a capture to begin analysis</p>
             <p className="mt-1 text-theme-sm text-gray-500 dark:text-gray-400">The health score, root cause and issues will appear here, with a page for each protocol.</p>
           </div>

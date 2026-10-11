@@ -13,7 +13,7 @@ interface Props {
 /** A centered card on a soft background, for the sign-in and first-login screens. */
 export default function AuthLayout({ title, subtitle, children, footer, ...rest }: Props) {
   return (
-    <div data-testid={rest['data-testid']} className="flex min-h-screen flex-col items-center justify-center bg-gray-50 dark:bg-gray-950 px-4 py-10">
+    <div data-testid={rest['data-testid']} className="flex min-h-screen flex-col items-center justify-center bg-gray-50 dark:bg-gray-950 px-4 py-8">
       <div className="w-full max-w-md">
         <div className="mb-8 flex flex-col items-center text-center">
           <Logo size="lg" />

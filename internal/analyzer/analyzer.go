@@ -26,7 +26,31 @@ func Analyze(packets []models.PacketInfo, service string) *models.AnalysisResult
 // as problems with the capture itself (see TruncatedCaptureIssue). They are
 // included in the result's issues, health score and timeline.
 func AnalyzeWithIssues(packets []models.PacketInfo, service string, extra ...models.Issue) *models.AnalysisResult {
+	return AnalyzeWithProgress(packets, service, nil, extra...)
+}
+
+// Analysis stages, as reported to the progress callback of AnalyzeWithProgress.
+const (
+	// StageClassifying is reported when packets are grouped into flows and classified.
+	StageClassifying = "classifying"
+	// StageDetecting is reported when the issue detectors start.
+	StageDetecting = "detecting"
+	// StageReporting is reported when the issues are annotated and the verdict is computed.
+	StageReporting = "reporting"
+)
+
+// AnalyzeWithProgress is AnalyzeWithIssues that calls progress (if not nil)
+// with the name of each stage as it starts: StageClassifying, StageDetecting
+// and StageReporting. The callback runs on the calling goroutine; the
+// analysis itself stays free of I/O.
+func AnalyzeWithProgress(packets []models.PacketInfo, service string, progress func(stage string), extra ...models.Issue) *models.AnalysisResult {
 	start := time.Now()
+	stage := func(name string) {
+		if progress != nil {
+			progress(name)
+		}
+	}
+	stage(StageClassifying)
 
 	// Callers that print or follow packets should filter with FilterService
 	// first and pass the result here, so that what they show is exactly what
@@ -41,6 +65,7 @@ func AnalyzeWithIssues(packets []models.PacketInfo, service string, extra ...mod
 		}
 	}
 	flows, perfIssues := applyPerformanceMetrics(packets, flows)
+	stage(StageDetecting)
 	issues := detectIssues(flows)
 	issues = append(issues, analyzeDNS(packets)...)
 	issues = append(issues, analyzeHTTP(packets)...)
@@ -59,6 +84,7 @@ func AnalyzeWithIssues(packets []models.PacketInfo, service string, extra ...mod
 	if issues == nil {
 		issues = []models.Issue{} // serialize as [] rather than null
 	}
+	stage(StageReporting)
 	annotateProtocols(issues, classes)
 	annotateGuidance(issues, flows)
 	annotateFlowStatus(flows, issues)

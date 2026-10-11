@@ -10,7 +10,7 @@ export default function JuniorProtocolPage({ info }: { info: ProtocolPageInfo })
   const { id, reportable } = useAnalysisView()
   const issues = useMemo(() => reportable.filter((i) => involvesProtocol(i, info.protocol)), [reportable, info.protocol])
   return (
-    <div className="space-y-5" data-testid="junior-protocol-page">
+    <div className="space-y-6" data-testid="junior-protocol-page">
       <Link to={`/analysis/${id}`} className="text-theme-sm font-medium text-brand-600 hover:text-brand-700 dark:text-brand-400">
         Back to the overview
       </Link>

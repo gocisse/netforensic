@@ -43,7 +43,7 @@ export default function ChangePasswordForm({ onDone, onCancel }: Props) {
   }
 
   return (
-    <form onSubmit={submit} data-testid="change-password-form" noValidate className="mt-5 space-y-5">
+    <form onSubmit={submit} data-testid="change-password-form" noValidate className="mt-6 space-y-6">
       <Field
         label="Current password"
         id="old-password"

@@ -24,7 +24,7 @@ interface HeaderProps {
 /** The title row of a card, with an optional description and action. */
 export function CardHeader({ title, description, action }: HeaderProps) {
   return (
-    <div className="flex flex-wrap items-start justify-between gap-3 px-5 py-4 sm:px-6 sm:py-5">
+    <div className="flex flex-wrap items-start justify-between gap-3 px-6 py-4 sm:px-6 sm:py-6">
       <div className="min-w-0">
         <h3 className="text-base font-medium text-gray-800 dark:text-white/90">{title}</h3>
         {description && <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">{description}</p>}
@@ -36,5 +36,5 @@ export function CardHeader({ title, description, action }: HeaderProps) {
 
 /** The padded body of a card. */
 export function CardBody({ children, className = '' }: { children: ReactNode; className?: string }) {
-  return <div className={`border-t border-gray-100 dark:border-gray-800 p-5 sm:p-6 ${className}`}>{children}</div>
+  return <div className={`border-t border-gray-100 dark:border-gray-800 p-6 sm:p-6 ${className}`}>{children}</div>
 }

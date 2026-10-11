@@ -151,7 +151,7 @@ export default function OccurrenceTable({ issue, occurrences }: Props) {
                 {hasProtocol && (
                   <span data-testid="occurrence-protocol">
                     {o.protocol && (
-                      <span className={`rounded px-1.5 py-0.5 text-xs font-medium ${protocolColor(o.protocol).badge}`}>
+                      <span className={`rounded px-2 py-1 text-xs font-medium ${protocolColor(o.protocol).badge}`}>
                         {o.protocol}
                       </span>
                     )}

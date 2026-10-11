@@ -22,7 +22,7 @@ function ProtocolPill({ stat, selected, onSelect }: { stat: ProtocolStat } & Pic
       aria-pressed={active}
       onClick={() => onSelect(active ? 'All' : stat.protocol)}
       title={`Show only ${stat.protocol}`}
-      className={`flex items-center gap-2 rounded-lg border px-3 py-1.5 text-left text-theme-sm transition-colors ${
+      className={`flex items-center gap-2 rounded-lg border px-3 py-2 text-left text-theme-sm transition-colors ${
         active ? 'border-brand-500 bg-brand-25 dark:bg-brand-500/10 ring-1 ring-brand-500' : 'border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900'
       } hover:bg-gray-50 dark:hover:bg-gray-800/60`}
     >
@@ -30,7 +30,7 @@ function ProtocolPill({ stat, selected, onSelect }: { stat: ProtocolStat } & Pic
       <span className="font-semibold text-gray-800 dark:text-white/90">{stat.protocol}</span>
       <span className="text-gray-600 dark:text-gray-400">{stat.packets.toLocaleString()} pkts</span>
       <span className="text-gray-500 dark:text-gray-400">({stat.percent}%)</span>
-      <span className="text-theme-xs text-gray-400">
+      <span className="text-theme-xs text-gray-500 dark:text-gray-400">
         {stat.flows.toLocaleString()} {stat.flows === 1 ? 'flow' : 'flows'}
       </span>
     </button>

@@ -5,8 +5,8 @@ import { Card } from '../ui/Card'
 
 const STYLE = {
   error: { icon: ErrorIcon, tint: 'bg-error-50 dark:bg-error-500/15 text-error-600 dark:text-error-400', chip: 'bg-error-50 dark:bg-error-500/15 text-error-700 dark:text-error-400' },
-  warning: { icon: AlertIcon, tint: 'bg-warning-50 dark:bg-warning-500/15 text-warning-600 dark:text-warning-400', chip: 'bg-warning-50 dark:bg-warning-500/15 text-warning-700 dark:text-warning-400' },
-  info: { icon: InfoIcon, tint: 'bg-blue-light-50 dark:bg-blue-light-500/15 text-blue-light-600 dark:text-blue-light-400', chip: 'bg-blue-light-50 dark:bg-blue-light-500/15 text-blue-light-700 dark:text-blue-light-400' },
+  warning: { icon: AlertIcon, tint: 'bg-warning-50 dark:bg-warning-500/15 text-warning-700 dark:text-warning-400', chip: 'bg-warning-50 dark:bg-warning-500/15 text-warning-700 dark:text-warning-400' },
+  info: { icon: InfoIcon, tint: 'bg-blue-light-50 dark:bg-blue-light-500/15 text-blue-light-700 dark:text-blue-light-400', chip: 'bg-blue-light-50 dark:bg-blue-light-500/15 text-blue-light-700 dark:text-blue-light-400' },
 }
 
 /**
@@ -21,7 +21,7 @@ export default function JuniorIssueCard({ issue }: { issue: Issue }) {
   const Icon = style.icon
   const times = issue.count ?? 1
   return (
-    <Card data-testid="junior-issue-card" className="p-5 transition-shadow hover:shadow-theme-md sm:p-6">
+    <Card data-testid="junior-issue-card" className="p-6 transition-shadow hover:shadow-theme-md sm:p-6">
       <div className="flex items-start gap-4">
         <span className={`flex h-12 w-12 flex-none items-center justify-center rounded-xl ${style.tint}`} data-testid="junior-icon" data-kind={sev.kind}>
           <Icon className="h-6 w-6" />

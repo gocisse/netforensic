@@ -67,13 +67,13 @@ export default function SeniorOverview() {
           label="Packets"
           value={result.total_packets.toLocaleString()}
           hint={
-            <span className="inline-flex items-center gap-1.5">
+            <span className="inline-flex items-center gap-2">
               <ClockIcon className="h-4 w-4" />
               over {result.duration}
             </span>
           }
           icon={<PacketsIcon className="h-6 w-6" />}
-          iconTone="bg-brand-50 dark:bg-brand-500/15 text-brand-500"
+          iconTone="bg-brand-50 dark:bg-brand-500/15 text-brand-600 dark:text-brand-400"
         />
         <StatCard
           label="Flows"
@@ -129,19 +129,23 @@ export default function SeniorOverview() {
         testId="busiest-flows"
         title={applied.protocol === 'All' ? 'Busiest flows' : `Busiest ${applied.protocol} flows`}
         flows={busiest}
+        filtered={filters.active}
+        onClearFilters={filters.reset}
         emptyMessage={filters.active ? 'No flows match your filters.' : 'No flows were found in this capture.'}
       />
       <FlowTable
         testId="slowest-flows"
         title={applied.protocol === 'All' ? 'Slowest flows' : `Slowest ${applied.protocol} flows`}
         flows={slowest}
+        filtered={filters.active}
+        onClearFilters={filters.reset}
         emptyMessage={filters.active ? 'None of the flows that match your filters have measurable timing metrics.' : 'No flows with measurable timing metrics.'}
       />
 
       {d.recommendations.length > 0 && (
         <Card>
           <CardHeader title="Recommendations" />
-          <ol className="list-decimal space-y-2 border-t border-gray-100 dark:border-gray-800 p-5 pl-10 text-theme-sm text-gray-600 dark:text-gray-400 sm:p-6 sm:pl-11">
+          <ol className="list-decimal space-y-2 border-t border-gray-100 dark:border-gray-800 p-6 pl-8 text-theme-sm text-gray-600 dark:text-gray-400 sm:p-6 sm:pl-8">
             {d.recommendations.map((r) => (
               <li key={r}>{r}</li>
             ))}

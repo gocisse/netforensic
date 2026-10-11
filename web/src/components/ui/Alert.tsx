@@ -28,7 +28,7 @@ export default function Alert({ variant, title, children, role = 'status', class
   return (
     <div role={role} className={`rounded-xl border p-4 ${styles[variant].box} ${className}`} data-testid={rest['data-testid']}>
       <div className="flex items-start gap-3">
-        <Icon className={`-mt-0.5 h-6 w-6 flex-none ${styles[variant].icon}`} />
+        <Icon className={`-mt-1 h-6 w-6 flex-none ${styles[variant].icon}`} />
         <div className="min-w-0">
           {title && <h4 className="mb-1 text-sm font-semibold text-gray-800 dark:text-white/90">{title}</h4>}
           <div className="text-sm text-gray-600 dark:text-gray-400">{children}</div>

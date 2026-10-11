@@ -30,7 +30,7 @@ export default function LoginPage() {
 
   return (
     <AuthLayout data-testid="login-page" title="Sign in" subtitle="Enter your username and password to use the analyzer.">
-      <form onSubmit={submit} className="mt-6 space-y-5">
+      <form onSubmit={submit} className="mt-6 space-y-6">
         {notice && (
           <Alert variant="warning" data-testid="login-notice">
             {notice}

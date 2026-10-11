@@ -2,6 +2,7 @@ import { formatBytes, formatMs, protocolColor } from '../format'
 import type { Flow } from '../types'
 import { Card, CardHeader } from './ui/Card'
 import { ArrowBothIcon, ArrowLeftIcon, ArrowRightIcon } from '../icons'
+import Button from './ui/Button'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from './ui/Table'
 
 /** ip:port, with an IPv6 address in brackets and no port for portless protocols. */
@@ -28,13 +29,13 @@ function FlowEndpoints({ flow }: { flow: Flow }) {
   const d = direction(flow)
   const suffix = /((?:#\d+)?(?:@.+)?)$/.exec(flow.id)?.[1] ?? ''
   return (
-    <div className="flex items-center gap-1.5 font-mono text-theme-xs" title={flow.id} data-testid="flow-endpoints">
+    <div className="flex items-center gap-2 font-mono text-theme-xs" title={flow.id} data-testid="flow-endpoints">
       <span className="truncate">{endpoint(flow.src_ip, flow.src_port)}</span>
-      <span data-testid="flow-direction" data-direction={d.name} title={d.label} role="img" aria-label={d.label} className="flex-none text-brand-500">
+      <span data-testid="flow-direction" data-direction={d.name} title={d.label} role="img" aria-label={d.label} className="flex-none text-brand-600 dark:text-brand-400">
         <d.Icon className="h-4 w-4" />
       </span>
       <span className="truncate">{endpoint(flow.dst_ip, flow.dst_port)}</span>
-      {suffix && <span className="flex-none text-gray-400">{suffix}</span>}
+      {suffix && <span className="flex-none text-gray-500 dark:text-gray-400">{suffix}</span>}
     </div>
   )
 }
@@ -44,15 +45,27 @@ export interface Props {
   flows: Flow[]
   emptyMessage: string
   testId: string
+  /** Whether filters are set: an empty table then says that no results match them. */
+  filtered?: boolean
+  /** Clears the filters; offered by the empty message when they are set. */
+  onClearFilters?: () => void
 }
 
 /** A table of flows with their protocol, volume and timing. */
-export default function SeniorFlowTable({ title, flows, emptyMessage, testId }: Props) {
+export default function SeniorFlowTable({ title, flows, emptyMessage, testId, filtered = false, onClearFilters }: Props) {
   return (
     <Card data-testid={testId}>
       <CardHeader title={title} />
       {flows.length === 0 ? (
-        <p className="border-t border-gray-100 dark:border-gray-800 px-5 py-4 text-theme-sm text-gray-500 dark:text-gray-400 sm:px-6">{emptyMessage}</p>
+        <div className="border-t border-gray-100 dark:border-gray-800 px-4 py-6 text-center sm:px-6" data-testid="flows-empty">
+          {filtered && <p className="text-base font-medium text-gray-800 dark:text-white/90">No results match your filters</p>}
+          <p className="text-theme-sm text-gray-600 dark:text-gray-400">{emptyMessage}</p>
+          {filtered && onClearFilters && (
+            <Button variant="outline" size="sm" className="mt-3" onClick={onClearFilters} data-testid="flows-clear-filters">
+              Clear filters
+            </Button>
+          )}
+        </div>
       ) : (
         <div className="overflow-x-auto">
           <Table>
@@ -91,9 +104,9 @@ export default function SeniorFlowTable({ title, flows, emptyMessage, testId }: 
                     )}
                   </TableCell>
                   <TableCell className="whitespace-nowrap">
-                    <span className={`rounded px-1.5 py-0.5 text-theme-xs font-medium ${protocolColor(f.protocol).badge}`}>{f.protocol || 'Other'}</span>
+                    <span className={`rounded px-2 py-1 text-theme-xs font-medium ${protocolColor(f.protocol).badge}`}>{f.protocol || 'Other'}</span>
                     {f.app_protocol && (
-                      <span className={`ml-1 rounded px-1.5 py-0.5 text-theme-xs font-medium ${protocolColor(f.app_protocol).badge}`}>{f.app_protocol}</span>
+                      <span className={`ml-1 rounded px-2 py-1 text-theme-xs font-medium ${protocolColor(f.app_protocol).badge}`}>{f.app_protocol}</span>
                     )}
                   </TableCell>
                   <TableCell className="text-right tabular-nums">{f.packet_count.toLocaleString()}</TableCell>
