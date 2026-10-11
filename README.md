@@ -111,8 +111,11 @@ segments:
 ```
 
 This prints `Web UI available at http://localhost:8181` and keeps running until
-you press Ctrl-C. Open that address in a browser, choose or drop a `.pcap` or
-`.pcapng` file, and press **Analyze**. The page shows the health score (green
+you press Ctrl-C. Open that address in a browser and sign in. On a fresh
+installation the login is `admin` / `admin`, and the page makes you choose a new
+password before anything else; the user menu (top right) has **Change Password**
+and **Logout**. Then choose or drop a `.pcap` or `.pcapng` file and press
+**Analyze**. The page shows the health score (green
 from 80, yellow from 40, red below that), the primary cause and confidence, the
 top issues, and the recommendations. Truncated captures and skipped frames are
 called out in notices, and a capture with nothing to analyze says so instead of
