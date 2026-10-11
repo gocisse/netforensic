@@ -1,7 +1,43 @@
 import { formatBytes, formatMs, protocolColor } from '../format'
 import type { Flow } from '../types'
 import { Card, CardHeader } from './ui/Card'
+import { ArrowBothIcon, ArrowLeftIcon, ArrowRightIcon } from '../icons'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from './ui/Table'
+
+/** ip:port, with an IPv6 address in brackets and no port for portless protocols. */
+function endpoint(ip: string, port: number): string {
+  const host = ip.includes(':') ? `[${ip}]` : ip
+  return port > 0 ? `${host}:${port}` : ip
+}
+
+/**
+ * Which way most of a flow's bytes go. A flow is bidirectional and listed
+ * with its lesser endpoint first, so the arrow shows the heavier direction:
+ * → from the first endpoint to the second, ← the other way, ↔ if even.
+ */
+function direction(f: Flow): { Icon: typeof ArrowRightIcon; name: 'forward' | 'reverse' | 'even'; label: string } {
+  const src = endpoint(f.src_ip, f.src_port)
+  const dst = endpoint(f.dst_ip, f.dst_port)
+  if (f.bytes_sent > f.bytes_recv) return { Icon: ArrowRightIcon, name: 'forward', label: `Most bytes go from ${src} to ${dst}` }
+  if (f.bytes_recv > f.bytes_sent) return { Icon: ArrowLeftIcon, name: 'reverse', label: `Most bytes go from ${dst} to ${src}` }
+  return { Icon: ArrowBothIcon, name: 'even', label: `Equal bytes in both directions between ${src} and ${dst}` }
+}
+
+/** The two endpoints of a flow with an arrow for the heavier direction; a reused-port or tunnel suffix of the ID follows. */
+function FlowEndpoints({ flow }: { flow: Flow }) {
+  const d = direction(flow)
+  const suffix = /((?:#\d+)?(?:@.+)?)$/.exec(flow.id)?.[1] ?? ''
+  return (
+    <div className="flex items-center gap-1.5 font-mono text-theme-xs" title={flow.id} data-testid="flow-endpoints">
+      <span className="truncate">{endpoint(flow.src_ip, flow.src_port)}</span>
+      <span data-testid="flow-direction" data-direction={d.name} title={d.label} role="img" aria-label={d.label} className="flex-none text-brand-500">
+        <d.Icon className="h-4 w-4" />
+      </span>
+      <span className="truncate">{endpoint(flow.dst_ip, flow.dst_port)}</span>
+      {suffix && <span className="flex-none text-gray-400">{suffix}</span>}
+    </div>
+  )
+}
 
 interface Props {
   title: string
@@ -37,9 +73,7 @@ export default function FlowTable({ title, flows, emptyMessage, testId }: Props)
               {flows.map((f) => (
                 <TableRow key={f.id} data-testid="flow-row">
                   <TableCell className="max-w-xs text-gray-800 dark:text-white/90">
-                    <div className="truncate font-mono text-theme-xs" title={f.id}>
-                      {f.id}
-                    </div>
+                    <FlowEndpoints flow={f} />
                     {f.app_protocol === 'DHCPv6' && (
                       <div className="truncate text-theme-xs text-gray-500 dark:text-gray-400" title={f.dhcpv6_client_id} data-testid="dhcpv6-details">
                         {f.dhcpv6_message_types}

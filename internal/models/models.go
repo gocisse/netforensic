@@ -353,6 +353,10 @@ type AnalysisResult struct {
 	// file says so (only pcapng files carry this). Nil if it says nothing.
 	Metadata *CaptureMetadata `json:"metadata,omitempty"`
 
+	// AnalysisID names this analysis on the server that holds it, for the
+	// export and reload endpoints. It is set only by the web server.
+	AnalysisID string `json:"analysis_id,omitempty"`
+
 	// Flows is every flow of the capture, for exports. It is not part of the
 	// JSON output, which lists only the top flows.
 	Flows []Flow `json:"-"`

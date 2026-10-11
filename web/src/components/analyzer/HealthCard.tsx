@@ -8,7 +8,7 @@ import type { Diagnosis } from '../../types'
 export default function HealthCard({ diagnosis }: { diagnosis: Diagnosis }) {
   const tone = healthTone(diagnosis.health_score)
   return (
-    <div className={`relative overflow-hidden rounded-2xl border ${tone.ring} ${tone.bg} p-5 shadow-theme-xs md:p-6 sm:col-span-2`}>
+    <div className={`relative overflow-hidden rounded-2xl border ${tone.ring} ${tone.bg} p-4 shadow-theme-xs md:px-6 md:py-4`}>
       <div className={`absolute inset-y-0 left-0 w-1.5 ${tone.bar}`} aria-hidden="true" />
       <div className="flex flex-wrap items-center gap-6 pl-2">
         <div
@@ -30,13 +30,15 @@ export default function HealthCard({ diagnosis }: { diagnosis: Diagnosis }) {
 
         <div className="min-w-0 flex-1 basis-60">
           <p className="text-theme-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">Primary cause</p>
-          <p data-testid="primary-cause" className="mt-1 text-lg font-semibold text-gray-800 dark:text-white/90">
+          <p data-testid="primary-cause" className="mt-0.5 line-clamp-1 text-lg font-semibold text-gray-800 dark:text-white/90" title={diagnosis.primary_cause}>
             {diagnosis.primary_cause}
           </p>
-          <p className="mt-1 text-theme-sm text-gray-600 dark:text-gray-400">
+          <p className="text-theme-sm text-gray-600 dark:text-gray-400">
             Confidence: <span className="font-medium">{diagnosis.confidence}</span>
           </p>
-          <p className="mt-2 text-theme-sm text-gray-500 dark:text-gray-400">{diagnosis.summary}</p>
+          <p className="mt-1 line-clamp-1 text-theme-sm text-gray-500 dark:text-gray-400" title={diagnosis.summary}>
+            {diagnosis.summary}
+          </p>
         </div>
       </div>
     </div>

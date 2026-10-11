@@ -27,15 +27,18 @@ function compare(a: Issue, b: Issue, key: SortKey): number {
 
 interface Props {
   issues: Issue[]
-  /** The selected protocol filter, for the empty message. */
-  filter: string
+  /** Whether filters are set, for the empty message. */
+  filtered: boolean
+  /** Clears the filters; offered by the empty message when they are set. */
+  onClearFilters?: () => void
 }
 
 /** A sortable data table of issues; rows with events expand into a drill-down. */
-export default function IssuesTable({ issues, filter }: Props) {
+export default function IssuesTable({ issues, filtered, onClearFilters }: Props) {
   const [showAll, setShowAll] = useState(false)
   const [sort, setSort] = useState<{ key: SortKey; dir: SortDir }>({ key: 'severity', dir: 'desc' })
   const [open, setOpen] = useState<Set<string>>(new Set())
+  const [wide, setWide] = useState<Set<string>>(new Set()) // issues whose description is shown in full
 
   const rows = useMemo(() => {
     const sign = sort.dir === 'asc' ? 1 : -1
@@ -44,9 +47,19 @@ export default function IssuesTable({ issues, filter }: Props) {
 
   if (rows.length === 0) {
     return (
-      <p className="text-theme-sm text-gray-500 dark:text-gray-400" data-testid="no-issues">
-        {filter === 'All' ? 'No issues were found in this capture.' : `No ${filter} issues were found in this capture.`}
-      </p>
+      <div className="px-3 py-6 text-center" data-testid="no-issues">
+        <p className="text-base font-medium text-gray-800 dark:text-white/90">{filtered ? 'No issues match your filters' : 'No issues were found in this capture'}</p>
+        {filtered && (
+          <>
+            <p className="mt-1 text-theme-sm text-gray-500 dark:text-gray-400">Remove a filter, or clear them all to see every issue again.</p>
+            {onClearFilters && (
+              <Button variant="outline" size="sm" className="mt-3" onClick={onClearFilters} data-testid="empty-clear-filters">
+                Clear filters
+              </Button>
+            )}
+          </>
+        )}
+      </div>
     )
   }
 
@@ -55,13 +68,15 @@ export default function IssuesTable({ issues, filter }: Props) {
   const toggleSort = (key: SortKey) =>
     setSort((s) => (s.key === key ? { key, dir: s.dir === 'asc' ? 'desc' : 'asc' } : { key, dir: key === 'severity' || key === 'count' ? 'desc' : 'asc' }))
 
-  const toggleOpen = (id: string) =>
-    setOpen((prev) => {
+  const flip = (set: (f: (prev: Set<string>) => Set<string>) => void, id: string) =>
+    set((prev) => {
       const next = new Set(prev)
       if (next.has(id)) next.delete(id)
       else next.add(id)
       return next
     })
+  const toggleOpen = (id: string) => flip(setOpen, id)
+  const toggleWide = (id: string) => flip(setWide, id)
 
   const heading = (key: SortKey, label: string, className = '') => {
     const active = sort.key === key
@@ -101,7 +116,15 @@ export default function IssuesTable({ issues, filter }: Props) {
               const expanded = open.has(issue.id) && occurrences.length > 0
               return (
                 <Fragment key={issue.id}>
-                  <TableRow data-testid="issue-row" className="align-top hover:bg-gray-50/60 dark:hover:bg-white/[0.03]">
+                  <TableRow
+                    data-testid="issue-row"
+                    className="cursor-pointer align-top hover:bg-gray-50/60 dark:hover:bg-white/[0.03]"
+                    onClick={(e) => {
+                      // a click on the row (not on a button or link in it) shows or hides the full description
+                      if ((e.target as HTMLElement).closest('button, a')) return
+                      toggleWide(issue.id)
+                    }}
+                  >
                     <TableCell className="whitespace-nowrap">
                       <Badge color={severityColor(issue.severity)}>{issue.severity}</Badge>
                     </TableCell>
@@ -117,9 +140,23 @@ export default function IssuesTable({ issues, filter }: Props) {
                           </span>
                         ))}
                       </div>
-                      <p className="mt-1 line-clamp-2 text-theme-xs text-gray-500 dark:text-gray-400" title={issue.description}>
+                      <p
+                        data-testid="issue-description"
+                        data-expanded={wide.has(issue.id)}
+                        className={`mt-1 whitespace-pre-wrap break-words text-theme-xs text-gray-500 dark:text-gray-400 ${wide.has(issue.id) ? '' : 'line-clamp-2'}`}
+                      >
                         {issue.description}
                       </p>
+                      {issue.description.length > 140 || wide.has(issue.id) ? (
+                        <button
+                          type="button"
+                          aria-expanded={wide.has(issue.id)}
+                          onClick={() => toggleWide(issue.id)}
+                          className="mt-1 text-theme-xs font-medium text-brand-500 hover:text-brand-600 dark:hover:text-brand-400"
+                        >
+                          {wide.has(issue.id) ? 'Show less' : 'Show full description'}
+                        </button>
+                      ) : null}
                     </TableCell>
                     <TableCell className="whitespace-nowrap text-right tabular-nums">
                       {(issue.count ?? 1) > 1 ? <span className="rounded-full bg-gray-100 dark:bg-gray-800 px-2 py-0.5 text-theme-xs text-gray-600 dark:text-gray-400">×{issue.count}</span> : ''}

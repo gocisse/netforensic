@@ -133,3 +133,33 @@ export const MoonIcon = (p: IconProps) => (
     <path d="M20.5 14.5A8.5 8.5 0 0 1 9.5 3.5a8.5 8.5 0 1 0 11 11z" />
   </Icon>
 )
+
+export const ArrowRightIcon = (p: IconProps) => (
+  <Icon {...p}>
+    <path d="M4 12h16M14 6l6 6-6 6" />
+  </Icon>
+)
+
+export const ArrowLeftIcon = (p: IconProps) => (
+  <Icon {...p}>
+    <path d="M20 12H4M10 6l-6 6 6 6" />
+  </Icon>
+)
+
+export const ArrowBothIcon = (p: IconProps) => (
+  <Icon {...p}>
+    <path d="M3 12h18M7 8l-4 4 4 4M17 8l4 4-4 4" />
+  </Icon>
+)
+
+export const DownloadIcon = (p: IconProps) => (
+  <Icon {...p}>
+    <path d="M12 3v12M7 10l5 5 5-5M4 20h16" />
+  </Icon>
+)
+
+export const FilterIcon = (p: IconProps) => (
+  <Icon {...p}>
+    <path d="M3 5h18l-7 8v6l-4-2v-4L3 5z" />
+  </Icon>
+)

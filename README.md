@@ -267,6 +267,55 @@ issue's details table shows the protocol of each event. The same data is in the
 JSON as `protocol_stats`, with `protocols` on issues and `protocol` on their
 occurrences.
 
+**Filtering.** Under the headline numbers, the **Filters** panel narrows the
+issues, flows and protocol distribution to what you are looking at:
+
+- **Source IP** and **Destination IP** (IPv4 or IPv6, validated; any spelling of
+  an IPv6 address works). Flows are bidirectional, so an IP matches either end
+  of a flow, and with both set the two ends of one flow.
+- **Port**: ports and ranges separated by commas, such as `80,443,8000-9000`;
+  it matches either port of a flow.
+- **Protocol**: any detected protocol, transport or application (TCP, DNS, QUIC,
+  SIP, ...).
+- **Severity** (ERROR, WARNING, INFO, and CRITICAL when the capture has any) and
+  **Category** (Connection, DNS, PacketLoss, ... as found in the capture).
+
+Nothing changes until you press **Apply Filters** (or Enter); **Reset** clears
+everything. The **Quick filters** (All Errors, DNS Issues, Connection Issues,
+Packet Loss) and a click on a **top talker** (the busiest addresses by bytes), a
+protocol badge or a tag's x apply at once. Applied filters show as removable
+tags, and counters read "Showing X of Y issues" and "Showing X of Y flows". The
+health score and the root cause always describe the whole capture. An issue is
+tied to addresses and ports through its flow, target and event subjects, so an
+issue that names no address (a slow HTTP response known only by its domain) is
+hidden while an IP or port filter is on. The filters are kept in the address
+bar (`?source_ip=...&port=...&severity=ERROR,WARNING&category=DNS&protocol=TCP`),
+together with the ID of the analysis, which the server keeps in memory (the last
+8, for 2 hours): a refresh or a copied link shows the same view again, unless the
+server has restarted or the analysis has expired, in which case the page says so
+and keeps the filters.
+
+**Export Filtered** downloads the flows, issues and protocol distribution that
+pass the filters as CSV files in one zip, with the same tables as the CLI's
+`--export-csv`. Over HTTP:
+
+```bash
+# the answer of /api/analyze carries "analysis_id"
+curl -H "Authorization: Bearer $TOKEN" -o filtered.zip \
+  "http://localhost:8181/api/export-csv?analysis=$ID&source_ip=10.0.0.1&port=80,443&severity=ERROR,WARNING"
+# one table instead of the zip: add &file=flows, &file=issues or &file=protocols
+curl -H "Authorization: Bearer $TOKEN" http://localhost:8181/api/analysis/$ID   # the analysis again
+```
+
+`GET /api/export-csv` takes `analysis` (required) and the optional filters
+`source_ip`, `dest_ip`, `port`, `protocol`, `severity` and `category` (lists
+separated by commas); a malformed filter is a 400, an analysis the server no
+longer holds a 404. Without filters it exports everything, capture notes
+included, like the CLI; with filters the capture notes are left out, and the
+protocol table is worked out from the flows that are left. The web answer to
+`POST /api/analyze` also lists every flow (`flows`), which the page filters
+itself; the CLI's JSON does not.
+
 `--web` takes an address such as `:8181` or `127.0.0.1:8181`, cannot be
 combined with a capture file or with the analysis flags, and refuses to start if
 the port is taken. Pick a port that is free on your machine.
@@ -289,8 +338,8 @@ curl -F "file=@capture.pcapng" -H "Authorization: Bearer $TOKEN" http://localhos
 ```
 
 `POST /api/login` returns a signed JWT that is valid for 24 hours;
-`POST /api/analyze` and `POST /api/change-password` need it in an
-`Authorization: Bearer` header, and answer 401 without one. `POST /api/analyze`
+`POST /api/analyze`, `POST /api/change-password`, `GET /api/analysis/{id}` and
+`GET /api/export-csv` need it in an `Authorization: Bearer` header, and answer 401 without one. `POST /api/analyze`
 takes a multipart upload in the field `file` (`.pcap` or `.pcapng`, up to
 512 MiB) and answers with the JSON of `-o json`; errors come back as
 `{"error": "..."}` with status 400, 401, 413 or 500. New passwords need 6 to 72

@@ -1,4 +1,4 @@
-import type { ReactNode, TdHTMLAttributes, ThHTMLAttributes } from 'react'
+import type { HTMLAttributes, ReactNode, TdHTMLAttributes, ThHTMLAttributes } from 'react'
 
 /** The table primitives, styled like the admin template's data tables. */
 export function Table({ children }: { children: ReactNode }) {
@@ -13,7 +13,7 @@ export function TableBody({ children }: { children: ReactNode }) {
   return <tbody className="divide-y divide-gray-100 dark:divide-gray-800 dark:[&>tr:nth-child(even)]:bg-white/[0.02]">{children}</tbody>
 }
 
-export function TableRow({ children, className = '', ...rest }: { children: ReactNode; className?: string } & Record<`data-${string}`, string | undefined>) {
+export function TableRow({ children, className = '', ...rest }: HTMLAttributes<HTMLTableRowElement> & Record<`data-${string}`, string | undefined>) {
   return (
     <tr className={className} {...rest}>
       {children}

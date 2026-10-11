@@ -106,6 +106,10 @@ export interface AnalysisResult {
   slow_flows: Flow[]
   protocol_stats: ProtocolStat[]
   diagnosis: Diagnosis
+  /** Names this analysis on the server, which keeps it for a while: the page reloads it and exports from it. */
+  analysis_id?: string
+  /** Every flow, which the page filters and sums up itself. */
+  flows?: Flow[]
 }
 
 /** The answer for a capture that holds nothing to analyze. */

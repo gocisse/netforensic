@@ -86,18 +86,23 @@ func serve(ctx context.Context, ln net.Listener, handler http.Handler) error {
 type handler struct {
 	maxUploadBytes int64
 	auth           *auth.Service
+	analyses       *analysisStore
 }
 
 // newHandler returns the router: the static UI from assets at "/", the login
 // API (/api/login, /api/logout, /api/change-password) and the analysis API at
-// "/api/analyze", which needs a valid bearer token like /api/change-password.
+// "/api/analyze", which needs a valid bearer token like /api/change-password,
+// as do the endpoints that read the analyses it keeps: /api/analysis/{id} and
+// /api/export-csv.
 func newHandler(assets fs.FS, maxUpload int64, authSvc *auth.Service) http.Handler {
-	h := &handler{maxUploadBytes: maxUpload, auth: authSvc}
+	h := &handler{maxUploadBytes: maxUpload, auth: authSvc, analyses: newAnalysisStore()}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/login", h.login)
 	mux.HandleFunc("/api/logout", h.logout)
 	mux.HandleFunc("/api/change-password", h.requireAuth(h.changePassword))
 	mux.HandleFunc("/api/analyze", h.requireAuth(h.analyze))
+	mux.HandleFunc("/api/analysis/", h.requireAuth(h.getAnalysis))
+	mux.HandleFunc("/api/export-csv", h.requireAuth(h.exportCSV))
 	mux.Handle("/", staticHandler(assets))
 	return securityHeaders(mux)
 }
@@ -202,7 +207,31 @@ func (h *handler) analyze(w http.ResponseWriter, r *http.Request) {
 	res := analyzer.AnalyzeWithIssues(packets, "all", notes...)
 	res.FileName = name
 	res.Metadata = stats.Metadata
-	writeJSON(w, http.StatusOK, res)
+	res.AnalysisID = h.analyses.put(res)
+	writeJSON(w, http.StatusOK, analysisResponse{res, res.Flows})
+}
+
+// analysisResponse is the JSON of an analysis as the web UI gets it: the same
+// as `-o json`, plus every flow, which the page filters and sums up itself.
+type analysisResponse struct {
+	*models.AnalysisResult
+	Flows []models.Flow `json:"flows"`
+}
+
+// getAnalysis answers GET /api/analysis/{id} with an analysis the server still
+// holds, so that the page can show it again after a refresh.
+func (h *handler) getAnalysis(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.Header().Set("Allow", http.MethodGet)
+		writeError(w, http.StatusMethodNotAllowed, "use GET")
+		return
+	}
+	res, ok := h.analyses.get(strings.TrimPrefix(r.URL.Path, "/api/analysis/"))
+	if !ok {
+		writeError(w, http.StatusNotFound, "that analysis is no longer available; upload the capture again")
+		return
+	}
+	writeJSON(w, http.StatusOK, analysisResponse{res, res.Flows})
 }
 
 // receiveUpload copies the "file" part of the upload into a private
