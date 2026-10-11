@@ -38,9 +38,10 @@ type PacketInfo struct {
 	Protocol    Protocol  `json:"protocol"`
 	Size        int       `json:"size"`
 	PayloadSize int       `json:"payload_size"`
-	TCPSeq      uint32    `json:"tcp_seq,omitempty"`   // TCP sequence number; 0 for non-TCP
-	TCPFlags    string    `json:"tcp_flags,omitempty"` // e.g. "SYN", "PSH,ACK"; empty for non-TCP
-	TCPAck      uint32    `json:"tcp_ack,omitempty"`   // TCP acknowledgment number; 0 for non-TCP
+	TCPSeq      uint32    `json:"tcp_seq,omitempty"`    // TCP sequence number; 0 for non-TCP
+	TCPFlags    string    `json:"tcp_flags,omitempty"`  // e.g. "SYN", "PSH,ACK"; empty for non-TCP
+	TCPAck      uint32    `json:"tcp_ack,omitempty"`    // TCP acknowledgment number; 0 for non-TCP
+	TCPWindow   uint32    `json:"tcp_window,omitempty"` // advertised receive window as in the header (unscaled); packet sources must set it, since 0 means a zero window
 
 	// PayloadPreview holds the first bytes (at most 512) of the TCP or UDP
 	// payload for stream display. It is not serialized.

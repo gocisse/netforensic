@@ -34,7 +34,7 @@ func TestTruncatedCaptureIssue(t *testing.T) {
 }
 
 func TestAnalyzeWithIssues(t *testing.T) {
-	packets := []models.PacketInfo{{Timestamp: at(0), Protocol: models.ProtocolTCP}, {Timestamp: at(3), Protocol: models.ProtocolTCP}}
+	packets := []models.PacketInfo{{Timestamp: at(0), Protocol: models.ProtocolTCP, TCPWindow: 1}, {Timestamp: at(3), Protocol: models.ProtocolTCP, TCPWindow: 1}}
 
 	plain := Analyze(packets, "all")
 	assert.Empty(t, plain.Issues)

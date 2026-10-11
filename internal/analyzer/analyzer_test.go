@@ -50,7 +50,7 @@ func TestAnalyze(t *testing.T) {
 
 func TestAnalyzeRetransmitIssue(t *testing.T) {
 	t0 := time.Unix(1700000000, 0)
-	data := models.PacketInfo{Timestamp: t0, SrcIP: "10.0.0.1", SrcPort: 1000, DstIP: "10.0.0.2", DstPort: 80, Protocol: models.ProtocolTCP, Size: 100, PayloadSize: 10, TCPSeq: 500, TCPFlags: "PSH,ACK"}
+	data := models.PacketInfo{Timestamp: t0, SrcIP: "10.0.0.1", SrcPort: 1000, DstIP: "10.0.0.2", DstPort: 80, Protocol: models.ProtocolTCP, Size: 100, PayloadSize: 10, TCPSeq: 500, TCPFlags: "PSH,ACK", TCPWindow: 1000}
 	res := Analyze([]models.PacketInfo{data, data}, "all")
 	require.Len(t, res.Issues, 1)
 	assert.Equal(t, "PacketLoss", res.Issues[0].Category)

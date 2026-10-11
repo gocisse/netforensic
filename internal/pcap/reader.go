@@ -132,6 +132,7 @@ func packetInfo(pkt gopacket.Packet) (models.PacketInfo, bool) {
 		info.TCPSeq = t.Seq
 		info.TCPFlags = tcpFlags(t)
 		info.TCPAck = t.Ack
+		info.TCPWindow = uint32(t.Window)
 		fillHTTP(&info, t.Payload)
 		fillTLS(&info, t.Payload)
 	case pkt.Layer(layers.LayerTypeUDP) != nil:

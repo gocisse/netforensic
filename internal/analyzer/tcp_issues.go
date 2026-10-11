@@ -15,6 +15,9 @@ const (
 	titleAborted = "Connection Abruptly Closed"
 	titleIdle    = "Connection Idle Timeout"
 
+	titleZeroWindow      = "TCP Zero Window"
+	titleZeroWindowReset = "Connection reset after zero-window stall"
+
 	// idleResetGap is how long a connection must have been silent before an
 	// RST is read as an idle-timeout cleanup rather than a failure.
 	idleResetGap = 10 * time.Second
@@ -37,13 +40,19 @@ type connState struct {
 	firstRST   models.PacketInfo
 	rstFromCli bool
 
+	zeroWindows    int // packets advertising a zero receive window
+	firstZero      models.PacketInfo
+	zeroFromClient bool      // the client was the receiver that ran out of buffer
+	zeroReopened   time.Time // first window > 0 from the same receiver afterwards
+
 	firstReply    bool // the server's first packet after the SYN has been seen
 	refusedByRST  bool // ...and it was an RST
 	refusedAt     time.Time
 	refusedPacket models.PacketInfo
 }
 
-// analyzeResets classifies connections that saw a TCP RST:
+// analyzeConnections classifies connections that saw a TCP RST or a zero
+// receive window:
 //   - Connection Refused (warning): the client sent a SYN and the server's
 //     first reply was an RST, so no SYN-ACK was ever sent. Refusals are
 //     folded into one issue per server ip:port, since a closed port or a
@@ -55,7 +64,12 @@ type connState struct {
 //   - Connection Idle Timeout (info): the same, but the RST came more than
 //     10 seconds after the last payload in either direction, which looks
 //     like an idle-timeout cleanup rather than a failure.
-func analyzeResets(packets []models.PacketInfo) []models.Issue {
+//   - TCP Zero Window (warning): a receiver advertised a window of 0, so the
+//     sender had to stall until its buffer drained.
+//   - Connection reset after zero-window stall (error): a zero window
+//     followed by an RST on the same connection. It replaces the two issues
+//     above, whichever RST classification would have applied.
+func analyzeConnections(packets []models.PacketInfo) []models.Issue {
 	conns := make(map[instKey]*connState)
 	var order []instKey
 	insts := models.ConnectionInstances(packets)
@@ -81,7 +95,10 @@ func analyzeResets(packets []models.PacketInfo) []models.Issue {
 
 	for _, k := range order {
 		c := conns[k]
+		stalledThenReset := c.zeroWindows > 0 && c.rsts > 0 && !c.firstRST.Timestamp.Before(c.firstZero.Timestamp)
 		switch {
+		case stalledThenReset:
+			issues = append(issues, c.zeroWindowResetIssue())
 		case c.refusedByRST:
 			t := c.server.String()
 			if _, ok := refused[t]; !ok {
@@ -90,6 +107,9 @@ func analyzeResets(packets []models.PacketInfo) []models.Issue {
 			refused[t] = append(refused[t], c)
 		case c.rsts > 0 && c.established() && !(c.fin[0] && c.fin[1]):
 			issues = append(issues, c.abortedIssue())
+		}
+		if c.zeroWindows > 0 && !stalledThenReset {
+			issues = append(issues, c.zeroWindowIssue())
 		}
 	}
 	for _, t := range refusedOrder {
@@ -122,6 +142,19 @@ func (c *connState) observe(p models.PacketInfo) {
 			c.fin[0] = true
 		} else {
 			c.fin[1] = true
+		}
+	}
+	// A zero window announces that the sender's buffer is full. SYN, FIN
+	// and RST segments carry no meaningful window.
+	if !has("SYN") && !has("FIN") && !has("RST") {
+		switch {
+		case p.TCPWindow == 0:
+			c.zeroWindows++
+			if c.zeroWindows == 1 {
+				c.firstZero, c.zeroFromClient = p, fromClient
+			}
+		case c.zeroWindows > 0 && c.zeroReopened.IsZero() && fromClient == c.zeroFromClient:
+			c.zeroReopened = p.Timestamp
 		}
 	}
 	if p.PayloadSize > 0 {
@@ -235,4 +268,62 @@ func refusedIssue(target string, conns []*connState) models.Issue {
 		is.FlowID = conns[0].id
 	}
 	return is
+}
+
+// receiverSide names who ran out of buffer.
+func (c *connState) receiverSide() (endpoint, string) {
+	if c.zeroFromClient {
+		return c.client, "client"
+	}
+	return c.server, "server"
+}
+
+// zeroWindowIssue reports a zero-window stall that did not end in a reset.
+func (c *connState) zeroWindowIssue() models.Issue {
+	rx, role := c.receiverSide()
+	desc := fmt.Sprintf("Receiver buffer full, sender stalled: the %s (%s) advertised a zero window %d time(s) in flow %s, first at %s",
+		role, rx.ip, c.zeroWindows, c.id, c.firstZero.Timestamp.UTC().Format("15:04:05.000"))
+	if !c.zeroReopened.IsZero() {
+		desc += fmt.Sprintf("; the window reopened %s later", c.zeroReopened.Sub(c.firstZero.Timestamp).Round(time.Millisecond))
+	} else {
+		desc += "; it never reopened in the capture"
+	}
+	return models.Issue{
+		ID:          "zerowindow-" + c.id,
+		Severity:    models.SeverityWarning,
+		Category:    "Connection",
+		Title:       titleZeroWindow,
+		Description: desc,
+		Timestamp:   c.firstZero.Timestamp,
+		FlowID:      c.id,
+		Target:      c.server.String(),
+		Count:       c.zeroWindows,
+	}
+}
+
+// zeroWindowResetIssue reports a connection that was reset after its
+// receiver advertised a zero window.
+func (c *connState) zeroWindowResetIssue() models.Issue {
+	rx, role := c.receiverSide()
+	by, byRole := c.server, "server"
+	if c.rstFromCli {
+		by, byRole = c.client, "client"
+	}
+	desc := fmt.Sprintf("flow %s: the %s (%s) advertised a zero window %d time(s), first at %s; the %s (%s) reset the connection %s later at %s",
+		c.id, role, rx.ip, c.zeroWindows, c.firstZero.Timestamp.UTC().Format("15:04:05.000"),
+		byRole, by.ip, c.firstRST.Timestamp.Sub(c.firstZero.Timestamp).Round(time.Millisecond), c.firstRST.Timestamp.UTC().Format("15:04:05.000"))
+	if c.rsts > 1 {
+		desc += fmt.Sprintf("; %d RST packets in total", c.rsts)
+	}
+	return models.Issue{
+		ID:          "zerowindow-reset-" + c.id,
+		Severity:    models.SeverityError,
+		Category:    "Connection",
+		Title:       titleZeroWindowReset,
+		Description: desc,
+		Timestamp:   c.firstZero.Timestamp,
+		FlowID:      c.id,
+		Target:      c.server.String(),
+		Count:       c.zeroWindows,
+	}
 }

@@ -377,6 +377,12 @@ var categoryRecommendations = map[string][]string{
 	titleRefused: {
 		"Verify if the service is running on the target port, or if a firewall is actively rejecting connections with an RST instead of dropping them.",
 	},
+	titleZeroWindowReset: {
+		"The receiver's buffer filled up, causing the sender to stall, and the connection was eventually reset. Investigate receiver application processing speed or buffer sizing.",
+	},
+	titleZeroWindow: {
+		"The receiver's buffer filled up and the sender had to stall. Investigate receiver application processing speed (is it reading from the socket?) or buffer sizing.",
+	},
 	titleIdle: {
 		"Check the idle-timeout settings of firewalls, NAT gateways and load balancers on the path, and enable TCP keep-alives if long-idle connections are expected.",
 	},

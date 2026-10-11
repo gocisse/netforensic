@@ -396,3 +396,29 @@ func TestAnnotateHandshakesPerConnection(t *testing.T) {
 		assert.Equal(t, t0.Add(1040*time.Millisecond), p.TCPAckTime)
 	}
 }
+
+func TestReadPacketsTCPWindow(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "win.pcap")
+	buf := gopacket.NewSerializeBuffer()
+	ip := &layers.IPv4{Version: 4, IHL: 5, TTL: 64, Protocol: layers.IPProtocolTCP, SrcIP: net.IPv4(10, 0, 0, 1), DstIP: net.IPv4(10, 0, 0, 2)}
+	require.NoError(t, (&layers.TCP{}).SetNetworkLayerForChecksum(ip))
+	f, err := os.Create(path)
+	require.NoError(t, err)
+	w := pcapgo.NewWriter(f)
+	require.NoError(t, w.WriteFileHeader(65535, layers.LinkTypeEthernet))
+	for i, win := range []uint16{0, 29200} {
+		buf.Clear()
+		tcp := &layers.TCP{SrcPort: 1234, DstPort: 80, Seq: 1, ACK: true, Window: win}
+		require.NoError(t, tcp.SetNetworkLayerForChecksum(ip))
+		require.NoError(t, gopacket.SerializeLayers(buf, gopacket.SerializeOptions{FixLengths: true, ComputeChecksums: true},
+			&layers.Ethernet{SrcMAC: net.HardwareAddr{0, 1, 2, 3, 4, 5}, DstMAC: net.HardwareAddr{6, 7, 8, 9, 10, 11}, EthernetType: layers.EthernetTypeIPv4}, ip, tcp))
+		require.NoError(t, w.WritePacket(gopacket.CaptureInfo{Timestamp: time.Unix(int64(i+1), 0), CaptureLength: len(buf.Bytes()), Length: len(buf.Bytes())}, buf.Bytes()))
+	}
+	require.NoError(t, f.Close())
+
+	packets, err := ReadPackets(path)
+	require.NoError(t, err)
+	require.Len(t, packets, 2)
+	assert.Equal(t, uint32(0), packets[0].TCPWindow)
+	assert.Equal(t, uint32(29200), packets[1].TCPWindow)
+}

@@ -16,12 +16,12 @@ func at(sec float64) time.Time { return httpT0.Add(time.Duration(sec * float64(t
 
 func httpReq(sec float64, srcPort uint16, method, uri string) models.PacketInfo {
 	return models.PacketInfo{Timestamp: at(sec), SrcIP: "10.0.0.1", SrcPort: srcPort, DstIP: "10.0.0.2", DstPort: 80,
-		Protocol: models.ProtocolTCP, HTTPMethod: method, HTTPURI: uri}
+		Protocol: models.ProtocolTCP, TCPWindow: 65535, HTTPMethod: method, HTTPURI: uri}
 }
 
 func httpResp(sec float64, dstPort uint16, status int) models.PacketInfo {
 	return models.PacketInfo{Timestamp: at(sec), SrcIP: "10.0.0.2", SrcPort: 80, DstIP: "10.0.0.1", DstPort: dstPort,
-		Protocol: models.ProtocolTCP, HTTPStatusCode: status}
+		Protocol: models.ProtocolTCP, TCPWindow: 65535, HTTPStatusCode: status}
 }
 
 func TestAnalyzeHTTP(t *testing.T) {
@@ -85,7 +85,7 @@ func TestAnalyzeHTTPDescriptionNamesRequest(t *testing.T) {
 func TestAnalyzeIncludesHTTPAndTLSIssues(t *testing.T) {
 	packets := []models.PacketInfo{
 		httpReq(0, 1000, "GET", "/"), httpResp(0.1, 1000, 500),
-		{Timestamp: at(1), SrcIP: "1.1.1.1", SrcPort: 443, DstIP: "10.0.0.1", DstPort: 5000, Protocol: models.ProtocolTCP,
+		{Timestamp: at(1), SrcIP: "1.1.1.1", SrcPort: 443, DstIP: "10.0.0.1", DstPort: 5000, Protocol: models.ProtocolTCP, TCPWindow: 65535,
 			TLSHandshakeType: "Alert", TLSAlertLevel: "fatal", TLSAlertDescription: "handshake_failure"},
 	}
 	res := Analyze(packets, "all")

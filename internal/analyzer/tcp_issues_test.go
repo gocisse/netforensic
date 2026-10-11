@@ -16,7 +16,7 @@ var rstT0 = time.Unix(1700000000, 0)
 // tcpEv builds a TCP packet between client 10.0.0.1:<port> and server
 // 10.0.0.2:443. Payload is a length only.
 func tcpEv(ms int, port uint16, fromClient bool, flags string, payload int) models.PacketInfo {
-	p := models.PacketInfo{Timestamp: rstT0.Add(time.Duration(ms) * time.Millisecond), Protocol: models.ProtocolTCP, TCPFlags: flags, PayloadSize: payload, Size: 60 + payload, TCPSeq: uint32(ms) + 1}
+	p := models.PacketInfo{Timestamp: rstT0.Add(time.Duration(ms) * time.Millisecond), Protocol: models.ProtocolTCP, TCPFlags: flags, PayloadSize: payload, Size: 60 + payload, TCPSeq: uint32(ms) + 1, TCPWindow: 65535}
 	if fromClient {
 		p.SrcIP, p.SrcPort, p.DstIP, p.DstPort = "10.0.0.1", port, "10.0.0.2", 443
 	} else {
@@ -275,4 +275,126 @@ func TestResetAfterIdleIsInfoNotFailure(t *testing.T) {
 			DNSQueryName: "x.example", DNSResponseCode: "SERVFAIL"})
 		assert.Equal(t, "DNS SERVFAIL", Analyze(packets, "all").Diagnosis.PrimaryCause)
 	})
+}
+
+// zw returns a copy of p advertising window w.
+func zw(p models.PacketInfo, w uint32) models.PacketInfo {
+	p.TCPWindow = w
+	return p
+}
+
+func connectionIssues(res *models.AnalysisResult) []models.Issue {
+	var out []models.Issue
+	for _, is := range res.Issues {
+		if is.Category == "Connection" {
+			out = append(out, is)
+		}
+	}
+	return out
+}
+
+func established() []models.PacketInfo {
+	return []models.PacketInfo{
+		tcpEv(0, 5000, true, "SYN", 0), tcpEv(1, 5000, false, "SYN,ACK", 0), tcpEv(2, 5000, true, "ACK", 0),
+		tcpEv(3, 5000, false, "PSH,ACK", 1000),
+	}
+}
+
+func TestZeroWindowWarning(t *testing.T) {
+	packets := append(established(),
+		zw(tcpEv(10, 5000, true, "ACK", 0), 0),
+		zw(tcpEv(20, 5000, true, "ACK", 0), 0), // zero-window probe answer
+		tcpEv(30, 5000, false, "PSH,ACK", 500),
+	)
+	res := Analyze(packets, "all")
+	got := connectionIssues(res)
+	require.Len(t, got, 1)
+	is := got[0]
+	assert.Equal(t, titleZeroWindow, is.Title)
+	assert.Equal(t, models.SeverityWarning, is.Severity)
+	assert.Equal(t, 2, is.Count)
+	assert.Equal(t, rstT0.Add(10*time.Millisecond), is.Timestamp)
+	assert.Contains(t, is.Description, "Receiver buffer full, sender stalled")
+	assert.Contains(t, is.Description, "the client (10.0.0.1) advertised a zero window 2 time(s)")
+	assert.Contains(t, is.Description, "it never reopened in the capture")
+	assert.Equal(t, 90, res.Diagnosis.HealthScore)
+	assert.Equal(t, categoryRecommendations[titleZeroWindow], res.Diagnosis.Recommendations)
+}
+
+func TestZeroWindowReopens(t *testing.T) {
+	packets := append(established(),
+		zw(tcpEv(10, 5000, false, "ACK", 0), 0), // the server's buffer fills
+		tcpEv(25, 5000, true, "PSH,ACK", 10),    // the client's window is irrelevant
+		zw(tcpEv(40, 5000, false, "ACK", 0), 8192),
+	)
+	got := connectionIssues(Analyze(packets, "all"))
+	require.Len(t, got, 1)
+	assert.Contains(t, got[0].Description, "the server (10.0.0.2) advertised a zero window 1 time(s)")
+	assert.Contains(t, got[0].Description, "the window reopened 30ms later")
+}
+
+func TestZeroWindowThenResetIsOneError(t *testing.T) { // Lab-7 pattern
+	packets := append(established(),
+		zw(tcpEv(10, 5000, true, "ACK", 0), 0),
+		zw(tcpEv(900, 5000, true, "RST,ACK", 0), 0),
+		zw(tcpEv(901, 5000, false, "RST,ACK", 0), 0),
+	)
+	res := Analyze(packets, "all")
+	got := connectionIssues(res)
+	require.Len(t, got, 1, "the zero window and the RST merge into one issue")
+	is := got[0]
+	assert.Equal(t, titleZeroWindowReset, is.Title)
+	assert.Equal(t, models.SeverityError, is.Severity)
+	assert.Equal(t, rstT0.Add(10*time.Millisecond), is.Timestamp, "anchored at the stall")
+	assert.Contains(t, is.Description, "the client (10.0.0.1) advertised a zero window 1 time(s)")
+	assert.Contains(t, is.Description, "the client (10.0.0.1) reset the connection 890ms later")
+	assert.Contains(t, is.Description, "2 RST packets in total")
+	assert.Equal(t, 80, res.Diagnosis.HealthScore)
+	assert.Equal(t, titleZeroWindowReset, res.Diagnosis.PrimaryCause)
+	assert.Equal(t, []string{"The receiver's buffer filled up, causing the sender to stall, and the connection was eventually reset. Investigate receiver application processing speed or buffer sizing."},
+		res.Diagnosis.Recommendations)
+}
+
+func TestZeroWindowDetectionIgnoresNonStalls(t *testing.T) {
+	tests := []struct {
+		name    string
+		packets []models.PacketInfo
+	}{
+		{"RST segments always carry window 0", append(established(), zw(tcpEv(10, 5000, false, "RST,ACK", 0), 0))},
+		{"SYN window is not a stall", []models.PacketInfo{zw(tcpEv(0, 5000, true, "SYN", 0), 0)}},
+		{"FIN segment", append(established(), zw(tcpEv(10, 5000, true, "FIN,ACK", 0), 0))},
+		{"healthy windows", append(established(), zw(tcpEv(10, 5000, true, "ACK", 0), 512))},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			for _, is := range Analyze(tt.packets, "all").Issues {
+				assert.NotContains(t, is.Title, "Zero", is.Description)
+				assert.NotEqual(t, titleZeroWindow, is.Title)
+			}
+		})
+	}
+}
+
+func TestZeroWindowAfterResetIsNotCorrelated(t *testing.T) {
+	// the reset belongs to the first connection; the zero window to the next one
+	packets := append(established(), tcpEv(10, 5000, false, "RST", 0))
+	packets = append(packets,
+		tcpEv(20, 5000, true, "SYN", 0), tcpEv(21, 5000, false, "SYN,ACK", 0), tcpEv(22, 5000, true, "ACK", 0),
+		zw(tcpEv(23, 5000, true, "ACK", 0), 0))
+	var titles []string
+	for _, is := range connectionIssues(Analyze(packets, "all")) {
+		titles = append(titles, is.Title)
+	}
+	assert.ElementsMatch(t, []string{titleAborted, titleZeroWindow}, titles)
+}
+
+func TestZeroWindowRealLab7(t *testing.T) {
+	res := Analyze(readReal(t, "Lab-7-TCPIssues.pcapng"), "all")
+	got := connectionIssues(res)
+	require.Len(t, got, 1)
+	assert.Equal(t, titleZeroWindowReset, got[0].Title)
+	assert.Contains(t, got[0].Description, "the client (10.0.2.15) advertised a zero window 1 time(s)")
+	assert.Contains(t, got[0].Description, "3 RST packets in total")
+	assert.Equal(t, 80, res.Diagnosis.HealthScore)
+	assert.Equal(t, titleZeroWindowReset, res.Diagnosis.PrimaryCause)
 }
