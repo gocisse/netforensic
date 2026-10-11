@@ -42,8 +42,8 @@ export default function UploadCard({ file, loading, error, onSelect, onAnalyze }
         title="Capture file"
         description={
           <>
-            Choose a <code className="rounded bg-gray-100 px-1 text-theme-xs">.pcap</code> or{' '}
-            <code className="rounded bg-gray-100 px-1 text-theme-xs">.pcapng</code> file to analyze.
+            Choose a <code className="rounded bg-gray-100 dark:bg-gray-800 px-1 text-theme-xs">.pcap</code> or{' '}
+            <code className="rounded bg-gray-100 dark:bg-gray-800 px-1 text-theme-xs">.pcapng</code> file to analyze.
           </>
         }
       />
@@ -57,25 +57,25 @@ export default function UploadCard({ file, loading, error, onSelect, onAnalyze }
           onDragLeave={() => setDragging(false)}
           onDrop={handleDrop}
           className={`flex cursor-pointer flex-col items-center justify-center rounded-xl border border-dashed px-6 py-10 text-center transition-colors ${
-            dragging ? 'border-brand-500 bg-gray-100' : 'border-gray-300 bg-gray-50 hover:border-brand-500'
+            dragging ? 'border-brand-500 bg-gray-100 dark:bg-gray-800' : 'border-gray-300 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/60 hover:border-brand-500'
           } ${loading ? 'pointer-events-none opacity-60' : ''}`}
         >
           {file ? (
             <>
-              <span className="mb-3 flex h-14 w-14 items-center justify-center rounded-full bg-brand-50 text-brand-500">
+              <span className="mb-3 flex h-14 w-14 items-center justify-center rounded-full bg-brand-50 dark:bg-brand-500/15 text-brand-500">
                 <FileIcon className="h-7 w-7" />
               </span>
-              <span className="text-theme-sm font-semibold text-gray-800">{file.name}</span>
-              <span className="mt-1 text-theme-xs text-gray-500">{formatSize(file.size)}</span>
+              <span className="text-theme-sm font-semibold text-gray-800 dark:text-white/90">{file.name}</span>
+              <span className="mt-1 text-theme-xs text-gray-500 dark:text-gray-400">{formatSize(file.size)}</span>
               <span className="mt-3 text-theme-xs font-medium text-brand-500">Click or drop to choose a different file</span>
             </>
           ) : (
             <>
-              <span className="mb-3 flex h-14 w-14 items-center justify-center rounded-full bg-gray-200 text-gray-600">
+              <span className="mb-3 flex h-14 w-14 items-center justify-center rounded-full bg-gray-200 dark:bg-gray-700 text-gray-600 dark:text-gray-400">
                 <UploadIcon className="h-7 w-7" />
               </span>
-              <span className="text-theme-sm font-semibold text-gray-800">Click to choose a file, or drag one here</span>
-              <span className="mt-1 text-theme-xs text-gray-500">Accepted: .pcap, .pcapng</span>
+              <span className="text-theme-sm font-semibold text-gray-800 dark:text-white/90">Click to choose a file, or drag one here</span>
+              <span className="mt-1 text-theme-xs text-gray-500 dark:text-gray-400">Accepted: .pcap, .pcapng</span>
             </>
           )}
           <input

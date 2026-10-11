@@ -16,7 +16,7 @@ export default function FlowTable({ title, flows, emptyMessage, testId }: Props)
     <Card data-testid={testId}>
       <CardHeader title={title} />
       {flows.length === 0 ? (
-        <p className="border-t border-gray-100 px-5 py-4 text-theme-sm text-gray-500 sm:px-6">{emptyMessage}</p>
+        <p className="border-t border-gray-100 dark:border-gray-800 px-5 py-4 text-theme-sm text-gray-500 dark:text-gray-400 sm:px-6">{emptyMessage}</p>
       ) : (
         <div className="overflow-x-auto">
           <Table>
@@ -36,7 +36,7 @@ export default function FlowTable({ title, flows, emptyMessage, testId }: Props)
             <TableBody>
               {flows.map((f) => (
                 <TableRow key={f.id} data-testid="flow-row">
-                  <TableCell className="max-w-xs truncate font-mono text-theme-xs text-gray-800" title={f.id}>
+                  <TableCell className="max-w-xs truncate font-mono text-theme-xs text-gray-800 dark:text-white/90" title={f.id}>
                     {f.id}
                   </TableCell>
                   <TableCell className="whitespace-nowrap">

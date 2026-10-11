@@ -18,9 +18,9 @@ export interface Tone {
 export function healthTone(score: number): Tone {
   const label =
     score >= 90 ? 'Healthy' : score >= 70 ? 'Degraded' : score >= 40 ? 'Unhealthy' : score >= 0 ? 'Critical' : 'Catastrophic'
-  if (score >= 80) return { label, text: 'text-success-600', ring: 'border-success-200', bg: 'bg-success-25', bar: 'bg-success-500' }
-  if (score >= 40) return { label, text: 'text-warning-600', ring: 'border-warning-200', bg: 'bg-warning-25', bar: 'bg-warning-500' }
-  return { label, text: 'text-error-600', ring: 'border-error-200', bg: 'bg-error-25', bar: 'bg-error-500' }
+  if (score >= 80) return { label, text: 'text-success-600 dark:text-success-400', ring: 'border-success-200 dark:border-success-500/40', bg: 'bg-success-25 dark:bg-success-500/10', bar: 'bg-success-500' }
+  if (score >= 40) return { label, text: 'text-warning-600 dark:text-warning-400', ring: 'border-warning-200 dark:border-warning-500/40', bg: 'bg-warning-25 dark:bg-warning-500/10', bar: 'bg-warning-500' }
+  return { label, text: 'text-error-600 dark:text-error-400', ring: 'border-error-200 dark:border-error-500/40', bg: 'bg-error-25 dark:bg-error-500/10', bar: 'bg-error-500' }
 }
 
 const SEVERITY_RANK: Record<Severity, number> = { CRITICAL: 3, ERROR: 2, WARNING: 1, INFO: 0 }
@@ -112,21 +112,21 @@ export function formatMs(ms: number): string {
 export function protocolColor(protocol: string): { dot: string; bar: string; badge: string } {
   switch (protocol) {
     case 'TCP':
-      return { dot: 'bg-brand-500', bar: 'bg-brand-500', badge: 'bg-brand-50 text-brand-600' }
+      return { dot: 'bg-brand-500', bar: 'bg-brand-500', badge: 'bg-brand-50 dark:bg-brand-500/15 text-brand-600 dark:text-brand-400' }
     case 'UDP':
-      return { dot: 'bg-blue-light-500', bar: 'bg-blue-light-500', badge: 'bg-blue-light-50 text-blue-light-700' }
+      return { dot: 'bg-blue-light-500', bar: 'bg-blue-light-500', badge: 'bg-blue-light-50 dark:bg-blue-light-500/15 text-blue-light-700 dark:text-blue-light-400' }
     case 'ICMP':
-      return { dot: 'bg-warning-500', bar: 'bg-warning-500', badge: 'bg-warning-50 text-warning-700' }
+      return { dot: 'bg-warning-500', bar: 'bg-warning-500', badge: 'bg-warning-50 dark:bg-warning-500/15 text-warning-700 dark:text-warning-400' }
     case 'ARP':
-      return { dot: 'bg-success-500', bar: 'bg-success-500', badge: 'bg-success-50 text-success-700' }
+      return { dot: 'bg-success-500', bar: 'bg-success-500', badge: 'bg-success-50 dark:bg-success-500/15 text-success-700 dark:text-success-400' }
     case 'DNS':
-      return { dot: 'bg-violet-500', bar: 'bg-violet-500', badge: 'bg-violet-50 text-violet-700' }
+      return { dot: 'bg-violet-500', bar: 'bg-violet-500', badge: 'bg-violet-50 dark:bg-violet-500/15 text-violet-700 dark:text-violet-400' }
     case 'HTTP':
-      return { dot: 'bg-pink-500', bar: 'bg-pink-500', badge: 'bg-pink-50 text-pink-700' }
+      return { dot: 'bg-pink-500', bar: 'bg-pink-500', badge: 'bg-pink-50 dark:bg-pink-500/15 text-pink-700 dark:text-pink-400' }
     case 'TLS':
-      return { dot: 'bg-teal-500', bar: 'bg-teal-500', badge: 'bg-teal-50 text-teal-700' }
+      return { dot: 'bg-teal-500', bar: 'bg-teal-500', badge: 'bg-teal-50 dark:bg-teal-500/15 text-teal-700 dark:text-teal-400' }
     default:
-      return { dot: 'bg-gray-400', bar: 'bg-gray-400', badge: 'bg-gray-100 text-gray-700' }
+      return { dot: 'bg-gray-400', bar: 'bg-gray-400', badge: 'bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-300' }
   }
 }
 

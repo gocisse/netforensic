@@ -4,6 +4,8 @@
 // (https://github.com/TailAdmin/free-react-tailwind-admin-dashboard, MIT; see
 // THIRD_PARTY_NOTICES.md), ported from its Tailwind v4 theme to this v3 setup.
 export default {
+  // The theme toggle adds or removes the `dark` class on <html>.
+  darkMode: 'class',
   content: ['./index.html', './src/**/*.{js,ts,jsx,tsx}'],
   theme: {
     extend: {

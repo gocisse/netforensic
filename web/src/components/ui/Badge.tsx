@@ -3,15 +3,15 @@ import type { ReactNode } from 'react'
 export type BadgeColor = 'primary' | 'success' | 'error' | 'warning' | 'info' | 'light' | 'purple' | 'pink' | 'teal'
 
 const light: Record<BadgeColor, string> = {
-  primary: 'bg-brand-50 text-brand-600',
-  success: 'bg-success-50 text-success-700',
-  error: 'bg-error-50 text-error-700',
-  warning: 'bg-warning-50 text-warning-700',
-  info: 'bg-blue-light-50 text-blue-light-700',
-  light: 'bg-gray-100 text-gray-700',
-  purple: 'bg-violet-50 text-violet-700',
-  pink: 'bg-pink-50 text-pink-700',
-  teal: 'bg-teal-50 text-teal-700',
+  primary: 'bg-brand-50 dark:bg-brand-500/15 text-brand-600 dark:text-brand-400',
+  success: 'bg-success-50 dark:bg-success-500/15 text-success-700 dark:text-success-400',
+  error: 'bg-error-50 dark:bg-error-500/15 text-error-700 dark:text-error-400',
+  warning: 'bg-warning-50 dark:bg-warning-500/15 text-warning-700 dark:text-warning-400',
+  info: 'bg-blue-light-50 dark:bg-blue-light-500/15 text-blue-light-700 dark:text-blue-light-400',
+  light: 'bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-300',
+  purple: 'bg-violet-50 dark:bg-violet-500/15 text-violet-700 dark:text-violet-400',
+  pink: 'bg-pink-50 dark:bg-pink-500/15 text-pink-700 dark:text-pink-400',
+  teal: 'bg-teal-50 dark:bg-teal-500/15 text-teal-700 dark:text-teal-400',
 }
 
 const solid: Record<BadgeColor, string> = {

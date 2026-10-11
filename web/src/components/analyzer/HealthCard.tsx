@@ -16,27 +16,27 @@ export default function HealthCard({ diagnosis }: { diagnosis: Diagnosis }) {
           role="img"
           aria-label={`Health score ${diagnosis.health_score} out of 100, ${tone.label}`}
         >
-          <span className="text-sm text-gray-500">Health score</span>
+          <span className="text-sm text-gray-500 dark:text-gray-400">Health score</span>
           <div className="mt-1 flex items-baseline justify-center gap-1">
             <span data-testid="health-score" className={`text-title-md font-bold ${tone.text}`}>
               {diagnosis.health_score}
             </span>
             <span className="text-sm text-gray-400">/100</span>
           </div>
-          <span className={`mt-1 inline-block rounded-full bg-white px-2.5 py-0.5 text-theme-xs font-semibold uppercase tracking-wide ${tone.text}`}>
+          <span className={`mt-1 inline-block rounded-full bg-white dark:bg-gray-900 px-2.5 py-0.5 text-theme-xs font-semibold uppercase tracking-wide ${tone.text}`}>
             {tone.label}
           </span>
         </div>
 
         <div className="min-w-0 flex-1 basis-60">
-          <p className="text-theme-xs font-semibold uppercase tracking-wide text-gray-500">Primary cause</p>
-          <p data-testid="primary-cause" className="mt-1 text-lg font-semibold text-gray-800">
+          <p className="text-theme-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">Primary cause</p>
+          <p data-testid="primary-cause" className="mt-1 text-lg font-semibold text-gray-800 dark:text-white/90">
             {diagnosis.primary_cause}
           </p>
-          <p className="mt-1 text-theme-sm text-gray-600">
+          <p className="mt-1 text-theme-sm text-gray-600 dark:text-gray-400">
             Confidence: <span className="font-medium">{diagnosis.confidence}</span>
           </p>
-          <p className="mt-2 text-theme-sm text-gray-500">{diagnosis.summary}</p>
+          <p className="mt-2 text-theme-sm text-gray-500 dark:text-gray-400">{diagnosis.summary}</p>
         </div>
       </div>
     </div>

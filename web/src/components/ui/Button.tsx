@@ -15,8 +15,8 @@ interface Props extends ButtonHTMLAttributes<HTMLButtonElement> {
 const variants: Record<Variant, string> = {
   primary: 'bg-brand-500 text-white shadow-theme-xs hover:bg-brand-600 disabled:bg-brand-300',
   outline:
-    'bg-white text-gray-700 ring-1 ring-inset ring-gray-300 shadow-theme-xs hover:bg-gray-50 hover:text-gray-800 disabled:opacity-50',
-  ghost: 'text-gray-600 hover:bg-gray-100 hover:text-gray-800 disabled:opacity-50',
+    'bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-300 ring-1 ring-inset ring-gray-300 dark:ring-gray-700 shadow-theme-xs hover:bg-gray-50 dark:hover:bg-gray-800/60 hover:text-gray-800 dark:hover:text-white/90 disabled:opacity-50',
+  ghost: 'text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800 hover:text-gray-800 dark:hover:text-white/90 disabled:opacity-50',
 }
 
 const sizes: Record<Size, string> = {

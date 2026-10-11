@@ -4,10 +4,10 @@ import { AlertIcon, CheckCircleIcon, ErrorIcon, InfoIcon } from '../../icons'
 export type AlertVariant = 'success' | 'error' | 'warning' | 'info'
 
 const styles: Record<AlertVariant, { box: string; icon: string }> = {
-  success: { box: 'border-success-500 bg-success-50', icon: 'text-success-500' },
-  error: { box: 'border-error-500 bg-error-50', icon: 'text-error-500' },
-  warning: { box: 'border-warning-500 bg-warning-50', icon: 'text-warning-500' },
-  info: { box: 'border-blue-light-500 bg-blue-light-50', icon: 'text-blue-light-500' },
+  success: { box: 'border-success-500 bg-success-50 dark:bg-success-500/15', icon: 'text-success-500' },
+  error: { box: 'border-error-500 bg-error-50 dark:bg-error-500/15', icon: 'text-error-500' },
+  warning: { box: 'border-warning-500 bg-warning-50 dark:bg-warning-500/15', icon: 'text-warning-500' },
+  info: { box: 'border-blue-light-500 bg-blue-light-50 dark:bg-blue-light-500/15', icon: 'text-blue-light-500' },
 }
 
 const icons = { success: CheckCircleIcon, error: ErrorIcon, warning: AlertIcon, info: InfoIcon }
@@ -30,8 +30,8 @@ export default function Alert({ variant, title, children, role = 'status', class
       <div className="flex items-start gap-3">
         <Icon className={`-mt-0.5 h-6 w-6 flex-none ${styles[variant].icon}`} />
         <div className="min-w-0">
-          {title && <h4 className="mb-1 text-sm font-semibold text-gray-800">{title}</h4>}
-          <div className="text-sm text-gray-600">{children}</div>
+          {title && <h4 className="mb-1 text-sm font-semibold text-gray-800 dark:text-white/90">{title}</h4>}
+          <div className="text-sm text-gray-600 dark:text-gray-400">{children}</div>
         </div>
       </div>
     </div>

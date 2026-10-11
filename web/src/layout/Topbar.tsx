@@ -1,4 +1,5 @@
-import { CloseIcon, MenuIcon } from '../icons'
+import { CloseIcon, MenuIcon, MoonIcon, SunIcon } from '../icons'
+import { useTheme } from '../hooks/useTheme'
 import Logo from '../components/Logo'
 import UserMenu from '../components/UserMenu'
 
@@ -12,8 +13,10 @@ interface Props {
 
 /** The top bar: the sidebar toggle on the left and the user menu on the right. */
 export default function Topbar({ username, mobileOpen, onToggleSidebar, onChangePassword, onLogout }: Props) {
+  const { theme, toggleTheme } = useTheme()
+  const dark = theme === 'dark'
   return (
-    <header className="sticky top-0 z-40 flex w-full border-b border-gray-200 bg-white">
+    <header className="sticky top-0 z-40 flex w-full border-b border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900">
       <div className="flex w-full items-center justify-between gap-3 px-4 py-3 md:px-6">
         <div className="flex items-center gap-3">
           <button
@@ -22,7 +25,7 @@ export default function Topbar({ username, mobileOpen, onToggleSidebar, onChange
             aria-label={mobileOpen ? 'Close the sidebar' : 'Open the sidebar'}
             aria-expanded={mobileOpen}
             data-testid="sidebar-toggle"
-            className="flex h-10 w-10 items-center justify-center rounded-lg border border-gray-200 text-gray-500 hover:bg-gray-100"
+            className="flex h-10 w-10 items-center justify-center rounded-lg border border-gray-200 dark:border-gray-800 text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800"
           >
             {mobileOpen && <CloseIcon className="h-5 w-5 xl:hidden" />}
             <MenuIcon className={mobileOpen ? 'hidden h-5 w-5 xl:block' : 'h-5 w-5'} />
@@ -31,7 +34,20 @@ export default function Topbar({ username, mobileOpen, onToggleSidebar, onChange
             <Logo />
           </div>
         </div>
-        <UserMenu username={username} onChangePassword={onChangePassword} onLogout={onLogout} />
+        <div className="flex items-center gap-3">
+          <button
+            type="button"
+            onClick={toggleTheme}
+            aria-label={dark ? 'Switch to light mode' : 'Switch to dark mode'}
+            title={dark ? 'Switch to light mode' : 'Switch to dark mode'}
+            data-testid="theme-toggle"
+            data-theme={theme}
+            className="flex h-10 w-10 items-center justify-center rounded-full border border-gray-200 dark:border-gray-800 text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800 hover:text-gray-700 dark:hover:text-gray-300"
+          >
+            {dark ? <SunIcon className="h-5 w-5" /> : <MoonIcon className="h-5 w-5" />}
+          </button>
+          <UserMenu username={username} onChangePassword={onChangePassword} onLogout={onLogout} />
+        </div>
       </div>
     </header>
   )

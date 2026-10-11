@@ -6,11 +6,11 @@ export function Table({ children }: { children: ReactNode }) {
 }
 
 export function TableHeader({ children }: { children: ReactNode }) {
-  return <thead className="border-y border-gray-100 bg-gray-50">{children}</thead>
+  return <thead className="border-y border-gray-100 dark:border-gray-800 bg-gray-50 dark:bg-gray-800/60">{children}</thead>
 }
 
 export function TableBody({ children }: { children: ReactNode }) {
-  return <tbody className="divide-y divide-gray-100">{children}</tbody>
+  return <tbody className="divide-y divide-gray-100 dark:divide-gray-800 dark:[&>tr:nth-child(even)]:bg-white/[0.02]">{children}</tbody>
 }
 
 export function TableRow({ children, className = '', ...rest }: { children: ReactNode; className?: string } & Record<`data-${string}`, string | undefined>) {
@@ -24,7 +24,7 @@ export function TableRow({ children, className = '', ...rest }: { children: Reac
 /** A header cell. */
 export function TableHead({ children, className = '', ...rest }: ThHTMLAttributes<HTMLTableCellElement>) {
   return (
-    <th className={`px-4 py-3 text-theme-xs font-medium uppercase tracking-wide text-gray-500 ${className}`} {...rest}>
+    <th className={`px-4 py-3 text-theme-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400 ${className}`} {...rest}>
       {children}
     </th>
   )
@@ -33,7 +33,7 @@ export function TableHead({ children, className = '', ...rest }: ThHTMLAttribute
 /** A body cell. */
 export function TableCell({ children, className = '', ...rest }: TdHTMLAttributes<HTMLTableCellElement>) {
   return (
-    <td className={`px-4 py-3 text-theme-sm text-gray-600 ${className}`} {...rest}>
+    <td className={`px-4 py-3 text-theme-sm text-gray-600 dark:text-gray-400 ${className}`} {...rest}>
       {children}
     </td>
   )

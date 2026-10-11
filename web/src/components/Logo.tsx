@@ -6,7 +6,7 @@ export default function Logo({ size = 'md', showName = true }: { size?: 'md' | '
       <div aria-hidden="true" className={`flex ${box} flex-none items-center justify-center rounded-xl bg-brand-500 font-bold text-white shadow-theme-xs`}>
         NF
       </div>
-      {showName && <span className={`${size === 'lg' ? 'text-theme-xl' : 'text-lg'} font-semibold tracking-tight text-gray-800`}>Netforensic</span>}
+      {showName && <span className={`${size === 'lg' ? 'text-theme-xl' : 'text-lg'} font-semibold tracking-tight text-gray-800 dark:text-white/90`}>Netforensic</span>}
     </div>
   )
 }

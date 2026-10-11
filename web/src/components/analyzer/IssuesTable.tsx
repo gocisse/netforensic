@@ -44,7 +44,7 @@ export default function IssuesTable({ issues, filter }: Props) {
 
   if (rows.length === 0) {
     return (
-      <p className="text-theme-sm text-gray-500" data-testid="no-issues">
+      <p className="text-theme-sm text-gray-500 dark:text-gray-400" data-testid="no-issues">
         {filter === 'All' ? 'No issues were found in this capture.' : `No ${filter} issues were found in this capture.`}
       </p>
     )
@@ -71,7 +71,7 @@ export default function IssuesTable({ issues, filter }: Props) {
           type="button"
           onClick={() => toggleSort(key)}
           aria-label={`Sort issues by ${label}`}
-          className="inline-flex items-center gap-1 font-medium uppercase tracking-wide hover:text-gray-800"
+          className="inline-flex items-center gap-1 font-medium uppercase tracking-wide hover:text-gray-800 dark:hover:text-white/90"
         >
           {label}
           <span aria-hidden="true" className="w-2 text-[10px]">
@@ -101,28 +101,28 @@ export default function IssuesTable({ issues, filter }: Props) {
               const expanded = open.has(issue.id) && occurrences.length > 0
               return (
                 <Fragment key={issue.id}>
-                  <TableRow data-testid="issue-row" className="align-top hover:bg-gray-50/60">
+                  <TableRow data-testid="issue-row" className="align-top hover:bg-gray-50/60 dark:hover:bg-white/[0.03]">
                     <TableCell className="whitespace-nowrap">
                       <Badge color={severityColor(issue.severity)}>{issue.severity}</Badge>
                     </TableCell>
-                    <TableCell className="whitespace-nowrap text-theme-xs font-medium uppercase tracking-wide text-gray-500">
+                    <TableCell className="whitespace-nowrap text-theme-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400">
                       {issue.category}
                     </TableCell>
                     <TableCell className="min-w-72 max-w-xl">
                       <div className="flex flex-wrap items-center gap-2">
-                        <span className="font-medium text-gray-800">{issue.title}</span>
+                        <span className="font-medium text-gray-800 dark:text-white/90">{issue.title}</span>
                         {(issue.protocols ?? []).map((p) => (
                           <span key={p} className={`rounded px-1.5 py-0.5 text-[11px] font-medium ${protocolColor(p).badge}`}>
                             {p}
                           </span>
                         ))}
                       </div>
-                      <p className="mt-1 line-clamp-2 text-theme-xs text-gray-500" title={issue.description}>
+                      <p className="mt-1 line-clamp-2 text-theme-xs text-gray-500 dark:text-gray-400" title={issue.description}>
                         {issue.description}
                       </p>
                     </TableCell>
                     <TableCell className="whitespace-nowrap text-right tabular-nums">
-                      {(issue.count ?? 1) > 1 ? <span className="rounded-full bg-gray-100 px-2 py-0.5 text-theme-xs text-gray-600">×{issue.count}</span> : ''}
+                      {(issue.count ?? 1) > 1 ? <span className="rounded-full bg-gray-100 dark:bg-gray-800 px-2 py-0.5 text-theme-xs text-gray-600 dark:text-gray-400">×{issue.count}</span> : ''}
                     </TableCell>
                     <TableCell className="whitespace-nowrap text-right">
                       {occurrences.length > 0 && (
@@ -140,7 +140,7 @@ export default function IssuesTable({ issues, filter }: Props) {
                   </TableRow>
                   {expanded && (
                     <TableRow data-testid="issue-details">
-                      <TableCell colSpan={5} className="bg-gray-50/60 pb-4 pt-0">
+                      <TableCell colSpan={5} className="bg-gray-50/60 dark:bg-white/[0.03] pb-4 pt-0">
                         <OccurrenceTable issue={issue} occurrences={occurrences} />
                       </TableCell>
                     </TableRow>
@@ -152,8 +152,8 @@ export default function IssuesTable({ issues, filter }: Props) {
         </Table>
       </div>
       {rows.length > TOP_ISSUES && (
-        <div className="border-t border-gray-100 px-4 py-3">
-          <button type="button" onClick={() => setShowAll((v) => !v)} className="text-theme-sm font-medium text-brand-500 hover:text-brand-600">
+        <div className="border-t border-gray-100 dark:border-gray-800 px-4 py-3">
+          <button type="button" onClick={() => setShowAll((v) => !v)} className="text-theme-sm font-medium text-brand-500 hover:text-brand-600 dark:hover:text-brand-400">
             {showAll ? `Show the top ${TOP_ISSUES} only` : `Show all ${rows.length} issues`}
           </button>
         </div>

@@ -29,10 +29,10 @@ function Item({ icon: Icon, label, collapsed, active = false, onClick }: ItemPro
         aria-current={active ? 'page' : undefined}
         title={collapsed ? label : undefined}
         className={`group flex w-full items-center gap-3 rounded-lg px-3 py-2 text-theme-sm font-medium transition ${
-          active ? 'bg-brand-50 text-brand-500' : 'text-gray-700 hover:bg-gray-100 hover:text-gray-700'
+          active ? 'bg-brand-50 dark:bg-brand-500/15 text-brand-500' : 'text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800 hover:text-gray-700 dark:hover:text-gray-300'
         } ${collapsed ? 'xl:justify-center xl:px-0' : ''}`}
       >
-        <Icon className={`h-6 w-6 flex-none ${active ? 'text-brand-500' : 'text-gray-500 group-hover:text-gray-700'}`} />
+        <Icon className={`h-6 w-6 flex-none ${active ? 'text-brand-500' : 'text-gray-500 dark:text-gray-400 group-hover:text-gray-700 dark:group-hover:text-gray-300'}`} />
         <span className={collapsed ? 'xl:hidden' : ''}>{label}</span>
       </button>
     </li>
@@ -60,7 +60,7 @@ export default function Sidebar({ collapsed, mobileOpen, onChangePassword, onLog
     <aside
       data-testid="sidebar"
       aria-label="Sidebar"
-      className={`fixed left-0 top-0 z-50 flex h-screen w-72.5 flex-col border-r border-gray-200 bg-white px-5 transition-all duration-300 ease-in-out xl:translate-x-0 ${
+      className={`fixed left-0 top-0 z-50 flex h-screen w-72.5 flex-col border-r border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900 px-5 transition-all duration-300 ease-in-out xl:translate-x-0 ${
         mobileOpen ? 'translate-x-0' : '-translate-x-full'
       } ${collapsed ? 'xl:w-22.5' : 'xl:w-72.5'}`}
     >

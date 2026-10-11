@@ -42,14 +42,14 @@ function Report({ result }: { result: AnalysisResult }) {
             </span>
           }
           icon={<PacketsIcon className="h-6 w-6" />}
-          iconTone="bg-brand-50 text-brand-500"
+          iconTone="bg-brand-50 dark:bg-brand-500/15 text-brand-500"
         />
         <StatCard
           label="Flows"
           value={result.total_flows.toLocaleString()}
           hint={`${reportable.length.toLocaleString()} ${reportable.length === 1 ? 'issue' : 'issues'} found`}
           icon={<FlowsIcon className="h-6 w-6" />}
-          iconTone="bg-blue-light-50 text-blue-light-500"
+          iconTone="bg-blue-light-50 dark:bg-blue-light-500/15 text-blue-light-500"
         />
       </div>
 
@@ -66,13 +66,13 @@ function Report({ result }: { result: AnalysisResult }) {
             ) : undefined
           }
           action={
-            <label className="flex items-center gap-2 text-theme-sm font-medium text-gray-700">
+            <label className="flex items-center gap-2 text-theme-sm font-medium text-gray-700 dark:text-gray-300">
               Protocol filter
               <select
                 data-testid="protocol-filter"
                 value={protocol}
                 onChange={(e) => setProtocol(e.target.value)}
-                className="h-10 rounded-lg border border-gray-300 bg-white px-3 text-theme-sm shadow-theme-xs focus:border-brand-300 focus:outline-hidden focus:ring-3 focus:ring-brand-500/10"
+                className="h-10 rounded-lg border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 px-3 text-theme-sm shadow-theme-xs focus:border-brand-300 dark:focus:border-brand-500/60 focus:outline-hidden focus:ring-3 focus:ring-brand-500/10"
               >
                 {PROTOCOL_FILTERS.map((p) => (
                   <option key={p} value={p}>
@@ -83,7 +83,7 @@ function Report({ result }: { result: AnalysisResult }) {
             </label>
           }
         />
-        <div className="border-t border-gray-100 p-2 sm:p-3">
+        <div className="border-t border-gray-100 dark:border-gray-800 p-2 sm:p-3">
           <IssuesTable key={protocol} issues={issues} filter={protocol} />
         </div>
       </Card>
@@ -108,7 +108,7 @@ function Report({ result }: { result: AnalysisResult }) {
       {d.recommendations.length > 0 && (
         <Card>
           <CardHeader title="Recommendations" />
-          <ol className="list-decimal space-y-2 border-t border-gray-100 p-5 pl-10 text-theme-sm text-gray-600 sm:p-6 sm:pl-11">
+          <ol className="list-decimal space-y-2 border-t border-gray-100 dark:border-gray-800 p-5 pl-10 text-theme-sm text-gray-600 dark:text-gray-400 sm:p-6 sm:pl-11">
             {d.recommendations.map((r) => (
               <li key={r}>{r}</li>
             ))}
@@ -126,8 +126,8 @@ function NothingToAnalyze({ result }: { result: EmptyResult }) {
       <CaptureAlerts issues={result.issues} />
       <Card>
         <div className="px-6 py-10 text-center">
-          <p className="text-base font-medium text-gray-800">{result.message}</p>
-          <p className="mt-1 text-theme-sm text-gray-500">There is nothing to score, so no health score is shown.</p>
+          <p className="text-base font-medium text-gray-800 dark:text-white/90">{result.message}</p>
+          <p className="mt-1 text-theme-sm text-gray-500 dark:text-gray-400">There is nothing to score, so no health score is shown.</p>
         </div>
       </Card>
     </div>
@@ -138,7 +138,7 @@ function ResultsArea({ loading, result }: { loading: boolean; result: ApiResult 
   if (loading) {
     return (
       <Card>
-        <p aria-live="polite" className="px-6 py-12 text-center text-theme-sm text-gray-600">
+        <p aria-live="polite" className="px-6 py-12 text-center text-theme-sm text-gray-600 dark:text-gray-400">
           Analyzing capture…
         </p>
       </Card>
@@ -148,15 +148,15 @@ function ResultsArea({ loading, result }: { loading: boolean; result: ApiResult 
     return (
       <Card>
         <div aria-live="polite" className="px-6 py-12 text-center">
-          <p className="text-base font-medium text-gray-800">Upload a capture to begin analysis</p>
-          <p className="mt-1 text-theme-sm text-gray-500">The health score, root cause and issues will appear here.</p>
+          <p className="text-base font-medium text-gray-800 dark:text-white/90">Upload a capture to begin analysis</p>
+          <p className="mt-1 text-theme-sm text-gray-500 dark:text-gray-400">The health score, root cause and issues will appear here.</p>
         </div>
       </Card>
     )
   }
   return (
     <div className="space-y-4" aria-live="polite">
-      <h2 className="truncate text-lg font-semibold text-gray-800" title={result.file_name}>
+      <h2 className="truncate text-lg font-semibold text-gray-800 dark:text-white/90" title={result.file_name}>
         {result.file_name}
       </h2>
       {isEmptyResult(result) ? <NothingToAnalyze result={result} /> : <Report key={result.analysis_time} result={result} />}
@@ -210,8 +210,8 @@ export default function Analyzer() {
   return (
     <>
       <div>
-        <h1 className="text-title-sm font-semibold text-gray-800">Analyzer</h1>
-        <p className="mt-1 text-theme-sm text-gray-500">Upload a packet capture to find out what went wrong on the network.</p>
+        <h1 className="text-title-sm font-semibold text-gray-800 dark:text-white/90">Analyzer</h1>
+        <p className="mt-1 text-theme-sm text-gray-500 dark:text-gray-400">Upload a packet capture to find out what went wrong on the network.</p>
       </div>
       <UploadCard file={file} loading={isLoading} error={error} onSelect={handleSelect} onAnalyze={handleAnalyze} />
       <ResultsArea loading={isLoading} result={result} />

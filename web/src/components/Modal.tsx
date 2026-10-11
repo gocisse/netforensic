@@ -31,16 +31,16 @@ export default function Modal({ title, onClose, children }: Props) {
         if (e.target === e.currentTarget) onClose()
       }}
     >
-      <div ref={dialog} role="dialog" aria-modal="true" aria-label={title} className="relative w-full max-w-md rounded-2xl bg-white p-6 shadow-theme-xl sm:p-8">
+      <div ref={dialog} role="dialog" aria-modal="true" aria-label={title} className="relative w-full max-w-md rounded-2xl bg-white dark:bg-gray-900 p-6 shadow-theme-xl sm:p-8">
         <button
           type="button"
           onClick={onClose}
           aria-label="Close"
-          className="absolute right-4 top-4 flex h-9 w-9 items-center justify-center rounded-full text-gray-400 hover:bg-gray-100 hover:text-gray-700"
+          className="absolute right-4 top-4 flex h-9 w-9 items-center justify-center rounded-full text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800 hover:text-gray-700 dark:hover:text-gray-300"
         >
           <CloseIcon className="h-5 w-5" />
         </button>
-        <h2 className="text-lg font-semibold text-gray-800">{title}</h2>
+        <h2 className="text-lg font-semibold text-gray-800 dark:text-white/90">{title}</h2>
         {children}
       </div>
     </div>

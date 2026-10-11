@@ -19,7 +19,7 @@ export default function ForcedPasswordChange() {
         </>
       }
       footer={
-        <button type="button" onClick={logout} className="font-medium text-gray-500 hover:text-gray-800">
+        <button type="button" onClick={logout} className="font-medium text-gray-500 dark:text-gray-400 hover:text-gray-800 dark:hover:text-white/90">
           Sign out
         </button>
       }

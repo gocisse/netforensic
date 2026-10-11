@@ -9,7 +9,7 @@ interface CardProps {
 /** A white panel with a border and a soft shadow. */
 export function Card({ children, className = '', ...rest }: CardProps) {
   return (
-    <section data-testid={rest['data-testid']} className={`rounded-2xl border border-gray-200 bg-white shadow-theme-xs ${className}`}>
+    <section data-testid={rest['data-testid']} className={`rounded-2xl border border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900 shadow-theme-xs ${className}`}>
       {children}
     </section>
   )
@@ -26,8 +26,8 @@ export function CardHeader({ title, description, action }: HeaderProps) {
   return (
     <div className="flex flex-wrap items-start justify-between gap-3 px-5 py-4 sm:px-6 sm:py-5">
       <div className="min-w-0">
-        <h3 className="text-base font-medium text-gray-800">{title}</h3>
-        {description && <p className="mt-1 text-sm text-gray-500">{description}</p>}
+        <h3 className="text-base font-medium text-gray-800 dark:text-white/90">{title}</h3>
+        {description && <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">{description}</p>}
       </div>
       {action}
     </div>
@@ -36,5 +36,5 @@ export function CardHeader({ title, description, action }: HeaderProps) {
 
 /** The padded body of a card. */
 export function CardBody({ children, className = '' }: { children: ReactNode; className?: string }) {
-  return <div className={`border-t border-gray-100 p-5 sm:p-6 ${className}`}>{children}</div>
+  return <div className={`border-t border-gray-100 dark:border-gray-800 p-5 sm:p-6 ${className}`}>{children}</div>
 }
