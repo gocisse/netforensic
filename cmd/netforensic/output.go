@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"io"
+	"sort"
 	"strconv"
 	"text/tabwriter"
 
@@ -39,4 +40,63 @@ func formatEndpoint(ip string, port uint16) string {
 		return ip
 	}
 	return fmt.Sprintf("%s:%d", ip, port)
+}
+
+// issueGroup is a set of issues sharing severity, category and title.
+type issueGroup struct {
+	severity models.Severity
+	category string
+	title    string
+	count    int
+}
+
+// groupIssues folds issues into groups, most severe first, then most
+// numerous, then alphabetically.
+func groupIssues(issues []models.Issue) []issueGroup {
+	type key struct {
+		sev        models.Severity
+		cat, title string
+	}
+	index := make(map[key]int)
+	var groups []issueGroup
+	for _, is := range issues {
+		k := key{is.Severity, is.Category, is.Title}
+		i, ok := index[k]
+		if !ok {
+			i = len(groups)
+			index[k] = i
+			groups = append(groups, issueGroup{is.Severity, is.Category, is.Title, 0})
+		}
+		groups[i].count++
+	}
+	rank := map[models.Severity]int{models.SeverityCritical: 3, models.SeverityError: 2, models.SeverityWarning: 1}
+	sort.SliceStable(groups, func(i, j int) bool {
+		a, b := groups[i], groups[j]
+		switch {
+		case rank[a.severity] != rank[b.severity]:
+			return rank[a.severity] > rank[b.severity]
+		case a.count != b.count:
+			return a.count > b.count
+		case a.category != b.category:
+			return a.category < b.category
+		}
+		return a.title < b.title
+	})
+	return groups
+}
+
+// printIssueSummary prints issues compactly, one line per kind of issue:
+// "22x [WARNING] DNS: DNS NXDOMAIN". The full detail is in the triage
+// report's timeline and in the JSON output.
+func printIssueSummary(w io.Writer, issues []models.Issue) {
+	groups := groupIssues(issues)
+	width := 0
+	for _, g := range groups {
+		if n := len(strconv.Itoa(g.count)); n > width {
+			width = n
+		}
+	}
+	for _, g := range groups {
+		fmt.Fprintf(w, "  %*dx [%s] %s: %s\n", width, g.count, g.severity, g.category, g.title)
+	}
 }

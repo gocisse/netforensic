@@ -146,9 +146,7 @@ func newRootCmd() *cobra.Command {
 			}
 			fmt.Fprintf(cmd.OutOrStdout(), "Analyzed %d packets in %d flows, found %d issues in %s\n",
 				res.TotalPackets, res.TotalFlows, len(res.Issues), res.Duration)
-			for _, is := range res.Issues {
-				fmt.Fprintf(cmd.OutOrStdout(), "  [%s] %s: %s\n", is.Severity, is.Category, is.Title)
-			}
+			printIssueSummary(cmd.OutOrStdout(), res.Issues)
 			return nil
 		},
 	}
