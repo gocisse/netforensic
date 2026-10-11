@@ -301,3 +301,31 @@ func TestAnalyzeAnnotatesRealIssues(t *testing.T) {
 	assert.Equal(t, []string{"DNS", "UDP"}, protocols["DNS NXDOMAIN"])
 	assert.Equal(t, []string{"TCP"}, protocols[titleRefused])
 }
+
+func TestProtocolStatsNamedIPProtocols(t *testing.T) {
+	ip := func(ms int, proto models.Protocol, dst string) models.PacketInfo {
+		return models.PacketInfo{Timestamp: protoT0.Add(time.Duration(ms) * time.Millisecond), Protocol: proto, SrcIP: "10.0.0.1", DstIP: dst, Size: 80}
+	}
+	pk := []models.PacketInfo{
+		ip(0, "OSPF", "224.0.0.5"), ip(1, "OSPF", "224.0.0.5"),
+		ip(2, "VRRP", "224.0.0.18"),
+		ip(3, "", "10.0.9.9"), // an IP protocol with no known name
+	}
+	res := Analyze(pk, "all")
+
+	tests := []struct {
+		name           string
+		packets, flows int
+	}{
+		{"OSPF", 2, 1},
+		{"VRRP", 1, 1},
+		{"Other", 1, 1},
+	}
+	for _, tt := range tests {
+		s, ok := statByName(res.ProtocolStats, tt.name)
+		require.True(t, ok, tt.name)
+		assert.Equal(t, "transport", s.Layer, tt.name)
+		assert.Equal(t, tt.packets, s.Packets, tt.name)
+		assert.Equal(t, tt.flows, s.Flows, tt.name)
+	}
+}

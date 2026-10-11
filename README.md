@@ -184,9 +184,10 @@ Vite dev server proxies `/api` to `localhost:8181`. After changing the UI, run
   traffic is aggregated by the outer IP addresses and the inner ports. Full
   tunnel decapsulation is planned for a future release.
   (`The-Ultimate-PCAP.pcapng`, for example, reports about three times the
-  retransmissions that Wireshark does.) Additionally, IP packets with protocol
-  numbers the tool does not decode (e.g., SCTP, OSPF) are counted as "Other" in
-  the protocol distribution and are not analyzed for issues.
+  retransmissions that Wireshark does.) Additionally, IP packets with protocols
+  the tool does not decode are not analyzed for issues. Well-known ones (OSPF,
+  VRRP, PIM, IGMP, SCTP, ESP, GRE, ...) are listed under their own name in the
+  protocol distribution; any other IP protocol is counted as "Other".
 - **One-sided (asymmetric) captures.** A capture point that sees only one
   direction of a conversation (asymmetric routing, a SPAN port on one link)
   cannot show replies. Such SYNs are reported as "Unanswered SYN (No reply

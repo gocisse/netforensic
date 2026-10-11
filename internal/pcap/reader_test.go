@@ -512,3 +512,27 @@ func TestReadStatsDescribe(t *testing.T) {
 		ReadStats{SkippedNonIP: 7, SkippedUnsupportedLink: 7, UnsupportedLinkTypes: map[int]int{250: 2, 18: 5}}.Describe())
 	assert.Equal(t, 9, ReadStats{SkippedNonIP: 7, SkippedUnsupportedLink: 2}.Skipped())
 }
+
+func TestReadPacketsNamesUndecodedIPProtocols(t *testing.T) {
+	path := filepath.Join("testdata", "ip_protocols.pcap")
+	raw := func(proto layers.IPProtocol) []byte {
+		return serialize(t, proto, net.IP{10, 0, 0, 1}, net.IP{10, 0, 0, 2}, gopacket.Payload([]byte{1, 2, 3, 4}), nil)
+	}
+	writePCAP(t, path, [][]byte{
+		raw(layers.IPProtocolOSPF),
+		raw(layers.IPProtocolSCTP),
+		raw(layers.IPProtocolVRRP),
+		raw(layers.IPProtocolESP),
+		raw(layers.IPProtocol(253)), // experimental: not a known name
+		serialize(t, layers.IPProtocolUDP, clientIP, serverIP, &layers.UDP{SrcPort: 1, DstPort: 2}, nil),
+	})
+
+	got, err := ReadPackets(path)
+	require.NoError(t, err)
+
+	want := []models.Protocol{"OSPF", "SCTP", "VRRP", "ESP", "", models.ProtocolUDP}
+	require.Len(t, got, len(want))
+	for i, p := range got {
+		assert.Equal(t, want[i], p.Protocol, "packet %d", i)
+	}
+}

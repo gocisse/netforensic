@@ -180,13 +180,16 @@ func packetInfo(pkt gopacket.Packet) (models.PacketInfo, bool) {
 		return info, true
 	}
 
+	var ipProto uint8
 	switch {
 	case pkt.Layer(layers.LayerTypeIPv4) != nil:
 		ip := pkt.Layer(layers.LayerTypeIPv4).(*layers.IPv4)
 		info.SrcIP, info.DstIP = ip.SrcIP.String(), ip.DstIP.String()
+		ipProto = uint8(ip.Protocol)
 	case pkt.Layer(layers.LayerTypeIPv6) != nil:
 		ip := pkt.Layer(layers.LayerTypeIPv6).(*layers.IPv6)
 		info.SrcIP, info.DstIP = ip.SrcIP.String(), ip.DstIP.String()
+		ipProto = uint8(ip.NextHeader)
 	default:
 		return info, false
 	}
@@ -218,6 +221,10 @@ func packetInfo(pkt gopacket.Packet) (models.PacketInfo, bool) {
 		fillICMPOriginal(&info, ic.Payload)
 	case pkt.Layer(layers.LayerTypeICMPv6) != nil:
 		info.Protocol = models.ProtocolICMP
+	default:
+		// An IP protocol the tool does not analyze: keep its name, if it is a
+		// well-known one, so it is not lumped into "Other".
+		info.Protocol = models.IPProtocolName(ipProto)
 	}
 	if l := pkt.Layer(layers.LayerTypeDNS); l != nil {
 		fillDNS(&info, l.(*layers.DNS))

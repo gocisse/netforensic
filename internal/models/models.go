@@ -17,6 +17,28 @@ const (
 	ProtocolARP  Protocol = "ARP"
 )
 
+// ipProtocolNames names the IP protocols that the tool does not analyze but
+// can recognize by their protocol number, so that they show up under their
+// own name instead of as "Other".
+var ipProtocolNames = map[uint8]Protocol{
+	2:   "IGMP",
+	4:   "IP-in-IP",
+	47:  "GRE",
+	50:  "ESP",
+	51:  "AH",
+	88:  "EIGRP",
+	89:  "OSPF",
+	103: "PIM",
+	112: "VRRP",
+	115: "L2TP",
+	132: "SCTP",
+}
+
+// IPProtocolName returns the name of the IP protocol number n if it is one of
+// the well-known protocols the tool recognizes but does not analyze, or ""
+// otherwise.
+func IPProtocolName(n uint8) Protocol { return ipProtocolNames[n] }
+
 // Severity represents the severity level of a detected issue.
 type Severity string
 
