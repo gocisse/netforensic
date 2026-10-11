@@ -227,3 +227,54 @@ func TestRootCmdShowsPcapngMetadata(t *testing.T) {
 	assert.NotContains(t, run(sample), "Captured with")
 	assert.NotContains(t, run("-o", "json", sample), `"metadata"`)
 }
+
+func TestPrintSIPFlows(t *testing.T) {
+	sip := func(id string, packets int, methods, ua, callID string) models.Flow {
+		return models.Flow{ID: id, AppProtocol: "SIP", PacketCount: packets, SIPMethod: methods, SIPUserAgent: ua, SIPCallID: callID}
+	}
+
+	t.Run("nothing without SIP flows", func(t *testing.T) {
+		var buf bytes.Buffer
+		require.NoError(t, printSIPFlows(&buf, []models.Flow{{ID: "a", AppProtocol: "DNS"}, {ID: "b"}}))
+		assert.Empty(t, buf.String())
+		require.NoError(t, printSIPFlows(&buf, nil))
+		assert.Empty(t, buf.String())
+	})
+
+	t.Run("lists the busiest SIP flows with their details", func(t *testing.T) {
+		var buf bytes.Buffer
+		require.NoError(t, printSIPFlows(&buf, []models.Flow{
+			{ID: "10.0.0.5:53-10.0.0.6:53", AppProtocol: "DNS", PacketCount: 999},
+			sip("10.0.0.1:5060-10.0.0.2:5060", 4, "REGISTER", "Yealink T46", "reg-1"),
+			sip("10.0.0.3:5060-10.0.0.4:5060", 20, "INVITE,ACK,BYE", "", "call-9"),
+		}))
+		out := buf.String()
+		assert.Contains(t, out, "SIP FLOWS (2)")
+		assert.Regexp(t, `FLOW\s+PACKETS\s+METHODS\s+USER-AGENT\s+CALL-ID`, out)
+		assert.Regexp(t, `10\.0\.0\.3:5060-10\.0\.0\.4:5060\s+20\s+INVITE,ACK,BYE\s+-\s+call-9`, out)
+		assert.Regexp(t, `10\.0\.0\.1:5060-10\.0\.0\.2:5060\s+4\s+REGISTER\s+Yealink T46\s+reg-1`, out)
+		assert.Less(t, strings.Index(out, "10.0.0.3"), strings.Index(out, "10.0.0.1"), "busiest first")
+		assert.NotContains(t, out, "10.0.0.5", "other protocols are not listed")
+	})
+
+	t.Run("at most five are shown, the rest counted", func(t *testing.T) {
+		var flows []models.Flow
+		for i := 0; i < 8; i++ {
+			flows = append(flows, sip(fmt.Sprintf("10.0.0.%d:5060-10.0.1.1:5060", i), 10+i, "OPTIONS", "ua", "c"))
+		}
+		var buf bytes.Buffer
+		require.NoError(t, printSIPFlows(&buf, flows))
+		assert.Contains(t, buf.String(), "SIP FLOWS (8)")
+		assert.Contains(t, buf.String(), "... and 3 more")
+		assert.Equal(t, 5, strings.Count(buf.String(), "OPTIONS"))
+	})
+
+	t.Run("the report puts them before the recommendations", func(t *testing.T) {
+		res := &models.AnalysisResult{Flows: []models.Flow{sip("10.0.0.1:5060-10.0.0.2:5060", 4, "OPTIONS", "ua", "c")}}
+		var buf bytes.Buffer
+		require.NoError(t, printTriageReport(&buf, res))
+		out := buf.String()
+		assert.Less(t, strings.Index(out, "TOP SLOW FLOWS"), strings.Index(out, "SIP FLOWS"))
+		assert.Less(t, strings.Index(out, "SIP FLOWS"), strings.Index(out, "RECOMMENDATIONS"))
+	})
+}

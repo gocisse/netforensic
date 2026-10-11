@@ -56,8 +56,12 @@ export interface Flow {
   protocol: string
   /** Set when the flow was decapsulated from a tunnel: "KIND:outer~outer". */
   tunnel?: string
-  /** DNS, HTTP or TLS, if recognized in the flow. */
+  /** DNS, HTTP, TLS or SIP, if recognized in the flow. */
   app_protocol?: string
+  /** SIP flows: the request methods seen (comma-separated), the first Call-ID and the first User-Agent. */
+  sip_method?: string
+  sip_call_id?: string
+  sip_user_agent?: string
   start_time: string
   end_time: string
   packet_count: number

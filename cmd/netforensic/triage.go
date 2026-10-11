@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"io"
+	"sort"
 	"strings"
 	"text/tabwriter"
 
@@ -55,6 +56,10 @@ func printTriageReport(w io.Writer, res *models.AnalysisResult) error {
 		if err := tw.Flush(); err != nil {
 			return err
 		}
+	}
+
+	if err := printSIPFlows(w, res.Flows); err != nil {
+		return err
 	}
 
 	fmt.Fprintln(w, "\nRECOMMENDATIONS")
@@ -146,4 +151,52 @@ func describeInterface(ifc models.InterfaceInfo) string {
 		details = append(details, "filter: "+ifc.Filter)
 	}
 	return fmt.Sprintf("%s (%s)", name, strings.Join(details, ", "))
+}
+
+// maxSIPFlowsShown is how many SIP flows the report lists.
+const maxSIPFlowsShown = 5
+
+// printSIPFlows lists the busiest flows that carry SIP, with the request
+// methods, the User-Agent and the Call-ID of their first message. It prints
+// nothing if there are none.
+func printSIPFlows(w io.Writer, flows []models.Flow) error {
+	var sip []models.Flow
+	for _, f := range flows {
+		if f.AppProtocol == string(models.ProtocolSIP) {
+			sip = append(sip, f)
+		}
+	}
+	if len(sip) == 0 {
+		return nil
+	}
+	sort.SliceStable(sip, func(i, j int) bool {
+		if sip[i].PacketCount != sip[j].PacketCount {
+			return sip[i].PacketCount > sip[j].PacketCount
+		}
+		return sip[i].ID < sip[j].ID
+	})
+	fmt.Fprintf(w, "\nSIP FLOWS (%d)\n", len(sip))
+	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(tw, "  FLOW\tPACKETS\tMETHODS\tUSER-AGENT\tCALL-ID")
+	for i, f := range sip {
+		if i == maxSIPFlowsShown {
+			break
+		}
+		fmt.Fprintf(tw, "  %s\t%d\t%s\t%s\t%s\n", f.ID, f.PacketCount, dash(f.SIPMethod), dash(f.SIPUserAgent), dash(f.SIPCallID))
+	}
+	if err := tw.Flush(); err != nil {
+		return err
+	}
+	if len(sip) > maxSIPFlowsShown {
+		fmt.Fprintf(w, "  ... and %d more\n", len(sip)-maxSIPFlowsShown)
+	}
+	return nil
+}
+
+// dash returns s, or "-" if it is empty.
+func dash(s string) string {
+	if s == "" {
+		return "-"
+	}
+	return s
 }

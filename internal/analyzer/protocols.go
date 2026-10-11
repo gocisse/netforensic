@@ -16,7 +16,8 @@ const topFlowsPerProtocol = 5
 // flowClass is what is known about the protocols of one flow.
 type flowClass struct {
 	transport models.Protocol // TCP, UDP, ICMP, ARP, or "" for other IP protocols
-	app       models.Protocol // DNS, HTTP or TLS if recognized in the flow, else ""
+	app       models.Protocol // DNS, HTTP, TLS or SIP if recognized in the flow, else ""
+	sipPort   bool            // a packet used a well-known SIP port (5060, 5061)
 }
 
 // transportName is the transport protocol as shown to users.
@@ -41,8 +42,12 @@ func (c *flowClass) primary() string {
 //
 // The application protocol comes from the content: a flow is DNS if any of
 // its packets carries a DNS message, TLS if any carries a TLS record, HTTP if
-// any carries an HTTP request or response. If several apply, DNS beats TLS
-// beats HTTP (a CONNECT tunnel starts as HTTP and carries TLS).
+// any carries an HTTP request or response, SIP if any carries a SIP request
+// or response. If several apply, DNS beats TLS beats HTTP (a CONNECT tunnel
+// starts as HTTP and carries TLS). A flow that never showed a SIP message but
+// uses a well-known SIP port (5060, 5061) and was recognized as nothing else
+// is taken for SIP too: a TCP flow's ACKs and segment fragments carry no
+// message, and port 5061 usually carries TLS, which wins.
 func classifyFlows(packets []models.PacketInfo) (map[string]*flowClass, []*flowClass) {
 	classes := make(map[string]*flowClass)
 	perPacket := make([]*flowClass, len(packets))
@@ -65,9 +70,33 @@ func classifyFlows(packets []models.PacketInfo) (map[string]*flowClass, []*flowC
 			c.app = models.ProtocolTLS
 		case (p.HTTPMethod != "" || p.HTTPStatusCode != 0) && c.app == "":
 			c.app = models.ProtocolHTTP
+		case (p.SIPMethod != "" || p.SIPStatusCode != 0) && c.app != models.ProtocolDNS:
+			c.app = models.ProtocolSIP
+		}
+		if isSIPPort(p) {
+			c.sipPort = true
+		}
+	}
+	for _, c := range classes {
+		if c.app == "" && c.sipPort {
+			c.app = models.ProtocolSIP
 		}
 	}
 	return classes, perPacket
+}
+
+// sipPorts are the well-known SIP ports: 5060 (plain) and 5061 (TLS).
+const (
+	sipPort    = 5060
+	sipTLSPort = 5061
+)
+
+// isSIPPort reports whether p is TCP or UDP traffic to or from a SIP port.
+func isSIPPort(p models.PacketInfo) bool {
+	if p.Protocol != models.ProtocolTCP && p.Protocol != models.ProtocolUDP {
+		return false
+	}
+	return p.SrcPort == sipPort || p.DstPort == sipPort || p.SrcPort == sipTLSPort || p.DstPort == sipTLSPort
 }
 
 // protocolStats computes the traffic composition: packets, flows and share of
@@ -218,6 +247,8 @@ func protocolsOf(is *models.Issue, subject string, classes map[string]*flowClass
 		return string(models.ProtocolHTTP), []string{string(models.ProtocolHTTP), string(models.ProtocolTCP)}
 	case "TLS":
 		return string(models.ProtocolTLS), []string{string(models.ProtocolTLS), string(models.ProtocolTCP)}
+	case "SIP":
+		return string(models.ProtocolSIP), []string{string(models.ProtocolSIP)}
 	}
 	return "", nil
 }

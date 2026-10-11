@@ -76,6 +76,29 @@ under `metadata` (`capture_tool`, `os`, `hardware`, `interfaces`); classic pcap
 files have none, and fields the file leaves out are omitted. The text comes
 from the file, so control characters are replaced and long values are cut.
 
+**SIP (VoIP)**: SIP over UDP or TCP is recognized by its content (a request
+line such as `INVITE sip:bob@example.com SIP/2.0`, or a `SIP/2.0 200 OK` status
+line, on any port) and by the well-known ports 5060 and 5061, and appears as an
+application protocol next to DNS, HTTP and TLS in the protocol distribution
+(a TLS handshake on 5061 is still TLS). Requests are matched to their responses
+by Call-ID and CSeq, and the report points out:
+
+| Issue | Meaning |
+|---|---|
+| `SIP Registration Failed` (warning) | `REGISTER` requests that got a 4xx, 5xx or 6xx response, one issue per User-Agent (or per client address if it sends none), with the status codes received. |
+| `SIP Call Setup Failed` (warning) | `INVITE` requests that got an error response, one issue per server, naming the Call-ID of a single failure. |
+| `High SIP Error Rate` (warning) | A flow on which more than 10% of the answered requests failed (at least 10 requests), folded into one issue. |
+
+401 and 407 are the ordinary authentication challenge and are not counted as
+failures (a failure after the retry is), nor is 487 after the caller cancelled,
+nor are 3xx redirects. Retransmitted requests count once, `ACK` is ignored, and
+a request with no response in the capture is not counted. A SIP flow carries
+its request methods, first Call-ID and User-Agent (`sip_method`, `sip_call_id`,
+`sip_user_agent` in the JSON; a "SIP FLOWS" table in the report). Only the first
+message of a packet is read, and a message that IP fragmentation split across
+packets (a large INVITE with SDP can exceed the MTU) is not reassembled, so
+that request is not seen.
+
 **Verbose packet table** (`-v`): print every packet that is analyzed before the
 summary.
 

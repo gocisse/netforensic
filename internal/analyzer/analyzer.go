@@ -45,6 +45,7 @@ func AnalyzeWithIssues(packets []models.PacketInfo, service string, extra ...mod
 	issues = append(issues, analyzeDNS(packets)...)
 	issues = append(issues, analyzeHTTP(packets)...)
 	issues = append(issues, analyzeTLS(packets)...)
+	issues = append(issues, analyzeSIP(packets)...)
 	issues = append(issues, analyzeICMP(packets)...)
 	issues = append(issues, analyzeARP(packets)...)
 	issues = append(issues, analyzeConnections(packets)...)
@@ -255,6 +256,7 @@ func aggregateFlows(packets []models.PacketInfo) []models.Flow {
 		}
 
 		f.PacketCount++
+		noteSIP(f, p)
 		if forward {
 			f.BytesSent += p.Size
 		} else {
@@ -346,4 +348,24 @@ func topTalkers(flows []models.Flow, n int) []models.Flow {
 		sorted = sorted[:n]
 	}
 	return sorted
+}
+
+// noteSIP adds the SIP details of p, if it carries any, to flow f: each
+// request method once, and the first Call-ID and User-Agent.
+func noteSIP(f *models.Flow, p models.PacketInfo) {
+	if p.SIPMethod == "" && p.SIPStatusCode == 0 {
+		return
+	}
+	if m := p.SIPMethod; m != "" && !strings.Contains(","+f.SIPMethod+",", ","+m+",") {
+		if f.SIPMethod != "" {
+			f.SIPMethod += ","
+		}
+		f.SIPMethod += m
+	}
+	if f.SIPCallID == "" {
+		f.SIPCallID = p.SIPCallID
+	}
+	if f.SIPUserAgent == "" {
+		f.SIPUserAgent = p.SIPUserAgent
+	}
 }

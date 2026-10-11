@@ -293,11 +293,13 @@ func packetInfo(pkt gopacket.Packet) (models.PacketInfo, bool) {
 		info.TCPWindow = uint32(t.Window)
 		fillHTTP(&info, t.Payload)
 		fillTLS(&info, t.Payload)
+		fillSIP(&info, t.Payload)
 	case *layers.UDP:
 		info.Protocol = models.ProtocolUDP
 		info.SrcPort, info.DstPort = uint16(t.SrcPort), uint16(t.DstPort)
 		info.PayloadSize = len(t.Payload)
 		info.PayloadPreview = previewPayload(t.Payload)
+		fillSIP(&info, t.Payload)
 	case *layers.ICMPv4:
 		info.Protocol = models.ProtocolICMP
 		info.ICMPType, info.ICMPCode = t.TypeCode.Type(), t.TypeCode.Code()

@@ -36,8 +36,15 @@ export default function FlowTable({ title, flows, emptyMessage, testId }: Props)
             <TableBody>
               {flows.map((f) => (
                 <TableRow key={f.id} data-testid="flow-row">
-                  <TableCell className="max-w-xs truncate font-mono text-theme-xs text-gray-800 dark:text-white/90" title={f.id}>
-                    {f.id}
+                  <TableCell className="max-w-xs text-gray-800 dark:text-white/90">
+                    <div className="truncate font-mono text-theme-xs" title={f.id}>
+                      {f.id}
+                    </div>
+                    {f.app_protocol === 'SIP' && (
+                      <div className="truncate text-theme-xs text-gray-500 dark:text-gray-400" title={f.sip_call_id} data-testid="sip-details">
+                        {[f.sip_method, f.sip_user_agent].filter(Boolean).join(' · ')}
+                      </div>
+                    )}
                   </TableCell>
                   <TableCell className="whitespace-nowrap">
                     <span className={`rounded px-1.5 py-0.5 text-theme-xs font-medium ${protocolColor(f.protocol).badge}`}>{f.protocol || 'Other'}</span>

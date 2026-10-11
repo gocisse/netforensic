@@ -18,6 +18,7 @@ const (
 	ProtocolHTTP Protocol = "HTTP"
 	ProtocolTLS  Protocol = "TLS"
 	ProtocolARP  Protocol = "ARP"
+	ProtocolSIP  Protocol = "SIP"
 )
 
 // ipProtocolNames names the IP protocols that the tool does not analyze but
@@ -141,6 +142,23 @@ type PacketInfo struct {
 	TLSVersion          string `json:"tls_version,omitempty"`
 	TLSAlertLevel       string `json:"tls_alert_level,omitempty"`       // "warning" or "fatal"
 	TLSAlertDescription string `json:"tls_alert_description,omitempty"` // e.g. "handshake_failure"
+
+	// SIP fields are set on TCP and UDP packets whose payload starts with a
+	// SIP request line or status line. A request has SIPMethod and SIPURI; a
+	// response has SIPStatusCode and SIPReason. SIPMethod != "" ||
+	// SIPStatusCode != 0 identifies SIP packets.
+	SIPVersion    string `json:"sip_version,omitempty"`     // "SIP/2.0"
+	SIPMethod     string `json:"sip_method,omitempty"`      // INVITE, REGISTER, ...; requests only
+	SIPURI        string `json:"sip_uri,omitempty"`         // request URI; requests only
+	SIPStatusCode int    `json:"sip_status_code,omitempty"` // 100-699; responses only
+	SIPReason     string `json:"sip_reason,omitempty"`      // reason phrase; responses only
+	SIPCallID     string `json:"sip_call_id,omitempty"`
+	SIPFrom       string `json:"sip_from,omitempty"`
+	SIPTo         string `json:"sip_to,omitempty"`
+	SIPContact    string `json:"sip_contact,omitempty"`
+	SIPUserAgent  string `json:"sip_user_agent,omitempty"` // User-Agent, or Server in a response without one
+	SIPCSeq       int    `json:"sip_cseq,omitempty"`       // the CSeq number
+	SIPCSeqMethod string `json:"sip_cseq_method,omitempty"`
 }
 
 // Flow represents an aggregated view of a network connection (e.g., a TCP stream).
@@ -163,6 +181,14 @@ type Flow struct {
 	BytesSent   int       `json:"bytes_sent"`
 	BytesRecv   int       `json:"bytes_recv"`
 	Retransmits int       `json:"retransmits"` // Key metric for packet loss/slow connections
+
+	// SIP details of a flow that carries SIP: the request methods seen (each
+	// once, in order, joined by commas), the Call-ID of its first message and
+	// the first User-Agent. A SIP flow can carry many calls; see the SIP
+	// issues for the others.
+	SIPMethod    string `json:"sip_method,omitempty"`
+	SIPCallID    string `json:"sip_call_id,omitempty"`
+	SIPUserAgent string `json:"sip_user_agent,omitempty"`
 
 	// Retransmits split by trigger: sent after three or more duplicate
 	// ACKs, or after the connection had been silent (an RTO). The remainder

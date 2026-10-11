@@ -61,6 +61,9 @@ export function subjectLabel(issue: Issue): string {
       return 'Connection'
     case 'PacketLoss':
       return 'Flow'
+    case 'SIP':
+      // the error rate is per flow; the failures themselves are listed by Call-ID
+      return issue.title === 'High SIP Error Rate' ? 'Flow' : 'Call-ID'
     default:
       return 'Subject'
   }
@@ -80,7 +83,7 @@ export function formatValue(o: Occurrence): string {
 }
 
 /** The protocols offered by the protocol filter. */
-export const PROTOCOL_FILTERS = ['All', 'TCP', 'UDP', 'DNS', 'HTTP', 'TLS', 'ARP', 'ICMP'] as const
+export const PROTOCOL_FILTERS = ['All', 'TCP', 'UDP', 'DNS', 'HTTP', 'TLS', 'SIP', 'ARP', 'ICMP'] as const
 export type ProtocolFilter = (typeof PROTOCOL_FILTERS)[number]
 
 /** Whether an issue involves the selected protocol. "All" matches everything. */
@@ -123,6 +126,8 @@ export function protocolColor(protocol: string): { dot: string; bar: string; bad
       return { dot: 'bg-violet-500', bar: 'bg-violet-500', badge: 'bg-violet-50 dark:bg-violet-500/15 text-violet-700 dark:text-violet-400' }
     case 'HTTP':
       return { dot: 'bg-pink-500', bar: 'bg-pink-500', badge: 'bg-pink-50 dark:bg-pink-500/15 text-pink-700 dark:text-pink-400' }
+    case 'SIP':
+      return { dot: 'bg-orange-500', bar: 'bg-orange-500', badge: 'bg-orange-50 dark:bg-orange-500/15 text-orange-700 dark:text-orange-400' }
     case 'TLS':
       return { dot: 'bg-teal-500', bar: 'bg-teal-500', badge: 'bg-teal-50 dark:bg-teal-500/15 text-teal-700 dark:text-teal-400' }
     default:
