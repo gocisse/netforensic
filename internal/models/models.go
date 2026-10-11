@@ -1,7 +1,10 @@
 // Package models defines the shared data structures used across netforensic.
 package models
 
-import "time"
+import (
+	"strings"
+	"time"
+)
 
 // Protocol represents the network protocol detected.
 type Protocol string
@@ -64,6 +67,12 @@ type PacketInfo struct {
 	TCPFlags    string    `json:"tcp_flags,omitempty"`  // e.g. "SYN", "PSH,ACK"; empty for non-TCP
 	TCPAck      uint32    `json:"tcp_ack,omitempty"`    // TCP acknowledgment number; 0 for non-TCP
 	TCPWindow   uint32    `json:"tcp_window,omitempty"` // advertised receive window as in the header (unscaled); packet sources must set it, since 0 means a zero window
+
+	// Tunnel describes the outer IP header when the packet was decapsulated
+	// from a tunnel, as "src>dst/KIND" (for example "10.0.0.1>10.0.0.2/GRE");
+	// SrcIP, DstIP and the ports then belong to the inner packet. Empty for
+	// packets that are not tunnelled.
+	Tunnel string `json:"tunnel,omitempty"`
 
 	// PayloadPreview holds the first bytes (at most 512) of the TCP or UDP
 	// payload for stream display. It is not serialized.
@@ -142,6 +151,9 @@ type Flow struct {
 	SrcPort  uint16   `json:"src_port"`
 	DstPort  uint16   `json:"dst_port"`
 	Protocol Protocol `json:"protocol"`
+	// Tunnel identifies the tunnel the flow was decapsulated from, as
+	// "KIND:outer~outer" (see TunnelKey), or is empty.
+	Tunnel string `json:"tunnel,omitempty"`
 	// AppProtocol is the application protocol recognized in the flow (DNS,
 	// HTTP or TLS), or empty.
 	AppProtocol string    `json:"app_protocol,omitempty"`
@@ -268,4 +280,21 @@ type AnalysisResult struct {
 	ProtocolStats []ProtocolStat `json:"protocol_stats"`
 
 	Diagnosis RootCauseAnalysis `json:"diagnosis"`
+}
+
+// TunnelKey returns a direction-independent identity for the tunnel
+// description t of a PacketInfo ("src>dst/KIND"): "KIND:a~b" with the two
+// outer addresses in a fixed order, so both directions of one tunnel get the
+// same key. It returns "" if t is empty or not in that form.
+func TunnelKey(t string) string {
+	slash := strings.LastIndex(t, "/")
+	arrow := strings.Index(t, ">")
+	if slash < 0 || arrow < 0 || arrow > slash {
+		return ""
+	}
+	a, b, kind := t[:arrow], t[arrow+1:slash], t[slash+1:]
+	if b < a {
+		a, b = b, a
+	}
+	return kind + ":" + a + "~" + b
 }

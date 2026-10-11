@@ -50,6 +50,9 @@ func AnalyzeWithIssues(packets []models.PacketInfo, service string, extra ...mod
 	issues = append(issues, analyzeConnections(packets)...)
 	issues = append(issues, perfIssues...)
 	issues = append(issues, extra...)
+	if note, ok := decapsulatedIssue(packets); ok {
+		issues = append(issues, note)
+	}
 	if issues == nil {
 		issues = []models.Issue{} // serialize as [] rather than null
 	}
@@ -176,6 +179,10 @@ func (e endpoint) String() string { return net.JoinHostPort(e.ip, strconv.Itoa(i
 type flowKey struct {
 	a, b  endpoint
 	proto models.Protocol
+	// tunnel is the direction-independent identity of the tunnel the packets
+	// came out of (see models.TunnelKey), or "". Without it, the same inner
+	// 4-tuple in two different tunnels would be taken for one flow.
+	tunnel string
 }
 
 // instKey identifies one connection: a flowKey plus the index of the TCP
@@ -186,11 +193,16 @@ type instKey struct {
 }
 
 // id is the flow ID shown to users: "ip:port-ip:port", with "#N" appended
-// from the second connection on a reused 4-tuple, e.g. "...#2".
+// from the second connection on a reused 4-tuple, e.g. "...#2". A flow that
+// came out of a tunnel ends with "@KIND:outer~outer", for example
+// "...@GRE:192.0.2.1~192.0.2.2".
 func (k instKey) id() string {
 	id := k.a.String() + "-" + k.b.String()
 	if k.inst > 0 {
 		id += "#" + strconv.Itoa(k.inst+1)
+	}
+	if k.tunnel != "" {
+		id += "@" + k.tunnel
 	}
 	return id
 }
@@ -200,10 +212,11 @@ func (k instKey) id() string {
 func canonicalKey(p models.PacketInfo) (key flowKey, forward bool) {
 	src := endpoint{p.SrcIP, p.SrcPort}
 	dst := endpoint{p.DstIP, p.DstPort}
+	tunnel := models.TunnelKey(p.Tunnel)
 	if dst.less(src) {
-		return flowKey{dst, src, p.Protocol}, false
+		return flowKey{dst, src, p.Protocol, tunnel}, false
 	}
-	return flowKey{src, dst, p.Protocol}, true
+	return flowKey{src, dst, p.Protocol, tunnel}, true
 }
 
 // aggregateFlows groups packets into bidirectional flows. Packets A->B and
@@ -233,6 +246,7 @@ func aggregateFlows(packets []models.PacketInfo) []models.Flow {
 				SrcPort:   a.port,
 				DstPort:   b.port,
 				Protocol:  p.Protocol,
+				Tunnel:    key.tunnel,
 				StartTime: p.Timestamp,
 				EndTime:   p.Timestamp,
 			}

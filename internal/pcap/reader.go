@@ -188,6 +188,11 @@ func linkTypeSupported(lt layers.LinkType) bool {
 
 // packetInfo extracts addressing and protocol details from a decoded packet.
 // It reports false if the packet has no IPv4 or IPv6 layer.
+//
+// The addresses are those of the IP layer that directly encloses the
+// transport layer, so a tunnelled packet (GRE, IP-in-IP, IPv6-in-IPv4) is
+// described by the inner packet and its ports; the outer addresses are kept
+// in Tunnel.
 func packetInfo(pkt gopacket.Packet) (models.PacketInfo, bool) {
 	var info models.PacketInfo
 
@@ -196,23 +201,22 @@ func packetInfo(pkt gopacket.Packet) (models.PacketInfo, bool) {
 		return info, true
 	}
 
+	ip, transport, outer := enclosingIP(pkt)
 	var ipProto uint8
-	switch {
-	case pkt.Layer(layers.LayerTypeIPv4) != nil:
-		ip := pkt.Layer(layers.LayerTypeIPv4).(*layers.IPv4)
+	switch ip := ip.(type) {
+	case *layers.IPv4:
 		info.SrcIP, info.DstIP = ip.SrcIP.String(), ip.DstIP.String()
 		ipProto = uint8(ip.Protocol)
-	case pkt.Layer(layers.LayerTypeIPv6) != nil:
-		ip := pkt.Layer(layers.LayerTypeIPv6).(*layers.IPv6)
+	case *layers.IPv6:
 		info.SrcIP, info.DstIP = ip.SrcIP.String(), ip.DstIP.String()
 		ipProto = uint8(ip.NextHeader)
 	default:
 		return info, false
 	}
+	info.Tunnel = tunnelOf(outer)
 
-	switch {
-	case pkt.Layer(layers.LayerTypeTCP) != nil:
-		t := pkt.Layer(layers.LayerTypeTCP).(*layers.TCP)
+	switch t := transport.(type) {
+	case *layers.TCP:
 		info.Protocol = models.ProtocolTCP
 		info.SrcPort, info.DstPort = uint16(t.SrcPort), uint16(t.DstPort)
 		info.PayloadSize = tcpPayloadLen(pkt, t)
@@ -223,19 +227,17 @@ func packetInfo(pkt gopacket.Packet) (models.PacketInfo, bool) {
 		info.TCPWindow = uint32(t.Window)
 		fillHTTP(&info, t.Payload)
 		fillTLS(&info, t.Payload)
-	case pkt.Layer(layers.LayerTypeUDP) != nil:
-		u := pkt.Layer(layers.LayerTypeUDP).(*layers.UDP)
+	case *layers.UDP:
 		info.Protocol = models.ProtocolUDP
-		info.SrcPort, info.DstPort = uint16(u.SrcPort), uint16(u.DstPort)
-		info.PayloadSize = len(u.Payload)
-		info.PayloadPreview = previewPayload(u.Payload)
-	case pkt.Layer(layers.LayerTypeICMPv4) != nil:
-		ic := pkt.Layer(layers.LayerTypeICMPv4).(*layers.ICMPv4)
+		info.SrcPort, info.DstPort = uint16(t.SrcPort), uint16(t.DstPort)
+		info.PayloadSize = len(t.Payload)
+		info.PayloadPreview = previewPayload(t.Payload)
+	case *layers.ICMPv4:
 		info.Protocol = models.ProtocolICMP
-		info.ICMPType, info.ICMPCode = ic.TypeCode.Type(), ic.TypeCode.Code()
+		info.ICMPType, info.ICMPCode = t.TypeCode.Type(), t.TypeCode.Code()
 		info.ICMPMessage = icmpMessage(info.ICMPType, info.ICMPCode)
-		fillICMPOriginal(&info, ic.Payload)
-	case pkt.Layer(layers.LayerTypeICMPv6) != nil:
+		fillICMPOriginal(&info, t.Payload)
+	case *layers.ICMPv6:
 		info.Protocol = models.ProtocolICMP
 	default:
 		// An IP protocol the tool does not analyze: keep its name, if it is a
@@ -532,16 +534,16 @@ func tcpPayloadLen(pkt gopacket.Packet, t *layers.TCP) int {
 	captured := len(t.Payload)
 	hdr := int(t.DataOffset) * 4
 
+	// The length that counts is the one in the IP header around the segment,
+	// which for a tunnelled packet is the inner header, not the outer one.
 	var ipPayload int
-	switch {
-	case pkt.Layer(layers.LayerTypeIPv4) != nil:
-		ip := pkt.Layer(layers.LayerTypeIPv4).(*layers.IPv4)
+	switch ip := ipAround(pkt, t).(type) {
+	case *layers.IPv4:
 		if ip.Length == 0 {
 			return captured
 		}
 		ipPayload = int(ip.Length) - int(ip.IHL)*4
-	case pkt.Layer(layers.LayerTypeIPv6) != nil:
-		ip := pkt.Layer(layers.LayerTypeIPv6).(*layers.IPv6)
+	case *layers.IPv6:
 		if ip.Length == 0 {
 			return captured
 		}
@@ -571,4 +573,82 @@ func pcapLinkNumber(hdr []byte) int {
 		return -1
 	}
 	return int(order.Uint32(hdr[20:24]) & 0x0fffffff)
+}
+
+func isIP(l gopacket.Layer) bool {
+	switch l.(type) {
+	case *layers.IPv4, *layers.IPv6:
+		return true
+	}
+	return false
+}
+
+// enclosingIP returns the IP layer that directly encloses the first
+// transport layer (TCP, UDP or ICMP) of pkt, that transport layer, and the
+// outermost IP layer if pkt is tunnelled (that is, if there are several IP
+// layers before the transport layer); otherwise outer is nil. If there is no
+// transport layer, the innermost IP layer is returned with a nil transport.
+func enclosingIP(pkt gopacket.Packet) (ip, transport, outer gopacket.Layer) {
+	var ips []gopacket.Layer
+walk:
+	for _, l := range pkt.Layers() {
+		switch l.(type) {
+		case *layers.IPv4, *layers.IPv6:
+			ips = append(ips, l)
+		case *layers.TCP, *layers.UDP, *layers.ICMPv4, *layers.ICMPv6:
+			transport = l
+			break walk
+		}
+	}
+	if len(ips) == 0 {
+		return nil, nil, nil
+	}
+	if len(ips) > 1 {
+		outer = ips[0]
+	}
+	return ips[len(ips)-1], transport, outer
+}
+
+// ipAround returns the IP layer directly before layer l in pkt, or nil.
+func ipAround(pkt gopacket.Packet, l gopacket.Layer) gopacket.Layer {
+	var ip gopacket.Layer
+	for _, x := range pkt.Layers() {
+		if x == l {
+			return ip
+		}
+		if isIP(x) {
+			ip = x
+		}
+	}
+	return nil
+}
+
+// tunnelOf describes the outer IP header of a tunnelled packet as
+// "src>dst/KIND", or returns "" if outer is nil. KIND names the tunnel by the
+// outer header's protocol: GRE, IP-in-IP, 6in4 (IPv6 in IPv4) or IPv6-in-IPv6.
+func tunnelOf(outer gopacket.Layer) string {
+	var src, dst net.IP
+	var proto uint8
+	var v4 bool
+	switch ip := outer.(type) {
+	case *layers.IPv4:
+		src, dst, proto, v4 = ip.SrcIP, ip.DstIP, uint8(ip.Protocol), true
+	case *layers.IPv6:
+		src, dst, proto = ip.SrcIP, ip.DstIP, uint8(ip.NextHeader)
+	default:
+		return ""
+	}
+	kind := "tunnel"
+	switch layers.IPProtocol(proto) {
+	case layers.IPProtocolGRE:
+		kind = "GRE"
+	case layers.IPProtocolIPv4:
+		kind = "IP-in-IP"
+	case layers.IPProtocolIPv6:
+		kind = "IPv6-in-IPv6"
+		if v4 {
+			kind = "6in4"
+		}
+	}
+	return src.String() + ">" + dst.String() + "/" + kind
 }

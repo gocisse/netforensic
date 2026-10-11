@@ -83,6 +83,15 @@ func ListFlows(packets []models.PacketInfo) []FlowSummary {
 	return out
 }
 
+// splitTunnel separates the "@KIND:outer~outer" suffix that names the tunnel
+// of a decapsulated flow from the rest of a flow ID.
+func splitTunnel(id string) (rest, tunnel string) {
+	if i := strings.Index(id, "@"); i >= 0 {
+		return strings.TrimSpace(id[:i]), strings.TrimSpace(id[i+1:])
+	}
+	return id, ""
+}
+
 // parseFlowID parses "ip:port-ip:port" with optional "#N" and "/PROTO"
 // suffixes (for example "10.0.0.1:1234-10.0.0.2:80#2/TCP"). "#N" selects
 // the Nth connection (N >= 1) when the 4-tuple was reused; inst is the
@@ -153,6 +162,7 @@ func parseFlowID(id string) (a, b endpoint, proto models.Protocol, inst int, err
 // header. The returned error is a *FollowError listing the available flows
 // if flowID is malformed or matches nothing.
 func matchFlow(packets []models.PacketInfo, flowID string) ([]models.PacketInfo, *Conversation, error) {
+	flowID, tunnel := splitTunnel(flowID)
 	a, b, proto, inst, err := parseFlowID(flowID)
 	if err != nil {
 		return nil, nil, &FollowError{Reason: err.Error(), Available: ListFlows(packets)}
@@ -162,7 +172,7 @@ func matchFlow(packets []models.PacketInfo, flowID string) ([]models.PacketInfo,
 	insts := models.ConnectionInstances(packets)
 	for i, p := range packets {
 		key, _ := canonicalKey(p)
-		if key.a == a && key.b == b && (proto == "" || key.proto == proto) && insts[i] == inst {
+		if key.a == a && key.b == b && (proto == "" || key.proto == proto) && key.tunnel == tunnel && insts[i] == inst {
 			matched = append(matched, p)
 		}
 	}
@@ -173,7 +183,7 @@ func matchFlow(packets []models.PacketInfo, flowID string) ([]models.PacketInfo,
 
 	client := endpoint{matched[0].SrcIP, matched[0].SrcPort}
 	server := endpoint{matched[0].DstIP, matched[0].DstPort}
-	return matched, &Conversation{FlowID: instKey{flowKey{a, b, matched[0].Protocol}, inst}.id(), Client: client.String(), Server: server.String()}, nil
+	return matched, &Conversation{FlowID: instKey{flowKey{a, b, matched[0].Protocol, tunnel}, inst}.id(), Client: client.String(), Server: server.String()}, nil
 }
 
 // isFromClient reports whether p was sent by the conversation's client.

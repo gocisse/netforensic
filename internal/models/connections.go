@@ -30,7 +30,10 @@ func ConnectionInstances(packets []PacketInfo) []int {
 		ip   string
 		port uint16
 	}
-	type key struct{ a, b endpoint }
+	type key struct {
+		a, b   endpoint
+		tunnel string // packets of one 4-tuple inside different tunnels are different connections
+	}
 	type state struct {
 		n      int
 		closed bool
@@ -50,7 +53,7 @@ func ConnectionInstances(packets []PacketInfo) []int {
 		if dst.ip < src.ip || (dst.ip == src.ip && dst.port < src.port) {
 			src, dst = dst, src
 		}
-		k := key{src, dst}
+		k := key{src, dst, TunnelKey(p.Tunnel)}
 		s := states[k]
 		if s == nil {
 			s = &state{}

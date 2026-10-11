@@ -52,8 +52,10 @@ export interface Flow {
   dst_ip: string
   src_port: number
   dst_port: number
-  /** Transport protocol (TCP, UDP, ICMP, ARP); empty for other IP protocols. */
+  /** Transport protocol (TCP, UDP, ICMP, ARP) or the name of another IP protocol (OSPF, GRE, ...); empty if unknown. */
   protocol: string
+  /** Set when the flow was decapsulated from a tunnel: "KIND:outer~outer". */
+  tunnel?: string
   /** DNS, HTTP or TLS, if recognized in the flow. */
   app_protocol?: string
   start_time: string

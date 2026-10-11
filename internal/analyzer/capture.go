@@ -2,6 +2,8 @@ package analyzer
 
 import (
 	"fmt"
+	"sort"
+	"strings"
 	"time"
 
 	"github.com/gocisse/netforensic/internal/models"
@@ -63,4 +65,55 @@ func SkippedFramesIssue(skipped int, detail string, packets []models.PacketInfo)
 		Timestamp:   first,
 		Count:       skipped,
 	}
+}
+
+// titleDecapsulated is the title of the note about tunnelled traffic.
+const titleDecapsulated = "Decapsulated Tunnels"
+
+// decapsulatedIssue returns the note for a capture whose packets came out of
+// GRE, IP-in-IP or IPv6-in-IPv4 tunnels: they are analyzed by their inner
+// addresses and ports. Like the skipped-frames note it is informational and
+// costs no health points (see isNote), and it is anchored at the start of the
+// capture. It reports false if no packet was tunnelled.
+func decapsulatedIssue(packets []models.PacketInfo) (models.Issue, bool) {
+	byKind := make(map[string]int)
+	var first time.Time
+	total := 0
+	for i, p := range packets {
+		if i == 0 || p.Timestamp.Before(first) {
+			first = p.Timestamp
+		}
+		if p.Tunnel == "" {
+			continue
+		}
+		byKind[p.Tunnel[strings.LastIndex(p.Tunnel, "/")+1:]]++
+		total++
+	}
+	if total == 0 {
+		return models.Issue{}, false
+	}
+
+	kinds := make([]string, 0, len(byKind))
+	for k := range byKind {
+		kinds = append(kinds, k)
+	}
+	sort.Strings(kinds)
+	parts := make([]string, len(kinds))
+	for i, k := range kinds {
+		parts[i] = fmt.Sprintf("%s: %d", k, byKind[k])
+	}
+	verb := "were"
+	if total == 1 {
+		verb = "was"
+	}
+	return models.Issue{
+		ID:       "capture-decapsulated",
+		Severity: models.SeverityInfo,
+		Category: "Capture",
+		Title:    titleDecapsulated,
+		Description: fmt.Sprintf("%s %s decapsulated from tunnels (%s) and analyzed by their inner addresses and ports. Encrypted tunnels such as ESP cannot be decapsulated.",
+			count(total, "packet", "packets"), verb, strings.Join(parts, ", ")),
+		Timestamp: first,
+		Count:     total,
+	}, true
 }

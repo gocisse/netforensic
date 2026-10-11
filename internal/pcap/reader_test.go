@@ -564,3 +564,146 @@ func TestReadPacketsFileTooShortForHeader(t *testing.T) {
 		})
 	}
 }
+
+// tunnelled serializes an Ethernet frame that carries inner (an IPv4 or IPv6
+// layer, its transport layer and a payload) inside an outer IPv4 header,
+// optionally with a GRE header in between.
+func tunnelled(t *testing.T, outerProto layers.IPProtocol, outerSrc, outerDst net.IP, gre *layers.GRE, inner gopacket.NetworkLayer, transport gopacket.SerializableLayer, payload []byte) []byte {
+	t.Helper()
+	switch l := transport.(type) {
+	case *layers.TCP:
+		require.NoError(t, l.SetNetworkLayerForChecksum(inner))
+	case *layers.UDP:
+		require.NoError(t, l.SetNetworkLayerForChecksum(inner))
+	}
+	eth := &layers.Ethernet{SrcMAC: net.HardwareAddr{0, 1, 2, 3, 4, 5}, DstMAC: net.HardwareAddr{6, 7, 8, 9, 10, 11}, EthernetType: layers.EthernetTypeIPv4}
+	outer := &layers.IPv4{Version: 4, IHL: 5, TTL: 64, Protocol: outerProto, SrcIP: outerSrc, DstIP: outerDst}
+	stack := []gopacket.SerializableLayer{eth, outer}
+	if gre != nil {
+		stack = append(stack, gre)
+	}
+	stack = append(stack, inner.(gopacket.SerializableLayer), transport, gopacket.Payload(payload))
+	buf := gopacket.NewSerializeBuffer()
+	require.NoError(t, gopacket.SerializeLayers(buf, gopacket.SerializeOptions{FixLengths: true, ComputeChecksums: true}, stack...))
+	return buf.Bytes()
+}
+
+func TestReadPacketsDecapsulatesTunnels(t *testing.T) {
+	var (
+		outerA = net.IP{192, 0, 2, 1}
+		outerB = net.IP{192, 0, 2, 2}
+		innerA = net.IP{10, 1, 1, 1}
+		innerB = net.IP{10, 2, 2, 2}
+		v6A    = net.ParseIP("2001:db8::1")
+		v6B    = net.ParseIP("2001:db8::2")
+		body   = bytes.Repeat([]byte("x"), 100)
+	)
+	ip4 := func() *layers.IPv4 {
+		return &layers.IPv4{Version: 4, IHL: 5, TTL: 64, Protocol: layers.IPProtocolTCP, SrcIP: innerA, DstIP: innerB}
+	}
+	tcp := func() *layers.TCP {
+		return &layers.TCP{SrcPort: 40000, DstPort: 443, Seq: 7, ACK: true, PSH: true, Window: 1000}
+	}
+
+	tests := []struct {
+		name        string
+		frame       []byte
+		wantSrc     string
+		wantDst     string
+		wantProto   models.Protocol
+		wantPorts   [2]uint16
+		wantPayload int
+		wantTunnel  string
+	}{
+		{
+			name:        "not tunnelled",
+			frame:       serialize(t, layers.IPProtocolTCP, innerA, innerB, tcp(), body),
+			wantSrc:     "10.1.1.1",
+			wantDst:     "10.2.2.2",
+			wantProto:   models.ProtocolTCP,
+			wantPorts:   [2]uint16{40000, 443},
+			wantPayload: 100,
+		},
+		{
+			name:        "GRE carrying IPv4/TCP",
+			frame:       tunnelled(t, layers.IPProtocolGRE, outerA, outerB, &layers.GRE{Protocol: layers.EthernetTypeIPv4}, ip4(), tcp(), body),
+			wantSrc:     "10.1.1.1",
+			wantDst:     "10.2.2.2",
+			wantProto:   models.ProtocolTCP,
+			wantPorts:   [2]uint16{40000, 443},
+			wantPayload: 100,
+			wantTunnel:  "192.0.2.1>192.0.2.2/GRE",
+		},
+		{
+			name:        "IP-in-IP carrying IPv4/TCP",
+			frame:       tunnelled(t, layers.IPProtocolIPv4, outerA, outerB, nil, ip4(), tcp(), body),
+			wantSrc:     "10.1.1.1",
+			wantDst:     "10.2.2.2",
+			wantProto:   models.ProtocolTCP,
+			wantPorts:   [2]uint16{40000, 443},
+			wantPayload: 100,
+			wantTunnel:  "192.0.2.1>192.0.2.2/IP-in-IP",
+		},
+		{
+			name: "6in4 carrying IPv6/TCP",
+			frame: tunnelled(t, layers.IPProtocolIPv6, outerA, outerB, nil,
+				&layers.IPv6{Version: 6, NextHeader: layers.IPProtocolTCP, HopLimit: 64, SrcIP: v6A, DstIP: v6B}, tcp(), body),
+			wantSrc:     "2001:db8::1",
+			wantDst:     "2001:db8::2",
+			wantProto:   models.ProtocolTCP,
+			wantPorts:   [2]uint16{40000, 443},
+			wantPayload: 100,
+			wantTunnel:  "192.0.2.1>192.0.2.2/6in4",
+		},
+		{
+			name: "GRE carrying IPv4/UDP",
+			frame: tunnelled(t, layers.IPProtocolGRE, outerB, outerA, &layers.GRE{Protocol: layers.EthernetTypeIPv4},
+				&layers.IPv4{Version: 4, IHL: 5, TTL: 64, Protocol: layers.IPProtocolUDP, SrcIP: innerA, DstIP: innerB},
+				&layers.UDP{SrcPort: 5000, DstPort: 6000}, body),
+			wantSrc:     "10.1.1.1",
+			wantDst:     "10.2.2.2",
+			wantProto:   models.ProtocolUDP,
+			wantPorts:   [2]uint16{5000, 6000},
+			wantPayload: 100,
+			wantTunnel:  "192.0.2.2>192.0.2.1/GRE",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "tunnel.pcap")
+			writePCAP(t, path, [][]byte{tt.frame})
+
+			got, err := ReadPackets(path)
+			require.NoError(t, err)
+			require.Len(t, got, 1)
+			p := got[0]
+			assert.Equal(t, tt.wantSrc, p.SrcIP)
+			assert.Equal(t, tt.wantDst, p.DstIP)
+			assert.Equal(t, tt.wantProto, p.Protocol)
+			assert.Equal(t, tt.wantPorts, [2]uint16{p.SrcPort, p.DstPort})
+			assert.Equal(t, tt.wantPayload, p.PayloadSize, "payload length comes from the inner IP header")
+			assert.Equal(t, tt.wantTunnel, p.Tunnel)
+			if p.Protocol == models.ProtocolTCP {
+				assert.Equal(t, uint32(7), p.TCPSeq)
+			}
+		})
+	}
+}
+
+func TestReadPacketsGREWithUndecodedInner(t *testing.T) {
+	// GRE that carries something that is not IP (here a made-up protocol
+	// number): there is no inner packet to describe, so the GRE packet itself
+	// is reported, named by its IP protocol and not marked as tunnelled.
+	frame := tunnelled(t, layers.IPProtocolGRE, net.IP{192, 0, 2, 1}, net.IP{192, 0, 2, 2}, &layers.GRE{Protocol: layers.EthernetType(0x9999)},
+		&layers.IPv4{Version: 4, IHL: 5, TTL: 64, Protocol: layers.IPProtocolOSPF, SrcIP: net.IP{10, 0, 0, 1}, DstIP: net.IP{10, 0, 0, 2}},
+		gopacket.Payload([]byte{1, 2, 3, 4}), nil)
+	path := filepath.Join(t.TempDir(), "gre.pcap")
+	writePCAP(t, path, [][]byte{frame})
+
+	got, err := ReadPackets(path)
+	require.NoError(t, err)
+	require.Len(t, got, 1)
+	assert.Equal(t, "192.0.2.1", got[0].SrcIP)
+	assert.Equal(t, models.Protocol("GRE"), got[0].Protocol)
+	assert.Empty(t, got[0].Tunnel)
+}

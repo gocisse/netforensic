@@ -179,15 +179,22 @@ Vite dev server proxies `/api` to `localhost:8181`. After changing the UI, run
 
 ## Known limitations
 
-- **Tunnels (GRE, IPv6-in-IPv4).** Captures containing GRE and IPv6-in-IPv4
-  tunnels may show inflated flow and retransmit counts, because the inner
-  traffic is aggregated by the outer IP addresses and the inner ports. Full
-  tunnel decapsulation is planned for a future release.
-  (`The-Ultimate-PCAP.pcapng`, for example, reports about three times the
-  retransmissions that Wireshark does.) Additionally, IP packets with protocols
-  the tool does not decode are not analyzed for issues. Well-known ones (OSPF,
-  VRRP, PIM, IGMP, SCTP, ESP, GRE, ...) are listed under their own name in the
-  protocol distribution; any other IP protocol is counted as "Other".
+- **Tunnels.** GRE, IP-in-IP and IPv6-in-IPv4 (6in4) tunnels are decapsulated:
+  a tunnelled packet is analyzed by its inner addresses and ports, and a
+  "Decapsulated Tunnels" note says how many packets were treated that way
+  (it costs no health points). Flows from different tunnels stay separate; the
+  ID of a tunnelled flow ends with the tunnel, for example
+  `10.0.0.1:1000-10.0.0.2:80@GRE:192.0.2.1~192.0.2.2`, and `--follow` takes the
+  same form. Only the outermost tunnel is recorded for nested tunnels. Tunnels
+  the tool cannot look into stay opaque: encrypted ones (ESP, AH), L2TP, and
+  UDP-based ones (VXLAN, Teredo, ...) are analyzed as the outer flow they
+  appear as. HTTP, TLS and DNS matching still pairs requests and responses by
+  addresses and ports alone, so two tunnels carrying an identical inner
+  4-tuple could be paired with each other.
+  IP packets with protocols the tool does not decode are not analyzed for
+  issues. Well-known ones (OSPF, VRRP, PIM, IGMP, SCTP, ESP, GRE, ...) are
+  listed under their own name in the protocol distribution; any other IP
+  protocol is counted as "Other".
 - **One-sided (asymmetric) captures.** A capture point that sees only one
   direction of a conversation (asymmetric routing, a SPAN port on one link)
   cannot show replies. Such SYNs are reported as "Unanswered SYN (No reply

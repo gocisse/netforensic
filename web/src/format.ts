@@ -46,7 +46,7 @@ export function sortIssues(issues: Issue[]): Issue[] {
 }
 
 /** Titles of issues that describe the capture file, not the traffic. */
-export const NOTE_TITLES = ['Truncated Capture', 'Skipped Frames'] as const
+export const NOTE_TITLES = ['Truncated Capture', 'Skipped Frames', 'Decapsulated Tunnels'] as const
 
 /** Column heading for the subject of an issue's occurrences. */
 export function subjectLabel(issue: Issue): string {
