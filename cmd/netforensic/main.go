@@ -20,6 +20,9 @@ import (
 	"github.com/gocisse/netforensic/internal/server"
 )
 
+// errExportCSVPrefix is the error for --export-csv without a prefix.
+var errExportCSVPrefix = errors.New("--export-csv needs a file name prefix, for example --export-csv report (writes report_flows.csv, report_issues.csv and report_protocols.csv)")
+
 var validServices = []string{"all", "dns", "http", "tls", "https", "<port>"}
 
 func main() {
@@ -58,6 +61,7 @@ func newRootCmdWith(startServer func(addr string, a *auth.Service) error) *cobra
 		output      string
 		follow      string
 		followPkts  string
+		csvPrefix   string
 
 		srcIP, dstIP string
 		srcPort      int
@@ -87,6 +91,12 @@ func newRootCmdWith(startServer func(addr string, a *auth.Service) error) *cobra
 			output = strings.ToLower(output)
 			if output != "text" && output != "json" {
 				return fmt.Errorf("invalid output format %q (valid: text, json)", output)
+			}
+			if cmd.Flags().Changed("export-csv") && strings.TrimSpace(csvPrefix) == "" {
+				return errExportCSVPrefix
+			}
+			if cmd.Flags().Changed("export-csv") && (follow != "" || followPkts != "") {
+				return fmt.Errorf("--export-csv exports the analysis and cannot be combined with --follow or --follow-packets")
 			}
 			if err := validateFile(args[0]); err != nil {
 				return err
@@ -152,11 +162,22 @@ func newRootCmdWith(startServer func(addr string, a *auth.Service) error) *cobra
 			if len(packets) == 0 {
 				// Nothing to analyze: a health score would claim a clean bill
 				// of health for traffic that was never looked at.
+				if csvPrefix != "" {
+					fmt.Fprintln(cmd.ErrOrStderr(), "warning: nothing to analyze, so no CSV files were written")
+				}
 				return printNothingToAnalyze(cmd.OutOrStdout(), args[0], output == "json", filtersActive, notes)
 			}
 
 			res := analyzer.AnalyzeWithIssues(packets, "all", notes...) // already filtered
 			res.FileName = args[0]
+
+			if csvPrefix != "" {
+				written, err := exportCSV(csvPrefix, res)
+				if err != nil {
+					return err
+				}
+				fmt.Fprintf(cmd.ErrOrStderr(), "exported %s\n", strings.Join(written, ", "))
+			}
 
 			if output == "json" {
 				if verbose { // keep stdout valid JSON
@@ -197,6 +218,13 @@ func newRootCmdWith(startServer func(addr string, a *auth.Service) error) *cobra
 	cmd.Flags().IntVar(&dstPort, "dst-port", 0, "only analyze packets to this destination port")
 	cmd.Flags().StringVar(&follow, "follow", "", "show the reconstructed application-layer conversation of a flow, e.g. 10.0.0.1:43210-10.0.0.2:443[/tcp]")
 	cmd.Flags().StringVar(&followPkts, "follow-packets", "", "show a flow packet by packet (flags, seq, payload dump, [RETRANS] markers)")
+	cmd.Flags().StringVar(&csvPrefix, "export-csv", "", "also write the analysis as CSV files: <prefix>_flows.csv, <prefix>_issues.csv and <prefix>_protocols.csv")
+	cmd.SetFlagErrorFunc(func(c *cobra.Command, err error) error {
+		if strings.Contains(err.Error(), "--export-csv") {
+			return errExportCSVPrefix
+		}
+		return err
+	})
 	cmd.Flags().BoolVarP(&verbose, "verbose", "v", false, "print every packet read before the summary")
 
 	return cmd
@@ -209,7 +237,7 @@ func runWeb(cmd *cobra.Command, addr, credentials string, args []string, startSe
 		return fmt.Errorf("--web serves uploads and does not take a capture file (got %q)", args[0])
 	}
 	var conflicting []string
-	for _, name := range []string{"service", "output", "verbose", "src-ip", "dst-ip", "src-port", "dst-port", "follow", "follow-packets"} {
+	for _, name := range []string{"service", "output", "verbose", "src-ip", "dst-ip", "src-port", "dst-port", "follow", "follow-packets", "export-csv"} {
 		if cmd.Flags().Changed(name) {
 			conflicting = append(conflicting, "--"+name)
 		}

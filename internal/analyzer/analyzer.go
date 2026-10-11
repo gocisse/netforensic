@@ -71,6 +71,7 @@ func AnalyzeWithIssues(packets []models.PacketInfo, service string, extra ...mod
 		SlowFlows:     slowFlows(flows, topTalkerCount),
 		ProtocolStats: protocolStats(packets, flows, classes, perPacket),
 		Diagnosis:     correlate(packets, flows, issues),
+		Flows:         flows,
 	}
 }
 

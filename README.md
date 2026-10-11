@@ -84,6 +84,33 @@ combine with each other and with `-s`.
 If nothing matches the filters, the tool says "No packets matched the specified
 filters. Nothing to analyze." instead of printing a health score.
 
+**CSV export** (`--export-csv <prefix>`): also write the analysis as CSV files
+for Excel, pandas or other tools. The report on stdout is unchanged, so it
+combines with `-o json`, `-s` and the filters.
+
+```bash
+./netforensic --export-csv report capture.pcapng
+# writes report_flows.csv, report_issues.csv and report_protocols.csv
+
+./netforensic -s dns --export-csv out/dns capture.pcap   # the directory must exist
+```
+
+| File | Columns |
+|---|---|
+| `<prefix>_flows.csv` | `flow_id, packets, bytes, setup_time_ms, ttfb_ms, avg_rtt_ms, max_rtt_ms, protocol, issues` |
+| `<prefix>_issues.csv` | `id, severity, category, title, description, flow_id, target, count, timestamp` |
+| `<prefix>_protocols.csv` | `protocol, layer, packets, flows, percent` |
+
+The flows file lists *every* flow (the JSON output lists only the top ones),
+busiest first; `bytes` is both directions together, `issues` is the number of
+issues that involve the flow, and a timing that could not be measured is left
+empty. Timestamps are UTC (RFC 3339). Files are UTF-8, with commas, quotes and
+newlines in fields escaped as CSV requires. A text field that starts with
+`=`, `+`, `-` or `@` gets a leading apostrophe so that a spreadsheet does not
+run it as a formula. Existing files are overwritten. `--export-csv` needs a
+prefix and cannot be combined with `--follow`, `--follow-packets` or `--web`;
+when there is nothing to analyze, no files are written.
+
 **Follow a flow** (`--follow`): reconstruct the application-layer conversation
 of one flow, much like Wireshark's "Follow TCP Stream": HTTP requests and
 responses and DNS queries as text, binary data summarized by size, retransmitted

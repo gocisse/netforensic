@@ -280,6 +280,10 @@ type AnalysisResult struct {
 	ProtocolStats []ProtocolStat `json:"protocol_stats"`
 
 	Diagnosis RootCauseAnalysis `json:"diagnosis"`
+
+	// Flows is every flow of the capture, for exports. It is not part of the
+	// JSON output, which lists only the top flows.
+	Flows []Flow `json:"-"`
 }
 
 // TunnelKey returns a direction-independent identity for the tunnel
