@@ -55,7 +55,7 @@ func AnalyzeWithIssues(packets []models.PacketInfo, service string, extra ...mod
 		TotalPackets: len(packets),
 		TotalFlows:   len(flows),
 		AnalysisTime: start,
-		Duration:     captureDuration(packets).String(),
+		Duration:     formatDuration(captureDuration(packets)),
 		Issues:       issues,
 		TopTalkers:   talkers,
 		SlowFlows:    slowFlows(flows, topTalkerCount),
@@ -116,6 +116,20 @@ func filterByPort(packets []models.PacketInfo, port uint16) []models.PacketInfo 
 		}
 	}
 	return out
+}
+
+// maxShownDuration is the longest capture duration shown exactly. Longer
+// ones usually mean that interfaces with unsynchronized clocks were merged
+// into one file (the packets then span years), and a precise figure would
+// only look broken.
+const maxShownDuration = 24 * time.Hour
+
+// formatDuration formats d, or "24h+" if it exceeds maxShownDuration.
+func formatDuration(d time.Duration) string {
+	if d > maxShownDuration {
+		return "24h+"
+	}
+	return d.String()
 }
 
 // captureDuration returns the time between the earliest and latest packet.

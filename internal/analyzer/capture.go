@@ -31,9 +31,11 @@ func TruncatedCaptureIssue(packets []models.PacketInfo) models.Issue {
 	}
 }
 
-// SkippedFramesIssue returns the warning for a capture in which frames were
+// SkippedFramesIssue returns the note for a capture in which frames were
 // read but not analyzed, because their link-layer type is not supported or
-// they carry no IP or ARP traffic. detail optionally says which; analyzed
+// they carry no IP or ARP traffic. Layer-2 background traffic is normal, so
+// it is informational: it appears in the timeline but costs no health points
+// and is never the root cause (see isNote). detail optionally says which; analyzed
 // is the number of packets the analysis is based on. It is anchored at the
 // first analyzed packet, the start of the capture.
 func SkippedFramesIssue(skipped int, detail string, packets []models.PacketInfo) models.Issue {
@@ -54,7 +56,7 @@ func SkippedFramesIssue(skipped int, detail string, packets []models.PacketInfo)
 	}
 	return models.Issue{
 		ID:          "capture-skipped-frames",
-		Severity:    models.SeverityWarning,
+		Severity:    models.SeverityInfo,
 		Category:    "Capture",
 		Title:       titleSkippedFrames,
 		Description: desc,

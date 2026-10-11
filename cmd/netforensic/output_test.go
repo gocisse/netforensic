@@ -219,9 +219,10 @@ func TestRootCmdWarnsAboutSkippedFrames(t *testing.T) {
 
 	t.Run("text: warning in the timeline and on stderr", func(t *testing.T) {
 		out, errOut := run(mixed)
-		assert.Contains(t, out, "[WARNING]  root_cause    Skipped Frames: 3 frames were skipped due to unsupported link-layer types or non-IP traffic. Analysis is based on the remaining 2 packets. (3 non-IP frames)")
-		assert.Contains(t, out, "Health Score: 90/100")
-		assert.Contains(t, out, "1x [WARNING] Capture: Skipped Frames")
+		assert.Contains(t, out, "[INFO]     issue         Skipped Frames: 3 frames were skipped due to unsupported link-layer types or non-IP traffic. Analysis is based on the remaining 2 packets. (3 non-IP frames)")
+		assert.Contains(t, out, "Health Score: 100/100 (HEALTHY)", "an informational note costs nothing")
+		assert.Contains(t, out, "No significant issues detected", "and is not a root cause")
+		assert.Contains(t, out, "1x [INFO] Capture: Skipped Frames")
 		assert.Contains(t, errOut, "warning: 3 of 5 frames were skipped")
 	})
 	t.Run("json: the issue carries the count", func(t *testing.T) {

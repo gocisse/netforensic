@@ -246,14 +246,18 @@ func (d *diagnosis) congestion(flows []models.Flow, issues []models.Issue) bool 
 
 // worst makes the most severe issue (earliest on ties) the primary cause.
 func (d *diagnosis) worst(issues []models.Issue) bool {
-	if len(issues) == 0 {
-		return false
-	}
-	best := issues[0]
-	for _, is := range issues[1:] {
-		if severityRank(is.Severity) > severityRank(best.Severity) {
-			best = is
+	var best models.Issue
+	found := false
+	for _, is := range issues {
+		if isNote(is) {
+			continue // a note about the capture explains nothing about the traffic
 		}
+		if !found || severityRank(is.Severity) > severityRank(best.Severity) {
+			best, found = is, true
+		}
+	}
+	if !found {
+		return false
 	}
 	conf := "low"
 	if severityRank(best.Severity) >= severityRank(models.SeverityError) {
@@ -280,6 +284,13 @@ func (d *diagnosis) fromIssue(is models.Issue, confidence string) {
 
 func severityRank(s models.Severity) int { return severityPenalty[s] }
 
+// isNote reports whether is is an informational note about the capture
+// itself, such as skipped frames. Notes are shown in the timeline but do not
+// lower the health score or become the primary cause.
+func isNote(is models.Issue) bool {
+	return is.Category == "Capture" && is.Severity == models.SeverityInfo
+}
+
 // minHealthScore is the floor of the health score. A capture can score
 // below 0 so that "very bad" and "catastrophic" stay distinguishable.
 const minHealthScore = -50
@@ -289,6 +300,9 @@ const minHealthScore = -50
 func healthScore(issues []models.Issue) int {
 	score := 100
 	for _, is := range issues {
+		if isNote(is) {
+			continue
+		}
 		score -= severityPenalty[is.Severity]
 	}
 	if score < minHealthScore {
@@ -316,7 +330,7 @@ func buildTimeline(packets []models.PacketInfo, issues []models.Issue, roles map
 			models.TimelineEvent{Timestamp: first, EventType: eventCaptureStart, Severity: models.SeverityInfo,
 				Description: fmt.Sprintf("Capture starts (%d packets)", len(packets))},
 			models.TimelineEvent{Timestamp: last, EventType: eventCaptureEnd, Severity: models.SeverityInfo,
-				Description: fmt.Sprintf("Capture ends (%s later)", last.Sub(first))},
+				Description: fmt.Sprintf("Capture ends (%s later)", formatDuration(last.Sub(first)))},
 		)
 	}
 
@@ -407,10 +421,6 @@ var categoryRecommendations = map[string][]string{
 	},
 	titleTimeoutRetransmit: {
 		"Severe congestion or blackhole detected. The sender waited for an RTO (Retransmission Timeout) before retrying. Investigate link quality or MTU issues.",
-	},
-	titleSkippedFrames: {
-		"Find out what the skipped frames are: decode the capture with tshark or convert it (for example with editcap) so that tunneled or otherwise encapsulated IP traffic becomes visible to this tool.",
-		"If they are only layer-2 control frames (spanning tree, LLDP, LACP) the analysis is complete and the warning can be ignored.",
 	},
 	titleStray: {
 		"Check whether the destinations are being scanned, or whether a firewall or NAT dropped the connection state so that later packets are answered with RSTs. If the capture is one-sided, the handshake may simply be on the other path.",
