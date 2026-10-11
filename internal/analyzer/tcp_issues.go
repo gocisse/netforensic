@@ -32,6 +32,7 @@ type connState struct {
 	sawSyn     bool
 	sawSynAck  bool
 	anySYN     bool // a SYN or SYN-ACK was seen, from either side
+	fromServer bool // at least one packet travelled from the server to the client
 	sawAck     bool // client ACK after the SYN-ACK: the handshake completed
 	data       bool // payload seen in either direction
 	fin        [2]bool
@@ -149,6 +150,9 @@ func (c *connState) observe(p models.PacketInfo) {
 	c.packets++
 	src := endpoint{p.SrcIP, p.SrcPort}
 	fromClient := src == c.client
+	if !fromClient {
+		c.fromServer = true
+	}
 	flags := p.TCPFlags
 	has := func(f string) bool { return hasTCPFlag(flags, f) }
 	if has("SYN") {

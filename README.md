@@ -207,10 +207,21 @@ Vite dev server proxies `/api` to `localhost:8181`. After changing the UI, run
   explanation can apply: on a one-sided capture, many SYNs with no captured
   reply can simply mean that the replies took another path
   (`cisco-example-lan.pcap` is such a capture, and is flagged this way).
+
+  To help judge that, both issues carry statistical evidence when the capture
+  looks one-sided: if more than 40% of its other TCP flows (at least 10; the
+  connections with unanswered SYNs are left out) are seen in one direction
+  only, the description ends with "Note: X% of the other TCP flows in this
+  capture are seen in one direction only, so missing replies may simply have
+  taken another path." It is a hint, not a verdict: the tool still cannot know
+  what happened on the missing path.
 - **Unsupported frames.** Frames with a link-layer type this tool cannot decode
   (for example Ethernet mPackets) and non-IP traffic (spanning tree, LLDP, ...)
-  are skipped. A "Skipped Frames" note says how many, and names the link type
-  (for example "link type 274 (Ethernet mPacket)"); it costs no health points.
+  are skipped. A "Skipped Frames" note says how many, names the link type
+  (for example "link type 274 (Ethernet mPacket)") and breaks the non-IP
+  frames down by what they carry, for example "2997 non-IP frames: 2373 STP,
+  169 Loopback, 455 Other" (the three most common kinds; the rest is counted
+  as "Other"). It costs no health points.
 - **Truncated files** are analyzed up to the cut and flagged; a file cut inside
   its first header cannot be read at all.
 - **Health score.** It starts at 100 and drops with every issue. It goes below 0

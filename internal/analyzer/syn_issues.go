@@ -2,6 +2,7 @@ package analyzer
 
 import (
 	"fmt"
+	"math"
 	"sort"
 	"strings"
 	"time"
@@ -24,6 +25,13 @@ const (
 	// SYNs to one ip:port within the window is a possible flood.
 	synFloodWindow    = 10 * time.Second
 	synFloodThreshold = 10
+
+	// oneWayMinFlows and oneWayThreshold: when more than this percentage of at
+	// least this many other TCP flows are seen in one direction only, the
+	// capture point probably misses one direction, which is offered as an
+	// explanation for the unanswered SYNs.
+	oneWayMinFlows  = 10
+	oneWayThreshold = 40
 )
 
 // synIssues reports handshakes that did not complete cleanly:
@@ -63,23 +71,64 @@ func synIssues(conns map[instKey]*connState, order []instKey, captureEnd time.Ti
 		}
 	}
 
+	note, noteOK := oneWayNote(conns, order, unanswered)
+
 	var issues []models.Issue
 	var rest []*connState
 	for _, t := range targets {
 		conns := unanswered[t]
 		if is, flood := synFloodIssue(t, conns); flood {
+			if noteOK {
+				is.Description += note
+			}
 			issues = append(issues, is)
 		} else {
 			rest = append(rest, conns...)
 		}
 	}
 	if len(rest) > 0 {
-		issues = append(issues, unansweredIssue(rest))
+		is := unansweredIssue(rest)
+		if noteOK {
+			is.Description += note
+		}
+		issues = append(issues, is)
 	}
 	if len(retried) > 0 {
 		issues = append(issues, retriedIssue(retried))
 	}
 	return issues
+}
+
+// oneWayNote returns the sentence to append to the unanswered-SYN issues if
+// the capture looks one-sided: more than oneWayThreshold percent of its TCP
+// flows were seen in one direction only. The connections with unanswered SYNs
+// are left out of the count, since they are what is being explained (a flood
+// of them would otherwise make every capture look one-sided). It reports false
+// if there are fewer than oneWayMinFlows other flows or they are mostly
+// two-way.
+func oneWayNote(conns map[instKey]*connState, order []instKey, unanswered map[string][]*connState) (string, bool) {
+	skip := make(map[*connState]struct{})
+	for _, list := range unanswered {
+		for _, c := range list {
+			skip[c] = struct{}{}
+		}
+	}
+	total, oneWay := 0, 0
+	for _, k := range order {
+		c := conns[k]
+		if _, ok := skip[c]; ok {
+			continue
+		}
+		total++
+		if !c.fromServer {
+			oneWay++
+		}
+	}
+	if total < oneWayMinFlows || oneWay*100 <= oneWayThreshold*total {
+		return "", false
+	}
+	pct := int(math.Round(float64(oneWay) * 100 / float64(total)))
+	return fmt.Sprintf(". Note: %d%% of the other TCP flows in this capture are seen in one direction only, so missing replies may simply have taken another path.", pct), true
 }
 
 // peakWindow returns the largest number of times that fit in any window,

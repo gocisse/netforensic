@@ -71,6 +71,11 @@ type ReadStats struct {
 	// SkippedNonIP counts frames that decoded but carry neither IP nor ARP,
 	// such as spanning tree, LLDP or other layer-2 control traffic.
 	SkippedNonIP int
+
+	// NonIPTypes breaks the non-IP frames down by what they carry, by name
+	// (for example "STP", "LLDP"); frames whose type is not in the tool's
+	// table of well-known ones are counted as "Other".
+	NonIPTypes map[string]int
 }
 
 // linkTypeNames names the unsupported link types that turn up in practice.
@@ -78,8 +83,55 @@ var linkTypeNames = map[int]string{
 	274: "Ethernet mPacket",
 }
 
+// maxNonIPTypes is how many kinds of non-IP frames Describe lists.
+const maxNonIPTypes = 3
+
+// nonIPBreakdown lists the most common kinds of non-IP frames, most frequent
+// first, as "1200 STP, 900 LLDP, 897 Other". It shows at most maxNonIPTypes
+// entries: if there are more kinds, the least common ones are added to
+// "Other", so the counts always add up to the number of non-IP frames.
+func nonIPBreakdown(types map[string]int) string {
+	other := types[otherFrameType]
+	var named []string
+	for name := range types {
+		if name != otherFrameType {
+			named = append(named, name)
+		}
+	}
+	sort.Slice(named, func(i, j int) bool {
+		if types[named[i]] != types[named[j]] {
+			return types[named[i]] > types[named[j]]
+		}
+		return named[i] < named[j]
+	})
+	room := maxNonIPTypes
+	if len(named)+btoi(other > 0) > maxNonIPTypes {
+		room-- // keep a place for "Other", which then also takes the rest
+	}
+	for _, name := range named[min(room, len(named)):] {
+		other += types[name]
+	}
+	named = named[:min(room, len(named))]
+
+	parts := make([]string, 0, maxNonIPTypes)
+	for _, name := range named {
+		parts = append(parts, fmt.Sprintf("%d %s", types[name], name))
+	}
+	if other > 0 {
+		parts = append(parts, fmt.Sprintf("%d %s", other, otherFrameType))
+	}
+	return strings.Join(parts, ", ")
+}
+
+func btoi(b bool) int {
+	if b {
+		return 1
+	}
+	return 0
+}
+
 // Describe says which frames were skipped, for example
-// "10667 frames of unsupported link type 274 (Ethernet mPacket); 3 non-IP frames". It is empty
+// "10667 frames of unsupported link type 274 (Ethernet mPacket); 3 non-IP frames: 2 STP, 1 LLDP". It is empty
 // if none were.
 func (s ReadStats) Describe() string {
 	var parts []string
@@ -96,7 +148,11 @@ func (s ReadStats) Describe() string {
 		parts = append(parts, fmt.Sprintf("%d frames of unsupported link type %d%s", s.UnsupportedLinkTypes[lt], lt, name))
 	}
 	if s.SkippedNonIP > 0 {
-		parts = append(parts, fmt.Sprintf("%d non-IP frames", s.SkippedNonIP))
+		part := fmt.Sprintf("%d non-IP frames", s.SkippedNonIP)
+		if b := nonIPBreakdown(s.NonIPTypes); b != "" {
+			part += ": " + b
+		}
+		parts = append(parts, part)
 	}
 	return strings.Join(parts, "; ")
 }
@@ -156,6 +212,10 @@ func ReadPacketsStats(filePath string, opts ReadOptions) ([]models.PacketInfo, R
 		if !ok {
 			if linkTypeSupported(lt) {
 				stats.SkippedNonIP++
+				if stats.NonIPTypes == nil {
+					stats.NonIPTypes = make(map[string]int)
+				}
+				stats.NonIPTypes[nonIPFrameType(pkt)]++
 			} else {
 				stats.SkippedUnsupportedLink++
 				if stats.UnsupportedLinkTypes == nil {
@@ -651,4 +711,89 @@ func tunnelOf(outer gopacket.Layer) string {
 		}
 	}
 	return src.String() + ">" + dst.String() + "/" + kind
+}
+
+// otherFrameType names the non-IP frames whose type the tool does not know.
+const otherFrameType = "Other"
+
+// etherTypeNames names the well-known EtherTypes of non-IP traffic.
+var etherTypeNames = map[layers.EthernetType]string{
+	layers.EthernetTypeLinkLayerDiscovery: "LLDP",
+	layers.EthernetTypeDot1Q:              "VLAN",
+	layers.EthernetTypeQinQ:               "VLAN",
+	layers.EthernetTypeARP:                "ARP",
+	layers.EthernetTypeMPLSUnicast:        "MPLS",
+	layers.EthernetTypeMPLSMulticast:      "MPLS",
+	layers.EthernetTypePPPoEDiscovery:     "PPPoE",
+	layers.EthernetTypePPPoESession:       "PPPoE",
+	layers.EthernetTypeEAPOL:              "EAPOL",
+	layers.EthernetTypeCiscoDiscovery:     "CDP",
+	layers.EthernetTypeERSPAN:             "ERSPAN",
+	0x8809:                                "Slow Protocols", // LACP, Ethernet synchronization (ESMC)
+	0x88f7:                                "PTP",
+	0x8902:                                "CFM",
+	0x9000:                                "Loopback",
+	0x88e5:                                "MACsec",
+	0x88e1:                                "HomePlug AV",
+}
+
+// snapTypeNames names the protocols that Cisco devices send in 802.2 SNAP
+// frames, by their protocol ID.
+var snapTypeNames = map[layers.EthernetType]string{
+	layers.EthernetTypeCiscoDiscovery: "CDP",
+	0x0111:                            "UDLD",
+	0x010b:                            "STP", // PVST+
+	0x2003:                            "VTP",
+	0x2004:                            "DTP",
+}
+
+// llcName names the protocol in an 802.2 LLC header at the start of p
+// (spanning tree, or a Cisco SNAP protocol), or returns "".
+func llcName(p []byte) string {
+	if len(p) < 3 {
+		return ""
+	}
+	if p[0] == 0x42 && p[1] == 0x42 {
+		return "STP"
+	}
+	if p[0] == 0xaa && p[1] == 0xaa && len(p) >= 8 {
+		return snapTypeNames[layers.EthernetType(uint16(p[6])<<8|uint16(p[7]))]
+	}
+	return ""
+}
+
+// nonIPFrameType names what a frame that carries no IP or ARP is: from the
+// innermost EtherType it declares, or, for IEEE 802.3 frames that give a
+// length instead of a type, from the LLC header (spanning tree is
+// recognized that way). Anything else is "Other".
+func nonIPFrameType(pkt gopacket.Packet) string {
+	name := otherFrameType
+	for _, l := range pkt.Layers() {
+		switch l := l.(type) {
+		case *layers.Ethernet:
+			if n, ok := etherTypeNames[l.EthernetType]; ok {
+				name = n
+			}
+		case *layers.Dot1Q:
+			name = "VLAN"
+			if n, ok := etherTypeNames[l.Type]; ok && l.Type != layers.EthernetTypeDot1Q {
+				name = n
+			} else if l.Type < 0x0600 { // a length: an 802.2 LLC frame inside the VLAN tag
+				if n := llcName(l.LayerPayload()); n != "" {
+					return n
+				}
+			}
+		case *layers.LLC:
+			if l.DSAP == 0x42 && l.SSAP == 0x42 {
+				return "STP"
+			}
+		case *layers.SNAP:
+			if n, ok := snapTypeNames[l.Type]; ok {
+				return n
+			}
+		case *layers.STP:
+			return "STP"
+		}
+	}
+	return name
 }

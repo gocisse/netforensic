@@ -8,6 +8,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -706,4 +707,104 @@ func TestReadPacketsGREWithUndecodedInner(t *testing.T) {
 	assert.Equal(t, "192.0.2.1", got[0].SrcIP)
 	assert.Equal(t, models.Protocol("GRE"), got[0].Protocol)
 	assert.Empty(t, got[0].Tunnel)
+}
+
+// l2Frame builds an Ethernet frame with the given type/length field and payload.
+func l2Frame(dst []byte, etherType uint16, payload []byte) []byte {
+	f := append([]byte{}, dst...)
+	f = append(f, 0, 1, 2, 3, 4, 5, byte(etherType>>8), byte(etherType))
+	return append(f, payload...)
+}
+
+func TestReadPacketsStatsNonIPBreakdown(t *testing.T) {
+	stpDst := []byte{0x01, 0x80, 0xc2, 0x00, 0x00, 0x00}
+	lldpDst := []byte{0x01, 0x80, 0xc2, 0x00, 0x00, 0x0e}
+	cdpDst := []byte{0x01, 0x00, 0x0c, 0xcc, 0xcc, 0xcc}
+	pad := make([]byte, 40)
+
+	llcSTP := append([]byte{0x42, 0x42, 0x03}, pad...)
+	snap := func(pid uint16) []byte {
+		return append([]byte{0xaa, 0xaa, 0x03, 0x00, 0x00, 0x0c, byte(pid >> 8), byte(pid)}, pad...)
+	}
+	vlan := func(inner uint16, payload []byte) []byte {
+		return append([]byte{0x00, 0x01, byte(inner >> 8), byte(inner)}, payload...)
+	}
+	llcLen := uint16(3 + len(pad))
+
+	frames := []struct {
+		name  string
+		frame []byte
+		want  string
+	}{
+		{"spanning tree over LLC", l2Frame(stpDst, llcLen, llcSTP), "STP"},
+		{"spanning tree in a VLAN tag", l2Frame(stpDst, 0x8100, vlan(llcLen, llcSTP)), "STP"},
+		{"LLDP", l2Frame(lldpDst, 0x88cc, pad), "LLDP"},
+		{"CDP over SNAP", l2Frame(cdpDst, uint16(8+len(pad)), snap(0x2000)), "CDP"},
+		{"UDLD over SNAP", l2Frame(cdpDst, uint16(8+len(pad)), snap(0x0111)), "UDLD"},
+		{"EAPOL in a VLAN tag", l2Frame(lldpDst, 0x8100, vlan(0x888e, pad)), "EAPOL"},
+		{"PTP", l2Frame(lldpDst, 0x88f7, pad), "PTP"},
+		{"an EtherType the tool has no name for", l2Frame(lldpDst, 0x1234, pad), "Other"},
+	}
+
+	var raw [][]byte
+	want := make(map[string]int)
+	for _, tt := range frames {
+		raw = append(raw, tt.frame)
+		want[tt.want]++
+	}
+	// an IP packet is analyzed, not counted among the skipped frames
+	raw = append(raw, serialize(t, layers.IPProtocolUDP, clientIP, serverIP, &layers.UDP{SrcPort: 1, DstPort: 2}, nil))
+
+	path := filepath.Join(t.TempDir(), "l2.pcap")
+	writePCAP(t, path, raw)
+	packets, stats, err := ReadPacketsStats(path, ReadOptions{})
+	require.NoError(t, err)
+	assert.Len(t, packets, 1)
+	assert.Equal(t, len(frames), stats.SkippedNonIP)
+	assert.Equal(t, want, stats.NonIPTypes)
+
+	// each frame on its own, to see that it was named for the right reason
+	for _, tt := range frames {
+		t.Run(tt.name, func(t *testing.T) {
+			p := filepath.Join(t.TempDir(), "one.pcap")
+			writePCAP(t, p, [][]byte{tt.frame})
+			_, s, err := ReadPacketsStats(p, ReadOptions{})
+			require.NoError(t, err)
+			assert.Equal(t, map[string]int{tt.want: 1}, s.NonIPTypes)
+		})
+	}
+}
+
+func TestNonIPBreakdown(t *testing.T) {
+	tests := []struct {
+		name  string
+		types map[string]int
+		want  string
+	}{
+		{"none", nil, ""},
+		{"one kind", map[string]int{"STP": 5}, "5 STP"},
+		{"most frequent first", map[string]int{"LLDP": 2, "STP": 7}, "7 STP, 2 LLDP"},
+		{"ties are ordered by name", map[string]int{"STP": 3, "LLDP": 3}, "3 LLDP, 3 STP"},
+		{"Other comes last, whatever its count", map[string]int{"STP": 1, "Other": 9, "LLDP": 2}, "2 LLDP, 1 STP, 9 Other"},
+		{"three named kinds fit", map[string]int{"STP": 3, "LLDP": 2, "CDP": 1}, "3 STP, 2 LLDP, 1 CDP"},
+		{"four named kinds: the rest is folded into Other", map[string]int{"STP": 5, "LLDP": 4, "CDP": 3, "PTP": 2}, "5 STP, 4 LLDP, 5 Other"},
+		{"many kinds and an Other of its own", map[string]int{"STP": 5, "LLDP": 4, "CDP": 3, "PTP": 2, "VLAN": 1, "Other": 10}, "5 STP, 4 LLDP, 16 Other"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := nonIPBreakdown(tt.types)
+			assert.Equal(t, tt.want, got)
+			assert.LessOrEqual(t, strings.Count(got, ",")+1, maxNonIPTypes, "never more than three entries")
+		})
+	}
+}
+
+func TestReadStatsDescribeNonIPBreakdown(t *testing.T) {
+	s := ReadStats{
+		SkippedUnsupportedLink: 10667,
+		UnsupportedLinkTypes:   map[int]int{274: 10667},
+		SkippedNonIP:           2997,
+		NonIPTypes:             map[string]int{"STP": 1200, "LLDP": 900, "Other": 897},
+	}
+	assert.Equal(t, "10667 frames of unsupported link type 274 (Ethernet mPacket); 2997 non-IP frames: 1200 STP, 900 LLDP, 897 Other", s.Describe())
 }
