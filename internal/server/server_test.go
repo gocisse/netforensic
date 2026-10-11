@@ -372,7 +372,28 @@ func TestStaticFiles(t *testing.T) {
 	rec = get(h, "/../secret") // the mux cleans the path, so it cannot climb out of the tree
 	assert.Equal(t, http.StatusTemporaryRedirect, rec.Code)
 	assert.Equal(t, "/secret", rec.Header().Get("Location"))
-	assert.Equal(t, http.StatusNotFound, get(h, "/secret").Code)
+
+	t.Run("page routes get the page, so a reload or a pasted link works", func(t *testing.T) {
+		for _, p := range []string{"/analysis/0123abcd", "/analysis/0123abcd/tcp", "/analysis/0123abcd/dhcpv6?severity=ERROR", "/secret", "/analysis/x/y/z"} {
+			rec := get(h, p)
+			assert.Equal(t, http.StatusOK, rec.Code, p)
+			assert.Contains(t, rec.Body.String(), "<title>ui</title>", p)
+			assert.Contains(t, rec.Header().Get("Content-Type"), "text/html", p)
+		}
+		// but not for files, which stay 404, nor for the API
+		for _, p := range []string{"/nope.js", "/assets/missing.css", "/favicon.ico", "/api/nope", "/api/analysis/x/y.csv"} {
+			rec := get(h, p)
+			assert.NotContains(t, rec.Body.String(), "<title>ui</title>", p)
+		}
+		assert.Equal(t, http.StatusNotFound, get(h, "/api/nope").Code)
+		// only GET and HEAD
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/analysis/x", nil))
+		assert.NotContains(t, rec.Body.String(), "<title>ui</title>")
+		rec = httptest.NewRecorder()
+		h.ServeHTTP(rec, httptest.NewRequest(http.MethodHead, "/analysis/x/tcp", nil))
+		assert.Equal(t, http.StatusOK, rec.Code)
+	})
 
 	t.Run("the frontend has not been built", func(t *testing.T) {
 		unbuilt := authed(t, fstest.MapFS{".gitkeep": {}}, maxUploadBytes)

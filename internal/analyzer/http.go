@@ -53,16 +53,25 @@ func analyzeHTTP(packets []models.PacketInfo) []models.Issue {
 		}
 		switch {
 		case p.HTTPStatusCode >= 500:
-			issues = append(issues, httpIssue("server-error", models.SeverityError, "HTTP Server Error", p, host,
-				fmt.Sprintf("%s returned status %d", what, p.HTTPStatusCode)))
+			is := httpIssue("server-error", models.SeverityError, "HTTP Server Error", p, host,
+				fmt.Sprintf("%s returned status %d", what, p.HTTPStatusCode))
+			is.WiresharkFilter = and(packetStreamTerm(p), fmt.Sprintf("http.response.code == %d", p.HTTPStatusCode))
+			issues = append(issues, is)
 		case p.HTTPStatusCode >= 400:
-			issues = append(issues, httpIssue("client-error", models.SeverityWarning, "HTTP Client Error", p, host,
-				fmt.Sprintf("%s returned status %d", what, p.HTTPStatusCode)))
+			is := httpIssue("client-error", models.SeverityWarning, "HTTP Client Error", p, host,
+				fmt.Sprintf("%s returned status %d", what, p.HTTPStatusCode))
+			is.WiresharkFilter = and(packetStreamTerm(p), fmt.Sprintf("http.response.code == %d", p.HTTPStatusCode))
+			issues = append(issues, is)
 		}
 		if req != nil {
 			if rtt := p.Timestamp.Sub(req.Timestamp); rtt > httpSlowResponse {
-				issues = append(issues, httpIssue("slow", models.SeverityInfo, "HTTP Slow Response", *req, host,
-					fmt.Sprintf("%s took %s to answer (status %d)", what, rtt, p.HTTPStatusCode)))
+				is := httpIssue("slow", models.SeverityInfo, "HTTP Slow Response", *req, host,
+					fmt.Sprintf("%s took %s to answer (status %d)", what, rtt, p.HTTPStatusCode))
+				// the request and its response: the delay between them is the
+				// time between the two frames (Wireshark's http.time is only
+				// set on the last segment of a response, and not always)
+				is.WiresharkFilter = and(packetStreamTerm(*req), "(http.request || http.response)")
+				issues = append(issues, is)
 			}
 		}
 	}

@@ -2,6 +2,7 @@ import { Fragment, useMemo, useState } from 'react'
 import { protocolColor, severityColor } from '../../format'
 import type { Issue, Severity } from '../../types'
 import OccurrenceTable from '../OccurrenceTable'
+import IssueGuidance from './IssueGuidance'
 import Badge from '../ui/Badge'
 import Button from '../ui/Button'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../ui/Table'
@@ -31,10 +32,12 @@ interface Props {
   filtered: boolean
   /** Clears the filters; offered by the empty message when they are set. */
   onClearFilters?: () => void
+  /** The capture's file name, for the Wireshark commands. */
+  captureName: string
 }
 
 /** A sortable data table of issues; rows with events expand into a drill-down. */
-export default function IssuesTable({ issues, filtered, onClearFilters }: Props) {
+export default function IssuesTable({ issues, filtered, onClearFilters, captureName }: Props) {
   const [showAll, setShowAll] = useState(false)
   const [sort, setSort] = useState<{ key: SortKey; dir: SortDir }>({ key: 'severity', dir: 'desc' })
   const [open, setOpen] = useState<Set<string>>(new Set())
@@ -113,7 +116,7 @@ export default function IssuesTable({ issues, filtered, onClearFilters }: Props)
           <TableBody>
             {shown.map((issue) => {
               const occurrences = issue.occurrences ?? []
-              const expanded = open.has(issue.id) && occurrences.length > 0
+              const expanded = open.has(issue.id)
               return (
                 <Fragment key={issue.id}>
                   <TableRow
@@ -162,23 +165,23 @@ export default function IssuesTable({ issues, filtered, onClearFilters }: Props)
                       {(issue.count ?? 1) > 1 ? <span className="rounded-full bg-gray-100 dark:bg-gray-800 px-2 py-0.5 text-theme-xs text-gray-600 dark:text-gray-400">×{issue.count}</span> : ''}
                     </TableCell>
                     <TableCell className="whitespace-nowrap text-right">
-                      {occurrences.length > 0 && (
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          className="px-3 py-1.5 text-xs"
-                          aria-expanded={expanded}
-                          onClick={() => toggleOpen(issue.id)}
-                        >
-                          {expanded ? 'Hide details' : `View details (${occurrences.length.toLocaleString()})`}
-                        </Button>
-                      )}
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="px-3 py-1.5 text-xs"
+                        aria-expanded={expanded}
+                        data-testid="issue-details-toggle"
+                        onClick={() => toggleOpen(issue.id)}
+                      >
+                        {expanded ? 'Hide details' : occurrences.length > 0 ? `View details (${occurrences.length.toLocaleString()})` : 'View details'}
+                      </Button>
                     </TableCell>
                   </TableRow>
                   {expanded && (
                     <TableRow data-testid="issue-details">
-                      <TableCell colSpan={5} className="bg-gray-50/60 dark:bg-white/[0.03] pb-4 pt-0">
-                        <OccurrenceTable issue={issue} occurrences={occurrences} />
+                      <TableCell colSpan={5} className="space-y-4 bg-gray-50/60 dark:bg-white/[0.03] pb-4 pt-3">
+                        <IssueGuidance issue={issue} captureName={captureName} />
+                        {occurrences.length > 0 && <OccurrenceTable issue={issue} occurrences={occurrences} />}
                       </TableCell>
                     </TableRow>
                   )}

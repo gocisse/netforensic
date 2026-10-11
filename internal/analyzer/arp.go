@@ -62,10 +62,11 @@ func arpStorms(arp []models.PacketInfo) []models.Issue {
 			}
 		}
 		issues = append(issues, models.Issue{
-			ID:       fmt.Sprintf("arp-storm-%d", reqs[start].Timestamp.UnixNano()),
-			Severity: models.SeverityWarning,
-			Category: "ARP",
-			Title:    "ARP Storm",
+			ID:              fmt.Sprintf("arp-storm-%d", reqs[start].Timestamp.UnixNano()),
+			Severity:        models.SeverityWarning,
+			Category:        "ARP",
+			Title:           "ARP Storm",
+			WiresharkFilter: and("arp.opcode == 1", fmt.Sprintf("arp.src.proto_ipv4 == %s", top)),
 			Description: fmt.Sprintf("%d ARP requests within %s starting at %s; busiest sender %s (%d requests)",
 				n, reqs[end].Timestamp.Sub(reqs[start].Timestamp).Round(time.Millisecond), reqs[start].Timestamp.UTC().Format("15:04:05"), top, topN),
 			Timestamp: reqs[start].Timestamp,
@@ -99,12 +100,13 @@ func arpDuplicates(arp []models.PacketInfo) []models.Issue {
 		}
 		reported[ip+"/"+mac] = true
 		issues = append(issues, models.Issue{
-			ID:          fmt.Sprintf("arp-duplicate-%s-%s", ip, mac),
-			Severity:    models.SeverityCritical,
-			Category:    "ARP",
-			Title:       "Duplicate IP Address",
-			Description: fmt.Sprintf("IP %s is claimed by both %s and %s", ip, prev, mac),
-			Timestamp:   p.Timestamp,
+			ID:              fmt.Sprintf("arp-duplicate-%s-%s", ip, mac),
+			Severity:        models.SeverityCritical,
+			Category:        "ARP",
+			Title:           "Duplicate IP Address",
+			WiresharkFilter: fmt.Sprintf("arp.src.proto_ipv4 == %s", ip),
+			Description:     fmt.Sprintf("IP %s is claimed by both %s and %s", ip, prev, mac),
+			Timestamp:       p.Timestamp,
 		})
 	}
 	return issues

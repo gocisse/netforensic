@@ -78,3 +78,33 @@ export function ipKey(s: string): string | null {
 export function isIP(s: string): boolean {
   return ipKey(s) !== null
 }
+
+/**
+ * Writes an address as a person would: IPv6 with leading zeros dropped and the
+ * longest run of zero groups as "::". It takes the form ipKey returns, and
+ * returns anything else unchanged.
+ */
+export function displayIP(key: string): string {
+  const groups = key.split(':')
+  if (groups.length !== 8 || !groups.every((g) => /^[0-9a-f]{4}$/.test(g))) return key
+  const g = groups.map((x) => x.replace(/^0+(?=.)/, ''))
+  let bestStart = -1
+  let bestLen = 0
+  for (let i = 0; i < 8; ) {
+    if (g[i] !== '0') {
+      i++
+      continue
+    }
+    let j = i
+    while (j < 8 && g[j] === '0') j++
+    if (j - i > bestLen) {
+      bestStart = i
+      bestLen = j - i
+    }
+    i = j
+  }
+  if (bestLen < 2) return g.join(':')
+  const head = g.slice(0, bestStart).join(':')
+  const tail = g.slice(bestStart + bestLen).join(':')
+  return `${head}::${tail}`
+}

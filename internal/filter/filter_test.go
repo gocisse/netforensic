@@ -104,8 +104,8 @@ func TestMatchFlow(t *testing.T) {
 		want  bool
 	}{
 		{"no filter", "", web, true},
-		{"source IP is either endpoint: the source", "source_ip=10.0.0.1", web, true},
-		{"source IP is either endpoint: the destination", "source_ip=93.184.216.34", web, true},
+		{"source IP is either Endpoint: the source", "source_ip=10.0.0.1", web, true},
+		{"source IP is either Endpoint: the destination", "source_ip=93.184.216.34", web, true},
 		{"another IP", "source_ip=10.9.9.9", web, false},
 		{"source and destination, in order", "source_ip=10.0.0.1&dest_ip=93.184.216.34", web, true},
 		{"source and destination, reversed", "source_ip=93.184.216.34&dest_ip=10.0.0.1", web, true},
@@ -144,20 +144,20 @@ func TestMatchFlow(t *testing.T) {
 func TestParseRef(t *testing.T) {
 	tests := []struct {
 		ref  string
-		want []endpoint
+		want []Endpoint
 	}{
-		{"10.0.0.1", []endpoint{{"10.0.0.1", 0}}},
-		{"10.0.0.1:443", []endpoint{{"10.0.0.1", 443}}},
-		{"[2001:db8::1]:443", []endpoint{{"2001:0db8:0000:0000:0000:0000:0000:0001", 443}}},
-		{"2001:db8::1", []endpoint{{"2001:0db8:0000:0000:0000:0000:0000:0001", 0}}},
-		{"[2001:db8::1]", []endpoint{{"2001:0db8:0000:0000:0000:0000:0000:0001", 0}}},
-		{"10.0.0.1:1000-10.0.0.2:80", []endpoint{{"10.0.0.1", 1000}, {"10.0.0.2", 80}}},
-		{"10.0.0.1:1000-10.0.0.2:80#2", []endpoint{{"10.0.0.1", 1000}, {"10.0.0.2", 80}}},
-		{"10.0.0.1:1000-10.0.0.2:80@GRE:192.0.2.1~192.0.2.2", []endpoint{{"10.0.0.1", 1000}, {"10.0.0.2", 80}}},
-		{"10.0.0.1:1000-10.0.0.2:80#3@IP-in-IP:192.0.2.1~192.0.2.2", []endpoint{{"10.0.0.1", 1000}, {"10.0.0.2", 80}}},
-		{"[2001:db8::1]:5-[2001:db8::2]:6", []endpoint{{"2001:0db8:0000:0000:0000:0000:0000:0001", 5}, {"2001:0db8:0000:0000:0000:0000:0000:0002", 6}}},
-		{"10.0.0.1:0-10.0.0.2:0", []endpoint{{"10.0.0.1", 0}, {"10.0.0.2", 0}}},
-		{"::ffff:10.0.0.1", []endpoint{{"10.0.0.1", 0}}},
+		{"10.0.0.1", []Endpoint{{"10.0.0.1", 0}}},
+		{"10.0.0.1:443", []Endpoint{{"10.0.0.1", 443}}},
+		{"[2001:db8::1]:443", []Endpoint{{"2001:0db8:0000:0000:0000:0000:0000:0001", 443}}},
+		{"2001:db8::1", []Endpoint{{"2001:0db8:0000:0000:0000:0000:0000:0001", 0}}},
+		{"[2001:db8::1]", []Endpoint{{"2001:0db8:0000:0000:0000:0000:0000:0001", 0}}},
+		{"10.0.0.1:1000-10.0.0.2:80", []Endpoint{{"10.0.0.1", 1000}, {"10.0.0.2", 80}}},
+		{"10.0.0.1:1000-10.0.0.2:80#2", []Endpoint{{"10.0.0.1", 1000}, {"10.0.0.2", 80}}},
+		{"10.0.0.1:1000-10.0.0.2:80@GRE:192.0.2.1~192.0.2.2", []Endpoint{{"10.0.0.1", 1000}, {"10.0.0.2", 80}}},
+		{"10.0.0.1:1000-10.0.0.2:80#3@IP-in-IP:192.0.2.1~192.0.2.2", []Endpoint{{"10.0.0.1", 1000}, {"10.0.0.2", 80}}},
+		{"[2001:db8::1]:5-[2001:db8::2]:6", []Endpoint{{"2001:0db8:0000:0000:0000:0000:0000:0001", 5}, {"2001:0db8:0000:0000:0000:0000:0000:0002", 6}}},
+		{"10.0.0.1:0-10.0.0.2:0", []Endpoint{{"10.0.0.1", 0}, {"10.0.0.2", 0}}},
+		{"::ffff:10.0.0.1", []Endpoint{{"10.0.0.1", 0}}},
 
 		{"", nil},
 		{"download.windowsupdate.com", nil},
@@ -171,7 +171,7 @@ func TestParseRef(t *testing.T) {
 		{"-10.0.0.1:80", nil},
 	}
 	for _, tt := range tests {
-		assert.Equal(t, tt.want, parseRef(tt.ref), tt.ref)
+		assert.Equal(t, tt.want, ParseRef(tt.ref), tt.ref)
 	}
 }
 

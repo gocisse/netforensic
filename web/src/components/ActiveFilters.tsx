@@ -20,9 +20,12 @@ function tagsOf(f: FilterState): Tag[] {
   return tags
 }
 
-/** The applied filters as removable tags. Shows nothing when there are none. */
-export default function ActiveFilters({ filters }: { filters: Filters }) {
-  const tags = tagsOf(filters.applied)
+/**
+ * The applied filters as removable tags. Shows nothing when there are none.
+ * `omit` leaves out the tags of filters the page does not use.
+ */
+export default function ActiveFilters({ filters, omit = [] }: { filters: Filters; omit?: string[] }) {
+  const tags = tagsOf(filters.applied).filter((t) => !omit.includes(t.key))
   if (tags.length === 0) return null
   return (
     <div className="flex flex-wrap items-center gap-2" data-testid="active-filters" aria-label="Active filters">

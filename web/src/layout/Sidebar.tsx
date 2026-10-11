@@ -1,4 +1,5 @@
 import type { ComponentType, SVGProps } from 'react'
+import { NavLink } from 'react-router-dom'
 import { GridIcon, LockIcon, LogoutIcon } from '../icons'
 import Logo from '../components/Logo'
 
@@ -18,9 +19,28 @@ interface ItemProps {
   collapsed: boolean
   active?: boolean
   onClick?: () => void
+  /** Makes the item a link to a page. */
+  to?: string
 }
 
-function Item({ icon: Icon, label, collapsed, active = false, onClick }: ItemProps) {
+function Item({ icon: Icon, label, collapsed, active = false, onClick, to }: ItemProps) {
+  if (to) {
+    return (
+      <li>
+        <NavLink
+          to={to}
+          onClick={onClick}
+          title={collapsed ? label : undefined}
+          className={`group flex w-full items-center gap-3 rounded-lg px-3 py-2 text-theme-sm font-medium transition ${
+            active ? 'bg-brand-50 dark:bg-brand-500/15 text-brand-500' : 'text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800'
+          } ${collapsed ? 'xl:justify-center xl:px-0' : ''}`}
+        >
+          <Icon className={`h-6 w-6 flex-none ${active ? 'text-brand-500' : 'text-gray-500 dark:text-gray-400'}`} />
+          <span className={collapsed ? 'xl:hidden' : ''}>{label}</span>
+        </NavLink>
+      </li>
+    )
+  }
   return (
     <li>
       <button
@@ -70,7 +90,7 @@ export default function Sidebar({ collapsed, mobileOpen, onChangePassword, onLog
 
       <nav className="flex flex-1 flex-col gap-6 overflow-y-auto" aria-label="Main">
         <Group title="Menu" collapsed={collapsed}>
-          <Item icon={GridIcon} label="Analyzer" collapsed={collapsed} active onClick={onNavigate} />
+          <Item icon={GridIcon} label="Analyzer" collapsed={collapsed} active to="/" onClick={onNavigate} />
         </Group>
         <Group title="Account" collapsed={collapsed}>
           <Item

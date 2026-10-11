@@ -42,15 +42,19 @@ func analyzeTLS(packets []models.PacketInfo) []models.Issue {
 			offered, okO := tlsRank[ch.TLSVersion]
 			chosen, okC := tlsRank[p.TLSVersion]
 			if okO && okC && offered >= tlsRank["TLS 1.2"] && chosen < tlsRank["TLS 1.2"] {
-				issues = append(issues, tlsIssue("downgrade", models.SeverityWarning, "TLS Protocol Downgrade", p,
-					fmt.Sprintf("client %s offered %s but server %s selected %s", ch.SrcIP, ch.TLSVersion, p.SrcIP, p.TLSVersion)))
+				is := tlsIssue("downgrade", models.SeverityWarning, "TLS Protocol Downgrade", p,
+					fmt.Sprintf("client %s offered %s but server %s selected %s", ch.SrcIP, ch.TLSVersion, p.SrcIP, p.TLSVersion))
+				is.WiresharkFilter = and(packetStreamTerm(p), "(tls.handshake.type == 1 || tls.handshake.type == 2)")
+				issues = append(issues, is)
 			}
 
 		case "Alert":
 			d := p.TLSAlertDescription
 			if strings.Contains(d, "handshake_failure") || strings.Contains(d, "bad_certificate") {
-				issues = append(issues, tlsIssue("handshake-failure", models.SeverityError, "TLS Handshake Failure", p,
-					fmt.Sprintf("%s alert (%s) sent by %s to %s", d, p.TLSAlertLevel, p.SrcIP, p.DstIP)))
+				is := tlsIssue("handshake-failure", models.SeverityError, "TLS Handshake Failure", p,
+					fmt.Sprintf("%s alert (%s) sent by %s to %s", d, p.TLSAlertLevel, p.SrcIP, p.DstIP))
+				is.WiresharkFilter = and(packetStreamTerm(p), "tls.alert_message")
+				issues = append(issues, is)
 			}
 		}
 	}

@@ -3,6 +3,7 @@ package pcap
 import (
 	"bytes"
 	"encoding/binary"
+	"net"
 	"os"
 	"path/filepath"
 	"testing"
@@ -12,6 +13,8 @@ import (
 	"github.com/google/gopacket/pcapgo"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/gocisse/netforensic/internal/models"
 )
 
 // ngFile builds a little-endian pcapng file with one interface per entry of
@@ -150,6 +153,78 @@ func TestBlockTrackerRealLinkType(t *testing.T) {
 			assert.Equal(t, tt.wantOK, ok)
 			if ok {
 				assert.Equal(t, tt.want, got)
+			}
+		})
+	}
+}
+
+func TestStreamsReliable(t *testing.T) {
+	tests := []struct {
+		name  string
+		stats ReadStats
+		want  bool
+	}{
+		{"nothing skipped", ReadStats{Frames: 10}, true},
+		{"layer-2 control traffic that never carries TCP", ReadStats{SkippedNonIP: 5, NonIPTypes: map[string]int{"STP": 3, "LLDP": 1, "CDP": 1}}, true},
+		{"every safe kind", ReadStats{SkippedNonIP: 11, NonIPTypes: map[string]int{"STP": 1, "LLDP": 1, "CDP": 1, "UDLD": 1, "VTP": 1, "DTP": 1, "EAPOL": 1, "PTP": 1, "CFM": 1, "Slow Protocols": 1, "Loopback": 1}}, true},
+		{"frames of an unsupported link type", ReadStats{SkippedUnsupportedLink: 1, UnsupportedLinkTypes: map[int]int{274: 1}}, false},
+		{"PPPoE may carry TCP", ReadStats{SkippedNonIP: 1, NonIPTypes: map[string]int{"PPPoE": 1}}, false},
+		{"an unknown kind may carry TCP", ReadStats{SkippedNonIP: 1, NonIPTypes: map[string]int{"Other": 1}}, false},
+		{"a tagged frame whose inner type is not understood", ReadStats{SkippedNonIP: 1, NonIPTypes: map[string]int{"VLAN": 1}}, false},
+		{"MPLS", ReadStats{SkippedNonIP: 1, NonIPTypes: map[string]int{"MPLS": 1}}, false},
+		{"one unsafe kind among safe ones", ReadStats{SkippedNonIP: 2, NonIPTypes: map[string]int{"STP": 1, "ERSPAN": 1}}, false},
+		{"fragmented TCP segments", ReadStats{TCPFragments: 1}, false},
+	}
+	for _, tt := range tests {
+		assert.Equal(t, tt.want, tt.stats.streamsReliable(), tt.name)
+	}
+}
+
+func TestReadPacketsStampsStreamsOnlyWhenTheyCanBeTrusted(t *testing.T) {
+	syn := func(sport uint16) []byte {
+		return serialize(t, layers.IPProtocolTCP, clientIP, serverIP, &layers.TCP{SrcPort: layers.TCPPort(sport), DstPort: 80, SYN: true, Seq: 1, Window: 100}, nil)
+	}
+	lldp := append([]byte{0x01, 0x80, 0xc2, 0x00, 0x00, 0x0e, 0, 1, 2, 3, 4, 5, 0x88, 0xcc}, make([]byte, 30)...)
+	pppoe := append([]byte{0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0, 1, 2, 3, 4, 5, 0x88, 0x64}, make([]byte, 30)...)
+	// the first fragment of a TCP segment: IPv4 with More Fragments set and no TCP header decoded
+	fragment := func() []byte {
+		eth := &layers.Ethernet{SrcMAC: net.HardwareAddr{0, 1, 2, 3, 4, 5}, DstMAC: net.HardwareAddr{6, 7, 8, 9, 10, 11}, EthernetType: layers.EthernetTypeIPv4}
+		ip := &layers.IPv4{Version: 4, IHL: 5, TTL: 64, Protocol: layers.IPProtocolTCP, SrcIP: clientIP, DstIP: serverIP, Flags: layers.IPv4MoreFragments}
+		buf := gopacket.NewSerializeBuffer()
+		require.NoError(t, gopacket.SerializeLayers(buf, gopacket.SerializeOptions{FixLengths: true}, eth, ip, gopacket.Payload(make([]byte, 40))))
+		return buf.Bytes()
+	}()
+
+	tests := []struct {
+		name         string
+		frames       [][]byte
+		wantStreams  bool
+		wantFragment int
+	}{
+		{"plain TCP", [][]byte{syn(1000), syn(1001)}, true, 0},
+		{"with spanning-tree-like control traffic", [][]byte{syn(1000), lldp, syn(1001)}, true, 0},
+		{"with a PPPoE frame the tool cannot look into", [][]byte{syn(1000), pppoe, syn(1001)}, false, 0},
+		{"with a fragmented TCP segment", [][]byte{syn(1000), fragment, syn(1001)}, false, 1},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "streams.pcap")
+			writePCAP(t, path, tt.frames)
+			packets, stats, err := ReadPacketsStats(path, ReadOptions{})
+			require.NoError(t, err)
+			assert.Equal(t, tt.wantFragment, stats.TCPFragments)
+			var tcp []models.PacketInfo
+			for _, p := range packets {
+				if p.Protocol == models.ProtocolTCP {
+					tcp = append(tcp, p)
+				}
+			}
+			require.Len(t, tcp, 2)
+			for i, p := range tcp {
+				assert.Equal(t, tt.wantStreams, p.StreamKnown)
+				if tt.wantStreams {
+					assert.Equal(t, i, p.Stream)
+				}
 			}
 		})
 	}

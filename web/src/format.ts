@@ -25,6 +25,11 @@ export function healthTone(score: number): Tone {
 
 const SEVERITY_RANK: Record<Severity, number> = { CRITICAL: 3, ERROR: 2, WARNING: 1, INFO: 0 }
 
+/** How severe a severity is: higher is worse. */
+export function severityRank(severity: Severity): number {
+  return SEVERITY_RANK[severity]
+}
+
 /** The badge color of a severity. */
 export function severityColor(severity: Severity): 'error' | 'warning' | 'info' {
   switch (severity) {

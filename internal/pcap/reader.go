@@ -77,6 +77,10 @@ type ReadStats struct {
 	// table of well-known ones are counted as "Other".
 	NonIPTypes map[string]int
 
+	// TCPFragments counts IPv4 fragments of TCP segments, which carry no TCP
+	// header of their own and are not reassembled.
+	TCPFragments int
+
 	// Metadata is what a pcapng file says about its creation, or nil (for a
 	// classic pcap file, or one that says nothing).
 	Metadata *models.CaptureMetadata
@@ -201,7 +205,7 @@ func ReadPacketsStats(filePath string, opts ReadOptions) ([]models.PacketInfo, R
 		if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
 			// The file was cut off mid-record, as happens with ring buffers
 			// and crashed captures. Keep what was read.
-			models.AssignConnections(packets)
+			stampConnections(packets, stats)
 			annotateHandshakes(packets)
 			stats.Metadata = src.metadata()
 			return packets, stats, &TruncatedError{Packets: len(packets), Err: err}
@@ -214,6 +218,9 @@ func ReadPacketsStats(filePath string, opts ReadOptions) ([]models.PacketInfo, R
 		lt := src.linkType(ci)
 		pkt := gopacket.NewPacket(data, lt, gopacket.NoCopy)
 		info, ok := packetInfo(pkt)
+		if ok && isTCPFragment(pkt) {
+			stats.TCPFragments++
+		}
 		if !ok {
 			if linkTypeSupported(lt) {
 				stats.SkippedNonIP++
@@ -237,7 +244,7 @@ func ReadPacketsStats(filePath string, opts ReadOptions) ([]models.PacketInfo, R
 		info.Size = ci.Length
 		packets = append(packets, info)
 	}
-	models.AssignConnections(packets)
+	stampConnections(packets, stats)
 	annotateHandshakes(packets)
 	stats.Metadata = src.metadata()
 	return packets, stats, nil
@@ -378,6 +385,18 @@ func tcpFlags(t *layers.TCP) string {
 	return strings.Join(flags, ",")
 }
 
+// tcpFlagNames names the flags in the flag byte of a TCP header, as tcpFlags
+// does.
+func tcpFlagNames(b byte) string {
+	var flags []string
+	for i, name := range []string{"FIN", "SYN", "RST", "PSH", "ACK", "URG", "ECE", "CWR"} {
+		if b&(1<<i) != 0 {
+			flags = append(flags, name)
+		}
+	}
+	return strings.Join(flags, ",")
+}
+
 // fillARP sets the ARP fields on info. SrcIP and DstIP carry the sender and
 // target protocol addresses so ARP packets fit the generic packet view.
 func fillARP(info *models.PacketInfo, a *layers.ARP) {
@@ -436,6 +455,11 @@ func fillICMPOriginal(info *models.PacketInfo, payload []byte) {
 		if len(payload) >= ihl+4 {
 			info.ICMPOrigSrcPort = uint16(payload[ihl])<<8 | uint16(payload[ihl+1])
 			info.ICMPOrigDstPort = uint16(payload[ihl+2])<<8 | uint16(payload[ihl+3])
+		}
+		if payload[9] == 6 && len(payload) >= ihl+20 {
+			info.ICMPOrigFullTCP = true
+			info.ICMPOrigTCPSeq = binary.BigEndian.Uint32(payload[ihl+4 : ihl+8])
+			info.ICMPOrigTCPFlags = tcpFlagNames(payload[ihl+13])
 		}
 	default:
 		info.ICMPOrigProto = fmt.Sprintf("IP proto %d", payload[9])
@@ -954,4 +978,45 @@ func resolutionName(r pcapgo.NgResolution) string {
 		return "nanosecond"
 	}
 	return fmt.Sprintf("1/10^%d s", r.Exponent())
+}
+
+// stampConnections numbers the TCP connections and conversations of the whole
+// capture, before anything filters it.
+func stampConnections(packets []models.PacketInfo, stats ReadStats) {
+	models.AssignConnections(packets)
+	if stats.streamsReliable() {
+		models.AssignStreams(packets)
+	}
+}
+
+// streamsReliable reports whether the TCP conversations of the capture can be
+// numbered the way Wireshark numbers tcp.stream. They cannot if frames were
+// skipped that Wireshark may have decoded TCP in (an unsupported link type,
+// PPPoE, MPLS, ...), or if TCP segments were IP-fragmented: the numbers of
+// every later stream would be off. Skipped layer-2 control traffic that never
+// carries TCP (spanning tree, LLDP, ...) does not matter.
+func (s ReadStats) streamsReliable() bool {
+	if s.SkippedUnsupportedLink > 0 || s.TCPFragments > 0 {
+		return false
+	}
+	for name := range s.NonIPTypes {
+		if !neverCarriesTCP[name] {
+			return false
+		}
+	}
+	return true
+}
+
+// isTCPFragment reports whether pkt is an IPv4 packet that says it carries TCP
+// but has no TCP header, as the fragments of a fragmented segment.
+func isTCPFragment(pkt gopacket.Packet) bool {
+	ip4, ok := pkt.Layer(layers.LayerTypeIPv4).(*layers.IPv4)
+	return ok && ip4.Protocol == layers.IPProtocolTCP && pkt.Layer(layers.LayerTypeTCP) == nil
+}
+
+// neverCarriesTCP names the kinds of skipped non-IP frames that cannot hold a
+// TCP segment.
+var neverCarriesTCP = map[string]bool{
+	"STP": true, "LLDP": true, "CDP": true, "UDLD": true, "VTP": true, "DTP": true, "EAPOL": true,
+	"PTP": true, "CFM": true, "Slow Protocols": true, "Loopback": true,
 }

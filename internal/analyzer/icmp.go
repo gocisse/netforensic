@@ -106,15 +106,16 @@ func analyzeICMP(packets []models.PacketInfo) []models.Issue {
 		}
 		desc += " Reasons: " + strings.Join(rp, ", ") + "."
 		issues = append(issues, models.Issue{
-			ID:          fmt.Sprintf("icmp-%d-%s", k.typ, k.router),
-			Severity:    sev,
-			Category:    "ICMP",
-			Title:       title,
-			Description: desc + hint,
-			Timestamp:   g.first.Timestamp,
-			Target:      top[0].name,
-			Count:       g.count,
-			Occurrences: g.occ,
+			WiresharkFilter: icmpFilter(k.typ, k.router),
+			ID:              fmt.Sprintf("icmp-%d-%s", k.typ, k.router),
+			Severity:        sev,
+			Category:        "ICMP",
+			Title:           title,
+			Description:     desc + hint,
+			Timestamp:       g.first.Timestamp,
+			Target:          top[0].name,
+			Count:           g.count,
+			Occurrences:     g.occ,
 		})
 	}
 	sort.SliceStable(issues, func(i, j int) bool { return issues[i].Timestamp.Before(issues[j].Timestamp) })
@@ -131,4 +132,20 @@ func icmpTarget(p models.PacketInfo) string {
 		return endpoint{p.ICMPOrigDstIP, p.ICMPOrigDstPort}.String()
 	}
 	return p.ICMPOrigDstIP
+}
+
+// icmpFilter shows the ICMP errors of one type that a router sent.
+func icmpFilter(typ uint8, router string) string {
+	v4, v6 := fmt.Sprintf("icmp.type == %d", typ), ""
+	switch typ {
+	case icmpDestUnreachable:
+		v6 = "icmpv6.type == 1"
+	case icmpTimeExceeded:
+		v6 = "icmpv6.type == 3"
+	}
+	typeTerm := v4
+	if v6 != "" {
+		typeTerm = "(" + v4 + " || " + v6 + ")"
+	}
+	return and(typeTerm, fmt.Sprintf("%s.src == %s", addrField(router), ipLiteral(router)))
 }

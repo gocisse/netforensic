@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path"
 	"path/filepath"
 	"strings"
 	"syscall"
@@ -123,7 +124,31 @@ func staticHandler(assets fs.FS) http.Handler {
 			http.Error(w, "The web UI has not been built into this binary. Run \"npm run build\" in web/ and rebuild.", http.StatusServiceUnavailable)
 		})
 	}
-	return http.FileServer(http.FS(assets))
+	files := http.FileServer(http.FS(assets))
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// The page routes in the browser (/analysis/<id>/tcp, ...): a reload or
+		// a pasted link asks the server for a path that is no file. Serve the
+		// page for those, and let it route; files with an extension and API
+		// paths that do not exist stay 404.
+		if (r.Method == http.MethodGet || r.Method == http.MethodHead) && isPageRoute(assets, r.URL.Path) {
+			r2 := r.Clone(r.Context())
+			r2.URL.Path = "/"
+			files.ServeHTTP(w, r2)
+			return
+		}
+		files.ServeHTTP(w, r)
+	})
+}
+
+// isPageRoute reports whether urlPath is a path of the single-page app rather
+// than a file or the API: no such file, no extension, not under /api/.
+func isPageRoute(assets fs.FS, urlPath string) bool {
+	clean := path.Clean("/" + urlPath)
+	if clean == "/" || clean == "/api" || strings.HasPrefix(clean, "/api/") || path.Ext(clean) != "" {
+		return false
+	}
+	_, err := fs.Stat(assets, strings.TrimPrefix(clean, "/"))
+	return err != nil
 }
 
 // errorResponse is the JSON body of every error.

@@ -73,6 +73,14 @@ type PacketInfo struct {
 	TCPAck      uint32    `json:"tcp_ack,omitempty"`    // TCP acknowledgment number; 0 for non-TCP
 	TCPWindow   uint32    `json:"tcp_window,omitempty"` // advertised receive window as in the header (unscaled); packet sources must set it, since 0 means a zero window
 
+	// Stream is the zero-based index of the TCP conversation this packet
+	// belongs to, numbered in order of first appearance in the capture as
+	// Wireshark's tcp.stream is; StreamKnown reports that it was set (see
+	// AssignStreams). The reader sets it on the whole capture, before any
+	// filtering.
+	Stream      int  `json:"-"`
+	StreamKnown bool `json:"-"`
+
 	// Tunnel describes the outer IP header when the packet was decapsulated
 	// from a tunnel, as "src>dst/KIND" (for example "10.0.0.1>10.0.0.2/GRE");
 	// SrcIP, DstIP and the ports then belong to the inner packet. Empty for
@@ -115,6 +123,13 @@ type PacketInfo struct {
 	ICMPOrigSrcPort uint16 `json:"icmp_orig_src_port,omitempty"`
 	ICMPOrigDstPort uint16 `json:"icmp_orig_dst_port,omitempty"`
 	ICMPOrigProto   string `json:"icmp_orig_proto,omitempty"`
+	// ICMPOrigFullTCP reports that the quoted packet was TCP and the error
+	// quotes its whole TCP header, not just the ports (see AssignStreams).
+	ICMPOrigFullTCP bool `json:"-"`
+	// ICMPOrigTCPSeq and ICMPOrigTCPFlags are the sequence number and flags of
+	// that quoted TCP header, when ICMPOrigFullTCP.
+	ICMPOrigTCPSeq   uint32 `json:"-"`
+	ICMPOrigTCPFlags string `json:"-"`
 
 	// ARP fields are set on ARP packets (Protocol ARP). SrcIP and DstIP hold
 	// the sender and target protocol addresses.
@@ -201,6 +216,9 @@ type Flow struct {
 	// Tunnel identifies the tunnel the flow was decapsulated from, as
 	// "KIND:outer~outer" (see TunnelKey), or is empty.
 	Tunnel string `json:"tunnel,omitempty"`
+	// TCPStream is the flow's Wireshark stream index (tcp.stream), for TCP
+	// flows of captures in which the numbering can be worked out reliably.
+	TCPStream *int `json:"tcp_stream,omitempty"`
 	// AppProtocol is the application protocol recognized in the flow (DNS,
 	// HTTP or TLS), or empty.
 	AppProtocol string    `json:"app_protocol,omitempty"`
@@ -302,6 +320,15 @@ type Issue struct {
 	// Protocols lists the protocols the issue involves (for example "UDP"
 	// and "DNS"), so that a UI can filter issues by protocol.
 	Protocols []string `json:"protocols,omitempty"`
+
+	// WiresharkFilter is a display filter that shows the packets the issue is
+	// about, to verify it in Wireshark: pasted into its filter bar, or given
+	// to `tshark -Y`. For an aggregated issue it matches every occurrence
+	// (or the most affected ones, if there are very many).
+	WiresharkFilter string `json:"wireshark_filter,omitempty"`
+
+	// Recommendation says what to look at or do about the issue.
+	Recommendation string `json:"recommendation,omitempty"`
 }
 
 // Occurrence is one event behind an aggregated issue.

@@ -267,6 +267,65 @@ issue's details table shows the protocol of each event. The same data is in the
 JSON as `protocol_stats`, with `protocols` on issues and `protocol` on their
 occurrences.
 
+**Pages.** The upload page is at `/`. When the analysis is ready the page
+moves to `/analysis/<id>`, the overview, and a navigation bar offers one page
+per protocol with its number of issues: TCP, UDP, DNS, HTTP, TLS, SIP, DHCPv6
+and QUIC (`/analysis/<id>/tcp`, `/udp`, `/dns`, `/http`, `/tls`, `/sip`,
+`/dhcpv6`, `/quic`). A protocol page lists every issue that involves the
+protocol (TCP's includes those of HTTP and TLS, UDP's those of DNS, SIP, DHCPv6
+and QUIC), worst first, each with its description, the flows and names it
+affects (click a flow to filter the page to it), what to do about it, and a
+Wireshark display filter. Severity checkboxes, a search box and the IP and port
+filters narrow a page; the filters follow you from tab to tab, and every page can
+be reloaded or shared by its address. The server serves the page for these paths
+and the page fetches the analysis by its ID.
+
+**Wireshark filters.** Every issue carries a display filter (`wireshark_filter`
+in the JSON) that shows the packets it is about, and a `recommendation`. Paste the
+filter into Wireshark's filter bar with the capture open, or use **Copy
+Wireshark command** (`wireshark -r capture.pcap -Y '<filter>'`) or **Copy tshark
+command**; Wireshark has no link that opens a capture with a filter, so there is
+no "open" button. Examples:
+
+| Issue | Filter |
+|---|---|
+| TCP Retransmissions, Timeout Retransmit | `tcp.stream eq 7 && tcp.analysis.retransmission` |
+| TCP Zero Window | `tcp.stream eq 7 && tcp.analysis.zero_window` |
+| Connection reset after zero-window stall | `tcp.stream eq 0 && (tcp.analysis.zero_window \|\| tcp.flags.reset == 1)` |
+| Connection Abruptly Closed, Refused | `tcp.stream eq 7 && tcp.flags.reset == 1` |
+| Slow TCP Handshake | `tcp.stream eq 7 && tcp.analysis.initial_rtt` |
+| Possible SYN Flood | `tcp.flags.syn == 1 && tcp.flags.ack == 0 && ip.dst == 10.0.0.2 && tcp.dstport == 80` |
+| DNS NXDOMAIN, SERVFAIL | `dns.flags.rcode == 3 && (dns.qry.name == "a.example" \|\| dns.qry.name == "b.example")` |
+| DNS Timeout | `dns.flags.response == 0 && !dns.response_in && dns.qry.name == "a.example"` |
+| HTTP errors | `tcp.stream eq 7 && http.response.code == 404` |
+| SIP Registration / Call Setup Failed | `sip.CSeq.method == "REGISTER" && sip.Status-Code == 403` |
+| DHCPv6 No Addresses Available | `(dhcpv6.msgtype == 2 \|\| dhcpv6.msgtype == 7) && dhcpv6.status_code == 2` |
+| QUIC Handshake Timeout | `quic.long.packet_type == 0 && ip.dst == 192.0.2.10 && udp.dstport == 443` |
+
+An aggregated issue's filter matches all its occurrences (every flow, domain or
+status code, up to 20; beyond that it falls back to the whole kind of packet,
+for example every NXDOMAIN answer from the resolver). Names from the capture are
+quoted and escaped. `tcp.stream` is Wireshark's own index of the TCP
+conversation, numbered in order of first appearance, with a new one when a SYN
+follows a FIN or RST or arrives with a different sequence number, and
+with a conversation of its own for the TCP header that an ICMP error quotes in
+full (the tool reproduces this and was checked against `tshark` on the test
+captures: every TCP flow of the captures it can number has the same stream
+index as in Wireshark). It can only
+be worked out when every frame that may carry TCP was decoded, so when frames
+were skipped that Wireshark might decode (an unsupported link type such as
+Ethernet mPackets, PPPoE or MPLS) or TCP segments were IP-fragmented, the
+filters name the flow by addresses and ports instead, which is always right
+(a reused port pair then shows both connections). A few filters differ from the
+obvious one because Wireshark's fields behave differently: SIP uses
+`sip.CSeq.method`, which both requests and responses carry (`sip.Method` is a
+request-only field, so combined with a status code it would match nothing); an
+HTTP slow response filters to the request and response of the stream rather than
+on `http.time`, which Wireshark leaves empty on some responses; DHCPv6's status
+field is `dhcpv6.status_code`, and a DHCPv6 timeout shows the Solicits and
+Requests sent to the server, because Wireshark cannot filter for a packet that
+has no reply.
+
 **Filtering.** Under the headline numbers, the **Filters** panel narrows the
 issues, flows and protocol distribution to what you are looking at:
 
@@ -313,7 +372,7 @@ separated by commas); a malformed filter is a 400, an analysis the server no
 longer holds a 404. Without filters it exports everything, capture notes
 included, like the CLI; with filters the capture notes are left out, and the
 protocol table is worked out from the flows that are left. The web answer to
-`POST /api/analyze` also lists every flow (`flows`), which the page filters
+`POST /api/analyze` also lists every flow (`flows`, each TCP flow with its Wireshark `tcp_stream` when it can be worked out), which the page filters
 itself; the CLI's JSON does not.
 
 `--web` takes an address such as `:8181` or `127.0.0.1:8181`, cannot be

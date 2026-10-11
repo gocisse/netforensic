@@ -1,7 +1,7 @@
 import { useCallback, useMemo, useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { fromParams, isActive, NO_FILTERS, PARAM_NAMES, parseFilters, tidy, toParams, validate } from './model'
 import type { FilterErrors, FilterState, ParsedFilters } from './model'
-import { readParams, writeParams } from './urlState'
 
 export interface Filters {
   /** What is typed in the panel, not yet applied. */
@@ -30,20 +30,34 @@ function sameState(a: FilterState, b: FilterState): boolean {
  * The filter state of the analyzer page. The text fields and checkboxes edit
  * a draft that "Apply" turns into the applied filters; the quick filters and
  * tags apply at once. The applied filters live in the page's query
- * parameters, so a refresh or a shared link restores them.
+ * parameters (through the router, so they follow the user from tab to tab and a
+ * refresh or a shared link restores them).
  */
 export function useFilters(): Filters {
-  const [applied, setApplied] = useState<FilterState>(() => fromParams(readParams()))
+  const [, setSearchParams] = useSearchParams()
+  const [applied, setApplied] = useState<FilterState>(() => fromParams(new URLSearchParams(window.location.search)))
   const [draft, setDraftState] = useState<FilterState>(applied)
   const [errors, setErrors] = useState<FilterErrors>({})
 
-  const commit = useCallback((next: FilterState) => {
-    setApplied(next)
-    setDraftState(next)
-    setErrors({})
-    const params = toParams(next)
-    writeParams(Object.fromEntries(PARAM_NAMES.map((n) => [n, params[n]])))
-  }, [])
+  const commit = useCallback(
+    (next: FilterState) => {
+      setApplied(next)
+      setDraftState(next)
+      setErrors({})
+      const params = toParams(next)
+      // replace, not push: filtering is not navigation, so Back leaves the page
+      // Built from the address bar, not from the router's last render: several
+      // parts of the page change the query (these filters, a page's search box)
+      // and a render may not have happened between two of their changes.
+      const out = new URLSearchParams(window.location.search)
+      for (const name of PARAM_NAMES) {
+        if (params[name] === undefined) out.delete(name)
+        else out.set(name, params[name])
+      }
+      setSearchParams(out, { replace: true })
+    },
+    [setSearchParams],
+  )
 
   const setDraft = useCallback((patch: Partial<FilterState>) => {
     setDraftState((d) => ({ ...d, ...patch }))

@@ -27,6 +27,10 @@ export interface Issue {
   /** Number of events folded into this issue. */
   count?: number
   occurrences?: Occurrence[]
+  /** A Wireshark display filter that shows the packets the issue is about. */
+  wireshark_filter?: string
+  /** What to do about it. */
+  recommendation?: string
 }
 
 export interface TimelineEvent {
@@ -54,6 +58,8 @@ export interface Flow {
   dst_port: number
   /** Transport protocol (TCP, UDP, ICMP, ARP) or the name of another IP protocol (OSPF, GRE, ...); empty if unknown. */
   protocol: string
+  /** Wireshark's tcp.stream index of the flow, when the capture's streams can be numbered reliably. */
+  tcp_stream?: number
   /** Set when the flow was decapsulated from a tunnel: "KIND:outer~outer". */
   tunnel?: string
   /** DNS, HTTP, TLS, SIP, DHCPv6 or QUIC, if recognized in the flow. */

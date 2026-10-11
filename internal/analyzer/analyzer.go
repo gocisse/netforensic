@@ -60,6 +60,7 @@ func AnalyzeWithIssues(packets []models.PacketInfo, service string, extra ...mod
 		issues = []models.Issue{} // serialize as [] rather than null
 	}
 	annotateProtocols(issues, classes)
+	annotateGuidance(issues, flows)
 	talkers := topTalkers(flows, topTalkerCount)
 	if talkers == nil {
 		talkers = []models.Flow{}
@@ -253,6 +254,10 @@ func aggregateFlows(packets []models.PacketInfo) []models.Flow {
 				Tunnel:    key.tunnel,
 				StartTime: p.Timestamp,
 				EndTime:   p.Timestamp,
+			}
+			if p.StreamKnown {
+				stream := p.Stream
+				f.TCPStream = &stream
 			}
 			byKey[key] = f
 		}

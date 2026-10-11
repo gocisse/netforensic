@@ -82,6 +82,42 @@ func TestAnalyzeAnswersWithAnIDAndEveryFlow(t *testing.T) {
 	assert.NotEqual(t, a.AnalysisID, other.AnalysisID)
 }
 
+func TestIssuesCarryWiresharkFiltersAndAdvice(t *testing.T) {
+	h := authed(t, testAssets, maxUploadBytes)
+	a := uploadLab(t, h, lab7, "Lab-7.pcapng")
+	require.NotEmpty(t, a.Issues)
+	var zero *models.Issue
+	for i := range a.Issues {
+		is := a.Issues[i]
+		if is.Category == "Capture" {
+			continue
+		}
+		assert.NotEmpty(t, is.WiresharkFilter, is.Title)
+		assert.NotEmpty(t, is.Recommendation, is.Title)
+		if is.Title == "Connection reset after zero-window stall" {
+			zero = &a.Issues[i]
+		}
+	}
+	require.NotNil(t, zero)
+	assert.Equal(t, "tcp.stream eq 0 && (tcp.analysis.zero_window || tcp.flags.reset == 1)", zero.WiresharkFilter)
+	require.Len(t, a.Flows, 1)
+	require.NotNil(t, a.Flows[0].TCPStream)
+	assert.Equal(t, 0, *a.Flows[0].TCPStream)
+
+	// the filter is plain JSON text, and survives being carried in a URL query
+	for _, is := range a.Issues {
+		if is.WiresharkFilter == "" {
+			continue
+		}
+		back, err := url.QueryUnescape(url.QueryEscape(is.WiresharkFilter))
+		require.NoError(t, err)
+		assert.Equal(t, is.WiresharkFilter, back)
+	}
+	rec := get(h, "/api/analysis/"+a.AnalysisID, nil)
+	assert.Contains(t, rec.Body.String(), `"wireshark_filter":`)
+	assert.Contains(t, rec.Body.String(), `\u0026\u0026`, "the && of a filter is escaped in JSON, so it is safe to embed in HTML")
+}
+
 func TestGetAnalysisReloads(t *testing.T) {
 	h := authed(t, testAssets, maxUploadBytes)
 	a := uploadLab(t, h, lab7, "Lab-7.pcapng")

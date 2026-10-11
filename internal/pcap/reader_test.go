@@ -2,6 +2,7 @@ package pcap
 
 import (
 	"bytes"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"io"
@@ -807,4 +808,58 @@ func TestReadStatsDescribeNonIPBreakdown(t *testing.T) {
 		NonIPTypes:             map[string]int{"STP": 1200, "LLDP": 900, "Other": 897},
 	}
 	assert.Equal(t, "10667 frames of unsupported link type 274 (Ethernet mPacket); 2997 non-IP frames: 1200 STP, 900 LLDP, 897 Other", s.Describe())
+}
+
+func TestICMPQuotedTCPHeader(t *testing.T) {
+	// an ICMP time-exceeded error quoting an IPv4 header and, depending on the
+	// router, 8 bytes or a whole TCP header
+	quote := func(tcpBytes int) []byte {
+		ip := []byte{0x45, 0, 0, 56, 0, 1, 0, 0, 1, 6, 0, 0, 10, 0, 0, 5, 10, 0, 0, 6}
+		tcp := make([]byte, 20)
+		binary.BigEndian.PutUint16(tcp[0:], 5000)
+		binary.BigEndian.PutUint16(tcp[2:], 443)
+		binary.BigEndian.PutUint32(tcp[4:], 0xdeadbeef)
+		tcp[12] = 5 << 4
+		tcp[13] = 0x02 // SYN
+		return append(ip, tcp[:tcpBytes]...)
+	}
+	tests := []struct {
+		name      string
+		quoted    []byte
+		wantFull  bool
+		wantSeq   uint32
+		wantFlags string
+	}{
+		{"a whole TCP header", quote(20), true, 0xdeadbeef, "SYN"},
+		{"more than the header", append(quote(20), make([]byte, 16)...), true, 0xdeadbeef, "SYN"},
+		{"only the first 8 bytes, as most routers send", quote(8), false, 0, ""},
+		{"just short of a whole header", quote(19), false, 0, ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			info := models.PacketInfo{ICMPType: 11}
+			fillICMPOriginal(&info, tt.quoted)
+			assert.Equal(t, "TCP", info.ICMPOrigProto)
+			assert.Equal(t, uint16(5000), info.ICMPOrigSrcPort)
+			assert.Equal(t, tt.wantFull, info.ICMPOrigFullTCP)
+			assert.Equal(t, tt.wantSeq, info.ICMPOrigTCPSeq)
+			assert.Equal(t, tt.wantFlags, info.ICMPOrigTCPFlags)
+		})
+	}
+
+	t.Run("a UDP datagram is not a TCP header", func(t *testing.T) {
+		q := quote(20)
+		q[9] = 17
+		info := models.PacketInfo{ICMPType: 3}
+		fillICMPOriginal(&info, q)
+		assert.False(t, info.ICMPOrigFullTCP)
+	})
+}
+
+func TestTCPFlagNames(t *testing.T) {
+	assert.Equal(t, "", tcpFlagNames(0))
+	assert.Equal(t, "SYN", tcpFlagNames(0x02))
+	assert.Equal(t, "SYN,ACK", tcpFlagNames(0x12))
+	assert.Equal(t, "FIN,PSH,ACK", tcpFlagNames(0x19))
+	assert.Equal(t, "FIN,SYN,RST,PSH,ACK,URG,ECE,CWR", tcpFlagNames(0xff))
 }

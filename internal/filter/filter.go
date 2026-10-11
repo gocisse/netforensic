@@ -4,7 +4,7 @@
 // /api/export-csv applies them here, so a filtered export contains exactly what
 // the page shows.
 //
-// Flows are bidirectional, so an IP filter matches either endpoint. An issue
+// Flows are bidirectional, so an IP filter matches either Endpoint. An issue
 // is tied to addresses and ports through what it refers to: its flow, its
 // target and the subjects of its events, which are flow IDs or ip:port pairs
 // for most issues. An issue that refers to no address (a slow HTTP response
@@ -187,19 +187,19 @@ func (s Spec) portIn(p uint16) bool {
 	return false
 }
 
-// endpoint is an address with an optional port (0 if none).
-type endpoint struct {
-	ip   string // normalized
-	port uint16
+// Endpoint is an address with an optional port (0 if none).
+type Endpoint struct {
+	IP   string // normalized: see IPKey
+	Port uint16
 }
 
 // involves reports whether eps satisfy the IP and port filters: every IP
 // filter names an address in eps, and, if there is a port filter, some
-// endpoint's port is in it.
-func (s Spec) involves(eps []endpoint) bool {
+// Endpoint's port is in it.
+func (s Spec) involves(eps []Endpoint) bool {
 	has := func(ip string) bool {
 		for _, e := range eps {
-			if e.ip == ip {
+			if e.IP == ip {
 				return true
 			}
 		}
@@ -214,7 +214,7 @@ func (s Spec) involves(eps []endpoint) bool {
 	if len(s.Ports) > 0 {
 		ok := false
 		for _, e := range eps {
-			if e.port != 0 && s.portIn(e.port) {
+			if e.Port != 0 && s.portIn(e.Port) {
 				ok = true
 			}
 		}
@@ -239,13 +239,10 @@ func (s Spec) MatchFlow(f models.Flow) bool {
 	if !s.hasEndpointFilter() {
 		return true
 	}
-	var eps []endpoint
-	for _, e := range []struct {
-		ip   string
-		port uint16
-	}{{f.SrcIP, f.SrcPort}, {f.DstIP, f.DstPort}} {
-		if a, err := netip.ParseAddr(e.ip); err == nil {
-			eps = append(eps, endpoint{ipKey(a), e.port})
+	var eps []Endpoint
+	for _, e := range []Endpoint{{f.SrcIP, f.SrcPort}, {f.DstIP, f.DstPort}} {
+		if a, err := netip.ParseAddr(e.IP); err == nil {
+			eps = append(eps, Endpoint{ipKey(a), e.Port})
 		}
 	}
 	return s.involves(eps)
@@ -292,32 +289,32 @@ func containsFold(list []string, v string) bool {
 
 // issueEndpoints collects the addresses an issue refers to: its flow ID, its
 // target and the subjects of its events.
-func issueEndpoints(is models.Issue) []endpoint {
+func issueEndpoints(is models.Issue) []Endpoint {
 	refs := []string{is.FlowID, is.Target}
 	for _, o := range is.Occurrences {
 		refs = append(refs, o.Subject)
 	}
-	var eps []endpoint
+	var eps []Endpoint
 	for _, r := range refs {
-		eps = append(eps, parseRef(r)...)
+		eps = append(eps, ParseRef(r)...)
 	}
 	return eps
 }
 
-// parseRef reads the addresses out of a reference to a flow ("ip:port-ip:port",
-// with an optional "#N" and "@tunnel" suffix) or to an endpoint ("ip:port",
+// ParseRef reads the addresses out of a reference to a flow ("ip:port-ip:port",
+// with an optional "#N" and "@tunnel" suffix) or to an Endpoint ("ip:port",
 // "[ip6]:port" or just "ip"). It returns nothing for anything else, such as a
 // domain name or a Call-ID.
-func parseRef(ref string) []endpoint {
+func ParseRef(ref string) []Endpoint {
 	ref = strings.TrimSpace(ref)
 	if ref == "" {
 		return nil
 	}
 	if e, ok := parseEndpoint(ref); ok {
-		return []endpoint{e}
+		return []Endpoint{e}
 	}
 	// a flow ID: drop the tunnel and connection number, then split the two
-	// endpoints at a dash that leaves a valid endpoint on each side
+	// endpoints at a dash that leaves a valid Endpoint on each side
 	if i := strings.Index(ref, "@"); i >= 0 {
 		ref = ref[:i]
 	}
@@ -331,24 +328,24 @@ func parseRef(ref string) []endpoint {
 		a, okA := parseEndpoint(ref[:i])
 		b, okB := parseEndpoint(ref[i+1:])
 		if okA && okB {
-			return []endpoint{a, b}
+			return []Endpoint{a, b}
 		}
 	}
 	return nil
 }
 
-func parseEndpoint(s string) (endpoint, bool) {
+func parseEndpoint(s string) (Endpoint, bool) {
 	var host, port string
 	switch {
 	case strings.HasPrefix(s, "["): // [ip6] or [ip6]:port
 		end := strings.Index(s, "]")
 		if end < 0 {
-			return endpoint{}, false
+			return Endpoint{}, false
 		}
 		host = s[1:end]
 		if rest := s[end+1:]; rest != "" {
 			if !strings.HasPrefix(rest, ":") {
-				return endpoint{}, false
+				return Endpoint{}, false
 			}
 			port = rest[1:]
 		}
@@ -359,15 +356,15 @@ func parseEndpoint(s string) (endpoint, bool) {
 	}
 	a, err := netip.ParseAddr(host)
 	if err != nil || a.Zone() != "" {
-		return endpoint{}, false
+		return Endpoint{}, false
 	}
-	e := endpoint{ip: ipKey(a)}
+	e := Endpoint{IP: ipKey(a)}
 	if port != "" {
 		n, err := strconv.ParseUint(port, 10, 16)
 		if err != nil {
-			return endpoint{}, false
+			return Endpoint{}, false
 		}
-		e.port = uint16(n)
+		e.Port = uint16(n)
 	}
 	return e, true
 }
