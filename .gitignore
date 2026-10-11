@@ -1,1 +1,4 @@
 /netforensic
+
+# credentials (password hash and token secret) must never be committed
+.netforensic-credentials.json

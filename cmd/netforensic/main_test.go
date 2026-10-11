@@ -15,6 +15,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/gocisse/netforensic/internal/auth"
 	"github.com/gocisse/netforensic/internal/models"
 	"github.com/gocisse/netforensic/internal/pcap"
 )
@@ -287,7 +288,7 @@ func TestRootCmdNothingToAnalyze(t *testing.T) {
 
 func TestRootCmdWeb(t *testing.T) {
 	const sample = "../../internal/pcap/testdata/sample.pcap"
-	run := func(startServer func(string) error, args ...string) (string, error) {
+	run := func(startServer func(string, *auth.Service) error, args ...string) (string, error) {
 		var out, errOut bytes.Buffer
 		cmd := newRootCmdWith(startServer)
 		cmd.SetOut(&out)
@@ -296,27 +297,40 @@ func TestRootCmdWeb(t *testing.T) {
 		err := cmd.Execute()
 		return out.String(), err
 	}
-	notCalled := func(string) error {
+	notCalled := func(string, *auth.Service) error {
 		t.Error("the server must not start")
 		return nil
 	}
 
 	t.Run("starts the server and says where", func(t *testing.T) {
 		var gotAddr string
-		out, err := run(func(addr string) error { gotAddr = addr; return nil }, "--web", ":8080")
+		var gotAuth *auth.Service
+		creds := filepath.Join(t.TempDir(), "creds.json")
+		out, err := run(func(addr string, a *auth.Service) error { gotAddr, gotAuth = addr, a; return nil }, "--web", ":8080", "--credentials", creds)
 		require.NoError(t, err)
 		assert.Equal(t, ":8080", gotAddr)
-		assert.Equal(t, "Web UI available at http://localhost:8080 (press Ctrl-C to stop)\n", out)
+		require.NotNil(t, gotAuth)
+		assert.Equal(t, creds, gotAuth.Path())
+		assert.Contains(t, out, "Web UI available at http://localhost:8080 (press Ctrl-C to stop)\n")
+		assert.Contains(t, out, "Credentials file: "+creds)
+		assert.Contains(t, out, "warning: the default login admin/admin is active", "a fresh credentials file is the default login")
 		assert.NotContains(t, out, "TRIAGE", "no analysis runs")
+
+		// once the password was changed, there is nothing to warn about
+		_, _, err = gotAuth.ChangePassword("admin", "a-better-password")
+		require.NoError(t, err)
+		out, err = run(func(string, *auth.Service) error { return nil }, "--web", ":8080", "--credentials", creds)
+		require.NoError(t, err)
+		assert.NotContains(t, out, "warning:")
 	})
 	t.Run("server errors are returned", func(t *testing.T) {
-		_, err := run(func(string) error { return fmt.Errorf("listen on \":8080\": address already in use") }, "--web", ":8080")
+		_, err := run(func(string, *auth.Service) error { return fmt.Errorf("listen on \":8080\": address already in use") }, "--web", ":8080", "--credentials", filepath.Join(t.TempDir(), "c.json"))
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "address already in use")
 	})
 	t.Run("an equals sign works too", func(t *testing.T) {
 		var gotAddr string
-		_, err := run(func(addr string) error { gotAddr = addr; return nil }, "--web=127.0.0.1:9000")
+		_, err := run(func(addr string, _ *auth.Service) error { gotAddr = addr; return nil }, "--web=127.0.0.1:9000", "--credentials="+filepath.Join(t.TempDir(), "c.json"))
 		require.NoError(t, err)
 		assert.Equal(t, "127.0.0.1:9000", gotAddr)
 	})
@@ -338,6 +352,20 @@ func TestRootCmdWeb(t *testing.T) {
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "received 2")
 	})
+	t.Run("--credentials needs --web", func(t *testing.T) {
+		_, err := run(notCalled, "--credentials", "x.json", sample)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "--credentials only applies together with --web")
+	})
+	t.Run("an unusable credentials file stops the server from starting", func(t *testing.T) {
+		bad := filepath.Join(t.TempDir(), "bad.json")
+		require.NoError(t, os.WriteFile(bad, []byte("not json"), 0o600))
+		_, err := run(notCalled, "--web", ":8080", "--credentials", bad)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "not valid JSON")
+		raw, _ := os.ReadFile(bad)
+		assert.Equal(t, "not json", string(raw), "and the file is left alone")
+	})
 	t.Run("an empty --web runs the normal analysis", func(t *testing.T) {
 		out, err := run(notCalled, "--web", "", sample)
 		require.NoError(t, err)
@@ -347,7 +375,7 @@ func TestRootCmdWeb(t *testing.T) {
 		cmd := newRootCmd()
 		cmd.SetOut(&bytes.Buffer{})
 		cmd.SetErr(&bytes.Buffer{})
-		cmd.SetArgs([]string{"--web", "not an address"})
+		cmd.SetArgs([]string{"--web", "not an address", "--credentials", filepath.Join(t.TempDir(), "c.json")})
 		err := cmd.Execute()
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "listen on")

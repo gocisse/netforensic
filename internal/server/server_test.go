@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"io/fs"
 	"mime/multipart"
 	"net"
 	"net/http"
@@ -21,7 +22,9 @@ import (
 	"github.com/google/gopacket/pcapgo"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"golang.org/x/crypto/bcrypt"
 
+	"github.com/gocisse/netforensic/internal/auth"
 	"github.com/gocisse/netforensic/internal/models"
 )
 
@@ -62,6 +65,31 @@ func post(t *testing.T, h http.Handler, body io.Reader, contentType string) *htt
 	return rec
 }
 
+// testAuth returns an auth service on a fresh credentials file, with the
+// default admin/admin login and a cheap bcrypt cost.
+func testAuth(t *testing.T) *auth.Service {
+	t.Helper()
+	svc, err := auth.Open(filepath.Join(t.TempDir(), auth.CredentialsFileName), auth.WithBcryptCost(bcrypt.MinCost))
+	require.NoError(t, err)
+	return svc
+}
+
+// authed is newHandler for tests of everything but authentication: requests
+// without an Authorization header get a valid token added.
+func authed(t *testing.T, assets fs.FS, maxUpload int64) http.Handler {
+	t.Helper()
+	svc := testAuth(t)
+	token, _, err := svc.Login(auth.DefaultUsername, auth.DefaultPassword)
+	require.NoError(t, err)
+	inner := newHandler(assets, maxUpload, svc)
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") == "" {
+			r.Header.Set("Authorization", "Bearer "+token)
+		}
+		inner.ServeHTTP(w, r)
+	})
+}
+
 func readFile(t *testing.T, path string) []byte {
 	t.Helper()
 	b, err := os.ReadFile(path)
@@ -79,7 +107,7 @@ func assertJSONError(t *testing.T, rec *httptest.ResponseRecorder, status int, c
 }
 
 func TestAnalyzeUpload(t *testing.T) {
-	h := newHandler(testAssets, maxUploadBytes)
+	h := authed(t, testAssets, maxUploadBytes)
 	body, ct := upload(t, "file", "Lab-7-TCPIssues.pcapng", readFile(t, lab7))
 	rec := post(t, h, body, ct)
 
@@ -104,7 +132,7 @@ func TestAnalyzeUpload(t *testing.T) {
 }
 
 func TestAnalyzeUploadMatchesTheCLIResult(t *testing.T) {
-	h := newHandler(testAssets, maxUploadBytes)
+	h := authed(t, testAssets, maxUploadBytes)
 	body, ct := upload(t, "file", "Lab-3.pcapng", readFile(t, lab3))
 	rec := post(t, h, body, ct)
 	require.Equal(t, http.StatusOK, rec.Code)
@@ -122,7 +150,7 @@ func TestAnalyzeUploadMatchesTheCLIResult(t *testing.T) {
 }
 
 func TestAnalyzeUploadSanitizesTheFileName(t *testing.T) {
-	h := newHandler(testAssets, maxUploadBytes)
+	h := authed(t, testAssets, maxUploadBytes)
 	body, ct := upload(t, "file", "../../etc/evil.PCAP", readFile(t, lab7))
 	rec := post(t, h, body, ct)
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
@@ -132,7 +160,7 @@ func TestAnalyzeUploadSanitizesTheFileName(t *testing.T) {
 }
 
 func TestAnalyzeRejectsBadRequests(t *testing.T) {
-	h := newHandler(testAssets, maxUploadBytes)
+	h := authed(t, testAssets, maxUploadBytes)
 	capture := readFile(t, lab7)
 
 	t.Run("wrong method", func(t *testing.T) {
@@ -173,7 +201,7 @@ func TestAnalyzeRejectsBadRequests(t *testing.T) {
 		assertJSONError(t, post(t, h, body, ct), http.StatusBadRequest, "not a readable capture")
 	})
 	t.Run("too large", func(t *testing.T) {
-		small := newHandler(testAssets, 1024)
+		small := authed(t, testAssets, 1024)
 		body, ct := upload(t, "file", "big.pcapng", capture)
 		assertJSONError(t, post(t, small, body, ct), http.StatusRequestEntityTooLarge, "read upload")
 	})
@@ -214,7 +242,7 @@ func udpFrame(t *testing.T) []byte {
 }
 
 func TestAnalyzeReportsCaptureProblemsLikeTheCLI(t *testing.T) {
-	h := newHandler(testAssets, maxUploadBytes)
+	h := authed(t, testAssets, maxUploadBytes)
 
 	t.Run("truncated capture is analyzed and flagged", func(t *testing.T) {
 		data := readFile(t, lab3)[:60000]
@@ -265,7 +293,7 @@ func TestAnalyzeReportsCaptureProblemsLikeTheCLI(t *testing.T) {
 func TestAnalyzeLeavesNoTemporaryFiles(t *testing.T) {
 	tmp := t.TempDir()
 	t.Setenv("TMPDIR", tmp)
-	h := newHandler(testAssets, 1<<20)
+	h := authed(t, testAssets, 1<<20)
 	capture := readFile(t, lab7)
 
 	cases := []struct {
@@ -287,7 +315,7 @@ func TestAnalyzeLeavesNoTemporaryFiles(t *testing.T) {
 	body, ct := upload(t, "file", "a.pcapng", capture)
 	assert.Equal(t, http.StatusBadRequest, post(t, h, bytes.NewReader(body.Bytes()[:3000]), ct).Code)
 	// and one over the size limit
-	assert.Equal(t, http.StatusRequestEntityTooLarge, post(t, newHandler(testAssets, 2000), bytes.NewReader(body.Bytes()), ct).Code)
+	assert.Equal(t, http.StatusRequestEntityTooLarge, post(t, authed(t, testAssets, 2000), bytes.NewReader(body.Bytes()), ct).Code)
 
 	entries, err := os.ReadDir(tmp)
 	require.NoError(t, err)
@@ -317,7 +345,7 @@ func TestAnalyzeUsesAPrivateTemporaryFile(t *testing.T) {
 }
 
 func TestStaticFiles(t *testing.T) {
-	h := newHandler(testAssets, maxUploadBytes)
+	h := authed(t, testAssets, maxUploadBytes)
 	get := func(h http.Handler, path string) *httptest.ResponseRecorder {
 		rec := httptest.NewRecorder()
 		h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
@@ -341,7 +369,7 @@ func TestStaticFiles(t *testing.T) {
 	assert.Equal(t, http.StatusNotFound, get(h, "/secret").Code)
 
 	t.Run("the frontend has not been built", func(t *testing.T) {
-		unbuilt := newHandler(fstest.MapFS{".gitkeep": {}}, maxUploadBytes)
+		unbuilt := authed(t, fstest.MapFS{".gitkeep": {}}, maxUploadBytes)
 		rec := get(unbuilt, "/")
 		assert.Equal(t, http.StatusServiceUnavailable, rec.Code)
 		assert.Contains(t, rec.Body.String(), "npm run build")
@@ -356,7 +384,7 @@ func TestServeAndGracefulShutdown(t *testing.T) {
 	require.NoError(t, err)
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
-	go func() { done <- serve(ctx, ln, newHandler(testAssets, maxUploadBytes)) }()
+	go func() { done <- serve(ctx, ln, authed(t, testAssets, maxUploadBytes)) }()
 
 	base := "http://" + ln.Addr().String()
 	resp, err := http.Get(base + "/")
@@ -389,13 +417,13 @@ func TestServeReturnsListenerFailures(t *testing.T) {
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	require.NoError(t, err)
 	require.NoError(t, ln.Close()) // Serve on a closed listener fails at once
-	err = serve(context.Background(), ln, newHandler(testAssets, maxUploadBytes))
+	err = serve(context.Background(), ln, authed(t, testAssets, maxUploadBytes))
 	assert.Error(t, err)
 }
 
 func TestStartServerRejectsBadAddresses(t *testing.T) {
 	for _, addr := range []string{"not an address", "localhost:notaport", ":99999"} {
-		err := StartServer(addr)
+		err := StartServer(addr, nil)
 		require.Error(t, err, addr)
 		assert.Contains(t, err.Error(), "listen on")
 	}
@@ -404,7 +432,7 @@ func TestStartServerRejectsBadAddresses(t *testing.T) {
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	require.NoError(t, err)
 	defer ln.Close()
-	err = StartServer(ln.Addr().String())
+	err = StartServer(ln.Addr().String(), nil)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "listen on")
 }

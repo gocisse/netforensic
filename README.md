@@ -133,14 +133,37 @@ occurrences.
 combined with a capture file or with the analysis flags, and refuses to start if
 the port is taken. Pick a port that is free on your machine.
 
-The same analysis is available over HTTP. `POST /api/analyze` takes a multipart
-upload in the field `file` (`.pcap` or `.pcapng`, up to 512 MiB) and answers
-with the JSON of `-o json`; errors come back as `{"error": "..."}` with status
-400, 413 or 500:
+The same analysis is available over HTTP, behind a login. A fresh installation
+has the user `admin` with the password `admin`; change it right away. The
+server prints a warning while the default password is in use.
 
 ```bash
-curl -F "file=@capture.pcapng" http://localhost:8181/api/analyze
+TOKEN=$(curl -s -X POST http://localhost:8181/api/login \
+  -H "Content-Type: application/json" \
+  -d '{"username":"admin","password":"admin"}' | jq -r .token)
+
+curl -X POST http://localhost:8181/api/change-password \
+  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  -d '{"old_password":"admin","new_password":"something-longer"}'
+# the answer holds a fresh token: the change ends every older session
+
+curl -F "file=@capture.pcapng" -H "Authorization: Bearer $TOKEN" http://localhost:8181/api/analyze
 ```
+
+`POST /api/login` returns a signed JWT that is valid for 24 hours;
+`POST /api/analyze` and `POST /api/change-password` need it in an
+`Authorization: Bearer` header, and answer 401 without one. `POST /api/analyze`
+takes a multipart upload in the field `file` (`.pcap` or `.pcapng`, up to
+512 MiB) and answers with the JSON of `-o json`; errors come back as
+`{"error": "..."}` with status 400, 401, 413 or 500. New passwords need 6 to 72
+characters. Signing out is the client discarding its token (`/api/logout`
+exists for symmetry and revokes nothing).
+
+The password hash and the secret that signs the tokens are kept in
+`~/.netforensic-credentials.json` (mode 0600; created on first start; pick
+another place with `--credentials`). Delete the file to go back to the default
+login. The server listens on all interfaces for an address like `:8181`; use
+`127.0.0.1:8181` to keep it on your machine.
 
 Uploads are kept in a private temporary file that is deleted as soon as the
 analysis is done.

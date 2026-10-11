@@ -14,6 +14,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/gocisse/netforensic/internal/analyzer"
+	"github.com/gocisse/netforensic/internal/auth"
 	"github.com/gocisse/netforensic/internal/models"
 	"github.com/gocisse/netforensic/internal/pcap"
 	"github.com/gocisse/netforensic/internal/server"
@@ -48,14 +49,15 @@ func newRootCmd() *cobra.Command { return newRootCmdWith(server.StartServer) }
 
 // newRootCmdWith builds the root command with startServer as the function
 // behind --web, so that tests do not have to run a real server.
-func newRootCmdWith(startServer func(addr string) error) *cobra.Command {
+func newRootCmdWith(startServer func(addr string, a *auth.Service) error) *cobra.Command {
 	var (
-		web        string
-		service    string
-		verbose    bool
-		output     string
-		follow     string
-		followPkts string
+		web         string
+		credentials string
+		service     string
+		verbose     bool
+		output      string
+		follow      string
+		followPkts  string
 
 		srcIP, dstIP string
 		srcPort      int
@@ -70,7 +72,10 @@ func newRootCmdWith(startServer func(addr string) error) *cobra.Command {
 		SilenceErrors: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if web != "" {
-				return runWeb(cmd, web, args, startServer)
+				return runWeb(cmd, web, credentials, args, startServer)
+			}
+			if cmd.Flags().Changed("credentials") {
+				return fmt.Errorf("--credentials only applies together with --web")
 			}
 			if len(args) != 1 {
 				return fmt.Errorf("accepts 1 arg(s), received %d (give a capture file, or --web <addr> to start the web UI)", len(args))
@@ -181,6 +186,7 @@ func newRootCmdWith(startServer func(addr string) error) *cobra.Command {
 			return nil
 		},
 	}
+	cmd.Flags().StringVar(&credentials, "credentials", "", "with --web: the credentials file (default: "+auth.CredentialsFileName+" in your home directory)")
 	cmd.Flags().StringVar(&web, "web", "", "serve the web UI and API on this address, for example :8080, instead of analyzing a file")
 	cmd.Flags().StringVarP(&service, "service", "s", "all", "service to analyze: "+strings.Join(validServices, ", "))
 
@@ -198,7 +204,7 @@ func newRootCmdWith(startServer func(addr string) error) *cobra.Command {
 
 // runWeb starts the web server on addr. It takes no capture file and no
 // analysis flags: uploads are analyzed with the defaults.
-func runWeb(cmd *cobra.Command, addr string, args []string, startServer func(string) error) error {
+func runWeb(cmd *cobra.Command, addr, credentials string, args []string, startServer func(string, *auth.Service) error) error {
 	if len(args) > 0 {
 		return fmt.Errorf("--web serves uploads and does not take a capture file (got %q)", args[0])
 	}
@@ -211,8 +217,21 @@ func runWeb(cmd *cobra.Command, addr string, args []string, startServer func(str
 	if len(conflicting) > 0 {
 		return fmt.Errorf("--web cannot be combined with %s", strings.Join(conflicting, ", "))
 	}
-	fmt.Fprintf(cmd.OutOrStdout(), "Web UI available at %s (press Ctrl-C to stop)\n", webURL(addr))
-	return startServer(addr)
+	if credentials == "" {
+		credentials = auth.DefaultPath()
+	}
+	authSvc, err := auth.Open(credentials)
+	if err != nil {
+		return err
+	}
+	out := cmd.OutOrStdout()
+	fmt.Fprintf(out, "Web UI available at %s (press Ctrl-C to stop)\n", webURL(addr))
+	fmt.Fprintf(out, "Credentials file: %s\n", authSvc.Path())
+	if authSvc.MustChangePassword() {
+		fmt.Fprintf(out, "warning: the default login %s/%s is active. Sign in and change the password; until then anyone who can reach %s can use the analyzer.\n",
+			auth.DefaultUsername, auth.DefaultPassword, addr)
+	}
+	return startServer(addr, authSvc)
 }
 
 // webURL turns a listen address such as ":8080" into a URL to open.

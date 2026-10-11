@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/gocisse/netforensic/internal/analyzer"
+	"github.com/gocisse/netforensic/internal/auth"
 	"github.com/gocisse/netforensic/internal/models"
 	"github.com/gocisse/netforensic/internal/pcap"
 	"github.com/gocisse/netforensic/web"
@@ -36,8 +37,9 @@ const (
 
 // StartServer serves the web UI and the analysis API on addr (for example
 // ":8080") until the process receives SIGINT or SIGTERM, then shuts down
-// gracefully. It returns nil after a clean shutdown.
-func StartServer(addr string) error {
+// gracefully. Logins are checked by authSvc. It returns nil after a clean
+// shutdown.
+func StartServer(addr string, authSvc *auth.Service) error {
 	assets, err := web.Dist()
 	if err != nil {
 		return err
@@ -48,7 +50,7 @@ func StartServer(addr string) error {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	return serve(ctx, ln, newHandler(assets, maxUploadBytes))
+	return serve(ctx, ln, newHandler(assets, maxUploadBytes, authSvc))
 }
 
 // serve runs handler on ln until ctx is cancelled, then shuts down.
@@ -83,14 +85,19 @@ func serve(ctx context.Context, ln net.Listener, handler http.Handler) error {
 // handler holds the dependencies of the HTTP routes.
 type handler struct {
 	maxUploadBytes int64
+	auth           *auth.Service
 }
 
-// newHandler returns the router: the static UI from assets at "/" and the
-// analysis API at "/api/analyze".
-func newHandler(assets fs.FS, maxUpload int64) http.Handler {
-	h := &handler{maxUploadBytes: maxUpload}
+// newHandler returns the router: the static UI from assets at "/", the login
+// API (/api/login, /api/logout, /api/change-password) and the analysis API at
+// "/api/analyze", which needs a valid bearer token like /api/change-password.
+func newHandler(assets fs.FS, maxUpload int64, authSvc *auth.Service) http.Handler {
+	h := &handler{maxUploadBytes: maxUpload, auth: authSvc}
 	mux := http.NewServeMux()
-	mux.HandleFunc("/api/analyze", h.analyze)
+	mux.HandleFunc("/api/login", h.login)
+	mux.HandleFunc("/api/logout", h.logout)
+	mux.HandleFunc("/api/change-password", h.requireAuth(h.changePassword))
+	mux.HandleFunc("/api/analyze", h.requireAuth(h.analyze))
 	mux.Handle("/", staticHandler(assets))
 	return securityHeaders(mux)
 }
