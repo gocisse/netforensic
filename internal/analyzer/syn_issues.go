@@ -111,14 +111,16 @@ func synFloodIssue(target string, conns []*connState) (models.Issue, bool) {
 	if peak <= synFloodThreshold {
 		return models.Issue{}, false
 	}
+	occ := connOccurrences(conns, func(c *connState) time.Time { return c.synFirst })
 	return models.Issue{
-		ID:        "syn-flood-" + target,
-		Severity:  models.SeverityError,
-		Category:  "Connection",
-		Title:     titleSYNFlood,
-		Timestamp: at,
-		Target:    target,
-		Count:     len(conns),
+		Occurrences: occ,
+		ID:          "syn-flood-" + target,
+		Severity:    models.SeverityError,
+		Category:    "Connection",
+		Title:       titleSYNFlood,
+		Timestamp:   at,
+		Target:      target,
+		Count:       len(conns),
 		Description: fmt.Sprintf("%d connection attempts from %d source(s) to %s got no SYN-ACK and no RST, %d of them within %s starting at %s",
 			len(conns), len(sources), target, peak, synFloodWindow, at.UTC().Format("15:04:05.000")),
 	}, true
@@ -175,6 +177,7 @@ func unansweredIssue(conns []*connState) models.Issue {
 		Target:    busiest,
 		Count:     len(conns),
 	}
+	is.Occurrences = connOccurrences(conns, func(c *connState) time.Time { return c.synFirst })
 	if len(conns) == 1 {
 		c := conns[0]
 		is.FlowID = c.id
@@ -207,6 +210,7 @@ func retriedIssue(conns []*connState) models.Issue {
 		Target:    busiest,
 		Count:     len(conns),
 	}
+	is.Occurrences = connOccurrences(conns, func(c *connState) time.Time { return c.synFirst })
 	if len(conns) == 1 {
 		is.FlowID = first.id
 		is.Description = fmt.Sprintf("flow %s: the first SYN got no answer; the handshake only completed after %d SYNs, with the SYN-ACK arriving %s after the first one",

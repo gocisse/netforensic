@@ -165,6 +165,9 @@ func (g *dnsGroup) issue(resolver, kind string, sev models.Severity, title strin
 	for i, e := range evs {
 		counts[e.domain]++
 		occ[i] = models.Occurrence{Time: e.at, Subject: e.domain}
+		if e.rtt > 0 {
+			occ[i].Value, occ[i].Unit = ms(e.rtt), "ms"
+		}
 		if e.at.Before(first) {
 			first = e.at
 		}

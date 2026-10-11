@@ -90,7 +90,7 @@ func ListFlows(packets []models.PacketInfo) []FlowSummary {
 // absent. Endpoints are returned in canonical order.
 func parseFlowID(id string) (a, b endpoint, proto models.Protocol, inst int, err error) {
 	bad := func(why string) error {
-		return fmt.Errorf("invalid flow ID %q: %s (expected ip:port-ip:port[/proto])", id, why)
+		return fmt.Errorf("invalid flow ID %q: %s (expected ip:port-ip:port[/proto], IPv6 as [ip]:port)", id, why)
 	}
 
 	rest := strings.TrimSpace(id)
@@ -119,11 +119,20 @@ func parseFlowID(id string) (a, b endpoint, proto models.Protocol, inst int, err
 	}
 	var eps [2]endpoint
 	for i, part := range parts {
-		c := strings.LastIndex(part, ":")
-		if c < 0 {
-			return a, b, "", 0, bad(strconv.Quote(part) + " has no port")
+		var ip, portStr string
+		if strings.HasPrefix(part, "[") { // [ipv6]:port
+			end := strings.Index(part, "]")
+			if end < 0 || end+1 >= len(part) || part[end+1] != ':' {
+				return a, b, "", 0, bad(strconv.Quote(part) + " has no port after the closing bracket")
+			}
+			ip, portStr = part[1:end], part[end+2:]
+		} else {
+			c := strings.LastIndex(part, ":")
+			if c < 0 {
+				return a, b, "", 0, bad(strconv.Quote(part) + " has no port")
+			}
+			ip, portStr = part[:c], part[c+1:] // also accepts an unbracketed IPv6 address
 		}
-		ip, portStr := part[:c], part[c+1:]
 		if net.ParseIP(ip) == nil {
 			return a, b, "", 0, bad(strconv.Quote(ip) + " is not an IP address")
 		}

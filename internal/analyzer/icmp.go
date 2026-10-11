@@ -128,7 +128,7 @@ func icmpTarget(p models.PacketInfo) string {
 	case p.ICMPOrigDstIP == "":
 		return "unknown"
 	case p.ICMPOrigDstPort != 0:
-		return fmt.Sprintf("%s:%d", p.ICMPOrigDstIP, p.ICMPOrigDstPort)
+		return endpoint{p.ICMPOrigDstIP, p.ICMPOrigDstPort}.String()
 	}
 	return p.ICMPOrigDstIP
 }

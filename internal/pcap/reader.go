@@ -43,7 +43,8 @@ func (e *TruncatedError) Unwrap() error { return e.Err }
 // layer are skipped. If the file is cut off mid-record, the packets read so
 // far are returned together with a *TruncatedError.
 func ReadPackets(filePath string) ([]models.PacketInfo, error) {
-	return ReadPacketsWithOptions(filePath, ReadOptions{})
+	packets, _, err := ReadPacketsStats(filePath, ReadOptions{})
+	return packets, err
 }
 
 // ReadOptions tunes ReadPacketsWithOptions.
@@ -54,17 +55,45 @@ type ReadOptions struct {
 	FullPayload bool
 }
 
+// ReadStats accounts for every frame in a capture file, including the ones
+// that did not become packets.
+type ReadStats struct {
+	Frames int // frames read from the file
+
+	// SkippedUnsupportedLink counts frames whose link-layer type this tool
+	// cannot decode (for example Ethernet mPackets, type 198), and
+	// UnsupportedLinkTypes breaks them down by pcap link type number.
+	SkippedUnsupportedLink int
+	UnsupportedLinkTypes   map[int]int
+
+	// SkippedNonIP counts frames that decoded but carry neither IP nor ARP,
+	// such as spanning tree, LLDP or other layer-2 control traffic.
+	SkippedNonIP int
+}
+
+// Skipped returns the number of frames that were read but not analyzed.
+func (s ReadStats) Skipped() int { return s.SkippedUnsupportedLink + s.SkippedNonIP }
+
 // ReadPacketsWithOptions is ReadPackets with explicit options.
 func ReadPacketsWithOptions(filePath string, opts ReadOptions) ([]models.PacketInfo, error) {
+	packets, _, err := ReadPacketsStats(filePath, opts)
+	return packets, err
+}
+
+// ReadPacketsStats is ReadPacketsWithOptions that also reports how many
+// frames were skipped and why, so callers can say that the analysis does not
+// cover the whole file. The stats are valid alongside a *TruncatedError.
+func ReadPacketsStats(filePath string, opts ReadOptions) ([]models.PacketInfo, ReadStats, error) {
+	var stats ReadStats
 	f, err := os.Open(filePath)
 	if err != nil {
-		return nil, fmt.Errorf("open pcap file: %w", err)
+		return nil, stats, fmt.Errorf("open pcap file: %w", err)
 	}
 	defer f.Close()
 
 	src, err := newSource(f)
 	if err != nil {
-		return nil, err
+		return nil, stats, err
 	}
 
 	var packets []models.PacketInfo
@@ -78,15 +107,26 @@ func ReadPacketsWithOptions(filePath string, opts ReadOptions) ([]models.PacketI
 			// and crashed captures. Keep what was read.
 			models.AssignConnections(packets)
 			annotateHandshakes(packets)
-			return packets, &TruncatedError{Packets: len(packets), Err: err}
+			return packets, stats, &TruncatedError{Packets: len(packets), Err: err}
 		}
 		if err != nil {
-			return nil, fmt.Errorf("read packet: %w", err)
+			return nil, stats, fmt.Errorf("read packet: %w", err)
 		}
+		stats.Frames++
 
-		pkt := gopacket.NewPacket(data, src.linkType(ci), gopacket.NoCopy)
+		lt := src.linkType(ci)
+		pkt := gopacket.NewPacket(data, lt, gopacket.NoCopy)
 		info, ok := packetInfo(pkt)
 		if !ok {
+			if linkTypeSupported(lt) {
+				stats.SkippedNonIP++
+			} else {
+				stats.SkippedUnsupportedLink++
+				if stats.UnsupportedLinkTypes == nil {
+					stats.UnsupportedLinkTypes = make(map[int]int)
+				}
+				stats.UnsupportedLinkTypes[int(lt)]++
+			}
 			continue
 		}
 		if opts.FullPayload {
@@ -98,7 +138,16 @@ func ReadPacketsWithOptions(filePath string, opts ReadOptions) ([]models.PacketI
 	}
 	models.AssignConnections(packets)
 	annotateHandshakes(packets)
-	return packets, nil
+	return packets, stats, nil
+}
+
+// linkTypeSupported reports whether gopacket has a real decoder for lt.
+// gopacket stores link types in a byte, so pcap link types above 255 reach
+// us with only their low eight bits (Ethernet mPackets, 274, shows up as 18).
+// Link types it does not know are registered with a decoder that only
+// returns an error and the name "UnknownLinkType".
+func linkTypeSupported(lt layers.LinkType) bool {
+	return int(lt) >= 0 && int(lt) < len(layers.LinkTypeMetadata) && layers.LinkTypeMetadata[lt].Name != "UnknownLinkType"
 }
 
 // packetInfo extracts addressing and protocol details from a decoded packet.

@@ -1,6 +1,7 @@
 package analyzer
 
 import (
+	"encoding/json"
 	"fmt"
 	"path/filepath"
 	"testing"
@@ -340,4 +341,29 @@ func TestCongestionMarksAggregatedLatencyAsRootCause(t *testing.T) {
 	d := diagnosis{roles: map[string]string{}}
 	require.True(t, d.congestion([]models.Flow{hot}, lat))
 	assert.Equal(t, eventRootCause, d.roles[lat[0].ID])
+}
+
+func TestAggregatedPerformanceSerializesEveryFlow(t *testing.T) {
+	issues := aggregatePerformance(slowRTTFlows(50, 250, 600))
+	by := perfIssuesByTitle(issues)
+	lat := by["High Network Latency"][0]
+
+	raw, err := json.Marshal(lat)
+	require.NoError(t, err)
+	var decoded struct {
+		Count       int `json:"count"`
+		Occurrences []struct {
+			Subject string  `json:"subject"`
+			Value   float64 `json:"value"`
+			Unit    string  `json:"unit"`
+		} `json:"occurrences"`
+	}
+	require.NoError(t, json.Unmarshal(raw, &decoded))
+	require.Len(t, decoded.Occurrences, 50)
+	assert.Equal(t, "10.0.0.49:1000-10.0.1.1:443", decoded.Occurrences[0].Subject, "worst first")
+	assert.InDelta(t, 299, decoded.Occurrences[0].Value, 0.001)
+	assert.Equal(t, "ms", decoded.Occurrences[0].Unit)
+
+	jit := by["High Jitter"][0]
+	assert.InDelta(t, 649, jit.Occurrences[0].Value, 0.001, "jitter lists the max RTT, not the average")
 }

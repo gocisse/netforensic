@@ -422,3 +422,85 @@ func TestReadPacketsTCPWindow(t *testing.T) {
 	assert.Equal(t, uint32(0), packets[0].TCPWindow)
 	assert.Equal(t, uint32(29200), packets[1].TCPWindow)
 }
+
+func TestReadPacketsStatsAccountsForEveryFrame(t *testing.T) {
+	ip := serialize(t, layers.IPProtocolUDP, clientIP, serverIP, &layers.UDP{SrcPort: 1, DstPort: 2}, []byte("x"))
+	lldp := append([]byte{0x01, 0x80, 0xc2, 0x00, 0x00, 0x0e, 0, 1, 2, 3, 4, 5, 0x88, 0xcc}, make([]byte, 30)...) // layer-2 control frame
+	stp := append([]byte{0x01, 0x80, 0xc2, 0x00, 0x00, 0x00, 0, 1, 2, 3, 4, 5, 0x00, 0x26, 0x42, 0x42, 0x03}, make([]byte, 30)...)
+	arp := func() []byte {
+		buf := gopacket.NewSerializeBuffer()
+		require.NoError(t, gopacket.SerializeLayers(buf, gopacket.SerializeOptions{FixLengths: true},
+			&layers.Ethernet{SrcMAC: net.HardwareAddr{0, 1, 2, 3, 4, 5}, DstMAC: net.HardwareAddr{255, 255, 255, 255, 255, 255}, EthernetType: layers.EthernetTypeARP},
+			&layers.ARP{AddrType: layers.LinkTypeEthernet, Protocol: layers.EthernetTypeIPv4, HwAddressSize: 6, ProtAddressSize: 4, Operation: layers.ARPRequest,
+				SourceHwAddress: []byte{0, 1, 2, 3, 4, 5}, SourceProtAddress: []byte{10, 0, 0, 1}, DstHwAddress: make([]byte, 6), DstProtAddress: []byte{10, 0, 0, 2}}))
+		return buf.Bytes()
+	}()
+
+	path := filepath.Join(t.TempDir(), "mixed.pcap")
+	writePCAP(t, path, [][]byte{ip, lldp, arp, stp, ip})
+
+	packets, stats, err := ReadPacketsStats(path, ReadOptions{})
+	require.NoError(t, err)
+	assert.Len(t, packets, 3, "two IP packets and the ARP request")
+	assert.Equal(t, 5, stats.Frames)
+	assert.Equal(t, 2, stats.SkippedNonIP, "LLDP and spanning tree")
+	assert.Zero(t, stats.SkippedUnsupportedLink)
+	assert.Equal(t, 2, stats.Skipped())
+	assert.Empty(t, stats.UnsupportedLinkTypes)
+	assert.Equal(t, stats.Frames, len(packets)+stats.Skipped(), "every frame is accounted for")
+
+	// the plain reader returns the same packets
+	plain, err := ReadPackets(path)
+	require.NoError(t, err)
+	assert.Equal(t, len(packets), len(plain))
+}
+
+func TestReadPacketsStatsUnsupportedLinkType(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "weird.pcap")
+	f, err := os.Create(path)
+	require.NoError(t, err)
+	w := pcapgo.NewWriter(f)
+	require.NoError(t, w.WriteFileHeader(65535, layers.LinkType(250))) // not a link type gopacket decodes
+	for i := 0; i < 4; i++ {
+		data := make([]byte, 60)
+		require.NoError(t, w.WritePacket(gopacket.CaptureInfo{Timestamp: time.Unix(int64(i), 0), CaptureLength: 60, Length: 60}, data))
+	}
+	require.NoError(t, f.Close())
+
+	packets, stats, err := ReadPacketsStats(path, ReadOptions{})
+	require.NoError(t, err)
+	assert.Empty(t, packets)
+	assert.Equal(t, 4, stats.Frames)
+	assert.Equal(t, 4, stats.SkippedUnsupportedLink)
+	assert.Zero(t, stats.SkippedNonIP)
+	assert.Equal(t, map[int]int{250: 4}, stats.UnsupportedLinkTypes)
+}
+
+func TestReadPacketsStatsOnTruncatedFile(t *testing.T) {
+	ip := serialize(t, layers.IPProtocolUDP, clientIP, serverIP, &layers.UDP{SrcPort: 1, DstPort: 2}, []byte("x"))
+	lldp := append([]byte{0x01, 0x80, 0xc2, 0x00, 0x00, 0x0e, 0, 1, 2, 3, 4, 5, 0x88, 0xcc}, make([]byte, 30)...)
+	path := filepath.Join(t.TempDir(), "cut.pcap")
+	writePCAP(t, path, [][]byte{ip, lldp, ip})
+	data, err := os.ReadFile(path)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(path, data[:len(data)-10], 0o644))
+
+	packets, stats, err := ReadPacketsStats(path, ReadOptions{})
+	var trunc *TruncatedError
+	require.ErrorAs(t, err, &trunc)
+	assert.Len(t, packets, 1)
+	assert.Equal(t, 2, stats.Frames, "the cut frame is not counted")
+	assert.Equal(t, 1, stats.SkippedNonIP)
+
+	_, _, err = ReadPacketsStats(filepath.Join(t.TempDir(), "missing.pcap"), ReadOptions{})
+	assert.Error(t, err)
+}
+
+func TestLinkTypeSupported(t *testing.T) {
+	for lt, want := range map[layers.LinkType]bool{
+		layers.LinkTypeEthernet: true, layers.LinkTypeRaw: true, layers.LinkTypeLinuxSLL: true, layers.LinkTypeNull: true,
+		layers.LinkType(250): false, layers.LinkType(18): false,
+	} {
+		assert.Equal(t, want, linkTypeSupported(lt), lt)
+	}
+}

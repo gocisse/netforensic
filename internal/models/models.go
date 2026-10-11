@@ -171,14 +171,18 @@ type Issue struct {
 	Count       int       `json:"count,omitempty"`   // Optional: number of events folded into this issue
 
 	// Occurrences lists the individual events folded into an aggregated
-	// issue, for correlation. It is not serialized.
-	Occurrences []Occurrence `json:"-"`
+	// issue (every affected flow, queried domain, connection or target), so
+	// a UI can drill down from the summary. The analyzer also uses it for
+	// correlation.
+	Occurrences []Occurrence `json:"occurrences,omitempty"`
 }
 
 // Occurrence is one event behind an aggregated issue.
 type Occurrence struct {
-	Time    time.Time
-	Subject string // for example the queried domain name
+	Time    time.Time `json:"time"`
+	Subject string    `json:"subject"`         // the flow ID, queried domain, target ip:port, ...
+	Value   float64   `json:"value,omitempty"` // a measurement for the event, such as an RTT
+	Unit    string    `json:"unit,omitempty"`  // unit of Value, for example "ms"
 }
 
 // TimelineEvent is one entry in the chronological incident timeline.

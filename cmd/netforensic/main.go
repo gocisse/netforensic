@@ -92,7 +92,7 @@ func newRootCmd() *cobra.Command {
 			}
 
 			// Stream reconstruction needs whole payloads, not previews.
-			packets, err := pcap.ReadPacketsWithOptions(args[0], pcap.ReadOptions{FullPayload: follow != ""})
+			packets, stats, err := pcap.ReadPacketsStats(args[0], pcap.ReadOptions{FullPayload: follow != ""})
 			var truncated *pcap.TruncatedError
 			if errors.As(err, &truncated) {
 				fmt.Fprintf(cmd.ErrOrStderr(), "warning: %s is truncated; analyzing the %d packets read before the cut\n", args[0], len(packets))
@@ -104,6 +104,12 @@ func newRootCmd() *cobra.Command {
 			var notes []models.Issue
 			if truncated != nil {
 				notes = append(notes, analyzer.TruncatedCaptureIssue(packets))
+			}
+			if stats.Skipped() > 0 {
+				notes = append(notes, analyzer.SkippedFramesIssue(stats.Skipped(), describeSkipped(stats), packets))
+				if output == "text" && follow == "" && followPkts == "" {
+					fmt.Fprintf(cmd.ErrOrStderr(), "warning: %d of %d frames were skipped (unsupported link-layer types or non-IP traffic)\n", stats.Skipped(), stats.Frames)
+				}
 			}
 
 			// Every filter is applied here, once. The result is the only

@@ -19,6 +19,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/gocisse/netforensic/internal/models"
+	"github.com/gocisse/netforensic/internal/pcap"
 )
 
 func TestPrintPacketTable(t *testing.T) {
@@ -165,4 +166,111 @@ func writeManyDNSFailures(t *testing.T, path string, n int) {
 		write(at.Add(10*time.Millisecond), resolver, client, 53, 40000,
 			&layers.DNS{ID: uint16(i + 1), QR: true, RD: true, RA: true, ResponseCode: layers.DNSResponseCodeNXDomain, QDCount: 1, Questions: []layers.DNSQuestion{q}})
 	}
+}
+
+// writeFrames writes raw Ethernet frames, one second apart, to a pcap file.
+func writeFrames(t *testing.T, path string, frames [][]byte) {
+	t.Helper()
+	f, err := os.Create(path)
+	require.NoError(t, err)
+	defer f.Close()
+	w := pcapgo.NewWriter(f)
+	require.NoError(t, w.WriteFileHeader(65535, layers.LinkTypeEthernet))
+	for i, data := range frames {
+		require.NoError(t, w.WritePacket(gopacket.CaptureInfo{Timestamp: time.Unix(1700000000+int64(i), 0), CaptureLength: len(data), Length: len(data)}, data))
+	}
+}
+
+func udpFrame(t *testing.T) []byte {
+	t.Helper()
+	ip := &layers.IPv4{Version: 4, IHL: 5, TTL: 64, Protocol: layers.IPProtocolUDP, SrcIP: net.IP{10, 0, 0, 1}, DstIP: net.IP{10, 0, 0, 2}}
+	udp := &layers.UDP{SrcPort: 1000, DstPort: 2000}
+	require.NoError(t, udp.SetNetworkLayerForChecksum(ip))
+	buf := gopacket.NewSerializeBuffer()
+	require.NoError(t, gopacket.SerializeLayers(buf, gopacket.SerializeOptions{FixLengths: true, ComputeChecksums: true},
+		&layers.Ethernet{SrcMAC: net.HardwareAddr{0, 1, 2, 3, 4, 5}, DstMAC: net.HardwareAddr{6, 7, 8, 9, 10, 11}, EthernetType: layers.EthernetTypeIPv4},
+		ip, udp, gopacket.Payload([]byte("hi"))))
+	return buf.Bytes()
+}
+
+// lldpFrame is a layer-2 control frame: not IP, not ARP.
+func lldpFrame() []byte {
+	return append([]byte{0x01, 0x80, 0xc2, 0x00, 0x00, 0x0e, 0, 1, 2, 3, 4, 5, 0x88, 0xcc}, make([]byte, 30)...)
+}
+
+func TestRootCmdWarnsAboutSkippedFrames(t *testing.T) {
+	dir := t.TempDir()
+	mixed := filepath.Join(dir, "mixed.pcap")
+	writeFrames(t, mixed, [][]byte{udpFrame(t), lldpFrame(), udpFrame(t), lldpFrame(), lldpFrame()})
+	only := filepath.Join(dir, "only-l2.pcap")
+	writeFrames(t, only, [][]byte{lldpFrame(), lldpFrame()})
+	clean := filepath.Join(dir, "clean.pcap")
+	writeFrames(t, clean, [][]byte{udpFrame(t), udpFrame(t)})
+
+	run := func(args ...string) (string, string) {
+		var out, errOut bytes.Buffer
+		cmd := newRootCmd()
+		cmd.SetOut(&out)
+		cmd.SetErr(&errOut)
+		cmd.SetArgs(args)
+		require.NoError(t, cmd.Execute())
+		return out.String(), errOut.String()
+	}
+
+	t.Run("text: warning in the timeline and on stderr", func(t *testing.T) {
+		out, errOut := run(mixed)
+		assert.Contains(t, out, "[WARNING]  root_cause    Skipped Frames: 3 frames were skipped due to unsupported link-layer types or non-IP traffic. Analysis is based on the remaining 2 packets. (3 non-IP frames)")
+		assert.Contains(t, out, "Health Score: 90/100")
+		assert.Contains(t, out, "1x [WARNING] Capture: Skipped Frames")
+		assert.Contains(t, errOut, "warning: 3 of 5 frames were skipped")
+	})
+	t.Run("json: the issue carries the count", func(t *testing.T) {
+		out, errOut := run("-o", "json", mixed)
+		var res struct {
+			TotalPackets int `json:"total_packets"`
+			Issues       []struct {
+				Title string `json:"title"`
+				Count int    `json:"count"`
+			} `json:"issues"`
+		}
+		require.NoError(t, json.Unmarshal([]byte(out), &res))
+		assert.Equal(t, 2, res.TotalPackets)
+		require.Len(t, res.Issues, 1)
+		assert.Equal(t, "Skipped Frames", res.Issues[0].Title)
+		assert.Equal(t, 3, res.Issues[0].Count)
+		assert.Empty(t, errOut, "stderr stays quiet in JSON mode")
+	})
+	t.Run("a capture of only layer-2 frames explains itself", func(t *testing.T) {
+		out, _ := run(only)
+		assert.Contains(t, out, "The capture contains no analyzable packets. Nothing to analyze.")
+		assert.Contains(t, out, "Skipped Frames: 2 frames were skipped")
+		assert.NotContains(t, out, "Health Score")
+
+		out, _ = run("-o", "json", only)
+		assert.Contains(t, out, `"title": "Skipped Frames"`)
+		assert.Contains(t, out, `"message": "The capture contains no analyzable packets"`)
+	})
+	t.Run("a clean capture has no warning", func(t *testing.T) {
+		out, errOut := run(clean)
+		assert.NotContains(t, out, "Skipped Frames")
+		assert.Empty(t, errOut)
+		assert.Contains(t, out, "Health Score: 100/100")
+	})
+	t.Run("follow does not print the warning noise", func(t *testing.T) {
+		_, errOut := run("--follow-packets", "10.0.0.1:1000-10.0.0.2:2000", mixed)
+		assert.Empty(t, errOut)
+	})
+}
+
+func TestDescribeSkipped(t *testing.T) {
+	assert.Equal(t, "", describeSkipped(pcap.ReadStats{}))
+	assert.Equal(t, "7 non-IP frames", describeSkipped(pcap.ReadStats{SkippedNonIP: 7}))
+	assert.Equal(t, "5 frames of unsupported link type 18; 2 frames of unsupported link type 250; 7 non-IP frames",
+		describeSkipped(pcap.ReadStats{SkippedNonIP: 7, UnsupportedLinkTypes: map[int]int{250: 2, 18: 5}}))
+}
+
+func TestPacketTableBracketsIPv6(t *testing.T) {
+	assert.Equal(t, "[2001:db8::1]:443", formatEndpoint("2001:db8::1", 443))
+	assert.Equal(t, "10.0.0.1:443", formatEndpoint("10.0.0.1", 443))
+	assert.Equal(t, "2001:db8::1", formatEndpoint("2001:db8::1", 0), "portless protocols show the bare address")
 }

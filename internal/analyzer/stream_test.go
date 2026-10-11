@@ -2,6 +2,7 @@ package analyzer
 
 import (
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -249,4 +250,81 @@ func make100x() []byte {
 		b[i] = 'x'
 	}
 	return b
+}
+
+func TestEndpointStringBracketsIPv6(t *testing.T) {
+	assert.Equal(t, "10.0.0.1:80", endpoint{"10.0.0.1", 80}.String())
+	assert.Equal(t, "[2001:db8::1]:80", endpoint{"2001:db8::1", 80}.String())
+	assert.Equal(t, "[fe80::1:1234]:0", endpoint{"fe80::1:1234", 0}.String())
+}
+
+func TestParseFlowIDBracketedIPv6(t *testing.T) {
+	a, b, proto, inst, err := parseFlowID("[2001:db8::2]:443-[2001:db8::1]:80#2/tcp")
+	require.NoError(t, err)
+	assert.Equal(t, endpoint{"2001:db8::1", 80}, a, "canonical order")
+	assert.Equal(t, endpoint{"2001:db8::2", 443}, b)
+	assert.Equal(t, models.ProtocolTCP, proto)
+	assert.Equal(t, 1, inst)
+
+	// mixed families and the legacy unbracketed spelling both still parse
+	a, b, _, _, err = parseFlowID("10.0.0.1:5-[::1]:6")
+	require.NoError(t, err)
+	assert.Equal(t, endpoint{"10.0.0.1", 5}, a)
+	assert.Equal(t, endpoint{"::1", 6}, b)
+	a, _, _, _, err = parseFlowID("fe80::1:1234-fe80::2:80")
+	require.NoError(t, err)
+	assert.Equal(t, endpoint{"fe80::1", 1234}, a)
+
+	for _, bad := range []string{"[2001:db8::1-10.0.0.1:80", "[2001:db8::1]-10.0.0.1:80", "[2001:db8::1]80-10.0.0.1:80", "[nope]:80-10.0.0.1:80", "[::1]:99999-10.0.0.1:80"} {
+		_, _, _, _, err := parseFlowID(bad)
+		assert.Error(t, err, bad)
+	}
+}
+
+func TestIPv6FlowIDsRoundTrip(t *testing.T) {
+	t0 := time.Unix(1700000000, 0)
+	mk := func(ms int, fromClient bool, payload string) models.PacketInfo {
+		p := models.PacketInfo{Timestamp: t0.Add(time.Duration(ms) * time.Millisecond), Protocol: models.ProtocolTCP, TCPFlags: "PSH,ACK", TCPWindow: 100,
+			PayloadSize: len(payload), Payload: []byte(payload)}
+		if fromClient {
+			p.SrcIP, p.SrcPort, p.DstIP, p.DstPort = "2001:db8::1", 50000, "2001:db8::f02:443", 179
+			p.TCPSeq = 1
+		} else {
+			p.SrcIP, p.SrcPort, p.DstIP, p.DstPort = "2001:db8::f02:443", 179, "2001:db8::1", 50000
+			p.TCPSeq = 100
+		}
+		return p
+	}
+	packets := []models.PacketInfo{mk(0, true, "hello"), mk(5, false, "world")}
+
+	flows := ListFlows(packets)
+	require.Len(t, flows, 1)
+	assert.Equal(t, "[2001:db8::1]:50000-[2001:db8::f02:443]:179", flows[0].ID, "unambiguous: the second host is ...::f02:443, port 179")
+
+	res := Analyze(packets, "all")
+	assert.Equal(t, flows[0].ID, res.TopTalkers[0].ID)
+
+	conv, err := FollowStream(packets, flows[0].ID)
+	require.NoError(t, err)
+	assert.Equal(t, flows[0].ID, conv.FlowID)
+	assert.Equal(t, "[2001:db8::1]:50000", conv.Client)
+	require.Len(t, conv.Messages, 2)
+	assert.Equal(t, "hello", string(conv.Messages[0].Data))
+
+	conv, err = Follow(packets, "[2001:db8::f02:443]:179-[2001:db8::1]:50000/tcp")
+	require.NoError(t, err)
+	assert.Len(t, conv.Events, 2)
+
+	// the error for an unknown flow lists the bracketed IDs
+	_, err = Follow(packets, "[2001:db8::9]:1-[2001:db8::8]:2")
+	var fe *FollowError
+	require.ErrorAs(t, err, &fe)
+	assert.Equal(t, flows[0].ID, fe.Available[0].ID)
+}
+
+func TestICMPTargetBracketsIPv6(t *testing.T) {
+	p := models.PacketInfo{ICMPOrigDstIP: "2001:db8::9", ICMPOrigDstPort: 53}
+	assert.Equal(t, "[2001:db8::9]:53", icmpTarget(p))
+	p.ICMPOrigDstPort = 0
+	assert.Equal(t, "2001:db8::9", icmpTarget(p), "no port: the bare address")
 }

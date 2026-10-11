@@ -408,6 +408,13 @@ var categoryRecommendations = map[string][]string{
 	titleTimeoutRetransmit: {
 		"Severe congestion or blackhole detected. The sender waited for an RTO (Retransmission Timeout) before retrying. Investigate link quality or MTU issues.",
 	},
+	titleSkippedFrames: {
+		"Find out what the skipped frames are: decode the capture with tshark or convert it (for example with editcap) so that tunneled or otherwise encapsulated IP traffic becomes visible to this tool.",
+		"If they are only layer-2 control frames (spanning tree, LLDP, LACP) the analysis is complete and the warning can be ignored.",
+	},
+	titleStray: {
+		"Check whether the destinations are being scanned, or whether a firewall or NAT dropped the connection state so that later packets are answered with RSTs. If the capture is one-sided, the handshake may simply be on the other path.",
+	},
 	titleUnansweredSYN: {
 		"Verify if a firewall is silently dropping packets, or if the server is down/unreachable. Also check that the capture point sees traffic in both directions: a one-sided capture looks the same.",
 	},

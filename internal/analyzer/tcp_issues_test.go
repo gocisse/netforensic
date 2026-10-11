@@ -1,6 +1,7 @@
 package analyzer
 
 import (
+	"encoding/json"
 	"fmt"
 	"testing"
 	"time"
@@ -828,4 +829,123 @@ func TestSYNFloodRealSingleSYNCapture(t *testing.T) {
 	assert.Equal(t, 1, res.TotalPackets)
 	assert.Empty(t, res.Issues)
 	assert.Equal(t, 100, res.Diagnosis.HealthScore)
+}
+
+func strayIssues(res *models.AnalysisResult) (out []models.Issue) {
+	for _, is := range res.Issues {
+		if is.Title == titleStray {
+			out = append(out, is)
+		}
+	}
+	return out
+}
+
+func TestStrayRST(t *testing.T) {
+	// lone RSTs: three sent to 10.0.1.1 (by two servers) and one to 10.0.1.2
+	rst := func(ms int, port uint16, fromServer bool, dst string) models.PacketInfo {
+		p := tcpEv(ms, port, !fromServer, "RST,ACK", 0)
+		if dst != "" {
+			p.DstIP = dst
+		}
+		return p
+	}
+	a := rst(0, 5000, true, "10.0.1.1")
+	b := rst(10, 5001, true, "10.0.1.1")
+	c := rst(20, 5002, true, "10.0.1.1")
+	c.SrcIP = "10.0.0.9"
+	d := rst(30, 5003, true, "10.0.1.2")
+	res := Analyze([]models.PacketInfo{a, b, c, d}, "all")
+
+	got := strayIssues(res)
+	require.Len(t, got, 1, "all stray RSTs are folded into one issue")
+	is := got[0]
+	assert.Equal(t, models.SeverityInfo, is.Severity)
+	assert.Equal(t, "Connection", is.Category)
+	assert.Equal(t, 4, is.Count)
+	assert.Equal(t, "10.0.1.1", is.Target, "the destination hit most often")
+	assert.Equal(t, rstT0, is.Timestamp)
+	assert.Equal(t, "4 RSTs with no handshake or data captured, sent by 2 hosts to 2 destinations. Destinations: 10.0.1.1 (3), 10.0.1.2 (1). "+
+		"These are usually replies to port probes or to packets of connections the sender no longer knows.", is.Description)
+	require.Len(t, is.Occurrences, 4)
+	assert.Equal(t, "10.0.0.2:443-10.0.1.1:5000", is.Occurrences[0].Subject)
+	assert.Equal(t, 98, res.Diagnosis.HealthScore, "an info costs 2")
+	assert.Equal(t, titleStray, res.Diagnosis.PrimaryCause)
+	assert.Contains(t, res.Diagnosis.Recommendations[0], "scanned")
+}
+
+func TestStrayRSTTopDestinations(t *testing.T) {
+	var packets []models.PacketInfo
+	for i, dst := range []string{"10.0.1.1", "10.0.1.1", "10.0.1.1", "10.0.1.2", "10.0.1.2", "10.0.1.3", "10.0.1.4"} {
+		p := tcpEv(i*10, uint16(5000+i), false, "RST", 0)
+		p.DstIP = dst
+		packets = append(packets, p)
+	}
+	got := strayIssues(Analyze(packets, "all"))
+	require.Len(t, got, 1)
+	assert.Contains(t, got[0].Description, "7 RSTs")
+	assert.Contains(t, got[0].Description, "Top 3 destinations: 10.0.1.1 (3), 10.0.1.2 (2), 10.0.1.3 (1).")
+	assert.NotContains(t, got[0].Description, "10.0.1.4")
+}
+
+func TestStrayRSTNeedsAnEmptyConnection(t *testing.T) {
+	tests := []struct {
+		name    string
+		packets []models.PacketInfo
+		stray   bool
+	}{
+		{"lone RST", []models.PacketInfo{tcpEv(0, 5000, false, "RST", 0)}, true},
+		{"lone RST,ACK from the client", []models.PacketInfo{tcpEv(0, 5000, true, "RST,ACK", 0)}, true},
+		{"a few ACKs, then RST: still nothing but control packets", []models.PacketInfo{tcpEv(0, 5000, true, "ACK", 0), tcpEv(1, 5000, false, "RST", 0)}, true},
+		{"after a SYN it is a refusal, not a stray", []models.PacketInfo{tcpEv(0, 5000, true, "SYN", 0), tcpEv(1, 5000, false, "RST,ACK", 0)}, false},
+		{"after data it is an abrupt close", []models.PacketInfo{tcpEv(0, 5000, true, "PSH,ACK", 10), tcpEv(1, 5000, false, "RST", 0)}, false},
+		{"after a SYN-ACK", []models.PacketInfo{tcpEv(0, 5000, false, "SYN,ACK", 0), tcpEv(1, 5000, true, "RST", 0)}, false},
+		{"no RST at all", []models.PacketInfo{tcpEv(0, 5000, true, "ACK", 0)}, false},
+		{"udp is not tcp", []models.PacketInfo{{Protocol: models.ProtocolUDP, SrcIP: "1.1.1.1", DstIP: "2.2.2.2", TCPFlags: "RST"}}, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.stray, len(strayIssues(Analyze(tt.packets, "all"))) == 1)
+		})
+	}
+}
+
+func TestAggregatedIssuesSerializeTheirOccurrences(t *testing.T) {
+	// every aggregated issue must carry its events into the JSON
+	var packets []models.PacketInfo
+	for i := 0; i < 6; i++ { // refused
+		port := uint16(5000 + i)
+		packets = append(packets, tcpEv(i*10, port, true, "SYN", 0), tcpEv(i*10+1, port, false, "RST,ACK", 0))
+	}
+	for i := 0; i < 3; i++ { // unanswered
+		packets = append(packets, synTo(i*10, 40+i, uint16(6000+i), "10.0.9.9"))
+	}
+	packets = append(packets, tcpEv(500, 7000, false, "RST", 0), tail(9000)) // stray
+	res := Analyze(packets, "all")
+
+	raw, err := json.Marshal(res)
+	require.NoError(t, err)
+	var decoded struct {
+		Issues []struct {
+			Title       string `json:"title"`
+			Count       int    `json:"count"`
+			Occurrences []struct {
+				Time    string  `json:"time"`
+				Subject string  `json:"subject"`
+				Value   float64 `json:"value"`
+			} `json:"occurrences"`
+		} `json:"issues"`
+	}
+	require.NoError(t, json.Unmarshal(raw, &decoded))
+	seen := map[string]int{}
+	for _, is := range decoded.Issues {
+		seen[is.Title] = len(is.Occurrences)
+		assert.Equal(t, is.Count, len(is.Occurrences), is.Title+": one occurrence per counted event")
+		for _, o := range is.Occurrences {
+			assert.NotEmpty(t, o.Subject, is.Title)
+			assert.NotEmpty(t, o.Time, is.Title)
+		}
+	}
+	assert.Equal(t, 6, seen[titleRefused])
+	assert.Equal(t, 3, seen[titleUnansweredSYN])
+	assert.Equal(t, 1, seen[titleStray])
 }

@@ -3,7 +3,7 @@
 package analyzer
 
 import (
-	"fmt"
+	"net"
 	"sort"
 	"strconv"
 	"strings"
@@ -147,7 +147,9 @@ func (e endpoint) less(o endpoint) bool {
 	return e.port < o.port
 }
 
-func (e endpoint) String() string { return fmt.Sprintf("%s:%d", e.ip, e.port) }
+// String formats the endpoint as ip:port, with IPv6 addresses in brackets
+// ([2001:db8::1]:443) so the port cannot be mistaken for part of the address.
+func (e endpoint) String() string { return net.JoinHostPort(e.ip, strconv.Itoa(int(e.port))) }
 
 type flowKey struct {
 	a, b  endpoint

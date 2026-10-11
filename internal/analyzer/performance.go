@@ -266,7 +266,7 @@ func aggregateFlowMetric(flows []models.Flow, kind, title string, value func(mod
 	first := hit[0].StartTime
 	occ := make([]models.Occurrence, len(hit))
 	for i, f := range hit {
-		occ[i] = models.Occurrence{Time: f.StartTime, Subject: f.ID}
+		occ[i] = models.Occurrence{Time: f.StartTime, Subject: f.ID, Value: value(f), Unit: "ms"}
 		if f.StartTime.Before(first) {
 			first = f.StartTime
 		}

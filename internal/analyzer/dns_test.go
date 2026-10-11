@@ -1,6 +1,7 @@
 package analyzer
 
 import (
+	"encoding/json"
 	"fmt"
 	"testing"
 	"time"
@@ -216,4 +217,35 @@ func TestPluralCount(t *testing.T) {
 	assert.Equal(t, "1 query", count(1, "query", "queries"))
 	assert.Equal(t, "0 queries", count(0, "query", "queries"))
 	assert.Equal(t, "7 queries", count(7, "query", "queries"))
+}
+
+func TestDNSIssuesSerializeEveryQuery(t *testing.T) {
+	var packets []models.PacketInfo
+	for i := 0; i < 205; i++ {
+		packets = append(packets, nxPair(float64(i), uint16(i+1), fmt.Sprintf("host%03d.example", i%40))...)
+	}
+	issues := analyzeDNS(packets)
+	require.Len(t, issues, 1)
+
+	raw, err := json.Marshal(issues[0])
+	require.NoError(t, err)
+	var decoded struct {
+		Count       int `json:"count"`
+		Occurrences []struct {
+			Time    time.Time `json:"time"`
+			Subject string    `json:"subject"`
+		} `json:"occurrences"`
+	}
+	require.NoError(t, json.Unmarshal(raw, &decoded))
+	assert.Equal(t, 205, decoded.Count)
+	require.Len(t, decoded.Occurrences, 205, "every NXDOMAIN, not just the top three domains")
+	assert.Equal(t, "host000.example", decoded.Occurrences[0].Subject)
+	assert.Equal(t, dnsT0.Add(10*time.Millisecond), decoded.Occurrences[0].Time)
+
+	// timeouts carry how long the answer took, when there was one
+	late := dnsQ(0, 9, "late.example")
+	to := analyzeDNS([]models.PacketInfo{late, dnsR(7, 9, "late.example", "NOERROR")})
+	require.Len(t, to, 1)
+	assert.InDelta(t, 7000, to[0].Occurrences[0].Value, 0.01)
+	assert.Equal(t, "ms", to[0].Occurrences[0].Unit)
 }

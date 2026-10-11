@@ -4,11 +4,14 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"sort"
 	"strconv"
+	"strings"
 	"text/tabwriter"
 
 	"github.com/gocisse/netforensic/internal/models"
+	"github.com/gocisse/netforensic/internal/pcap"
 )
 
 // printPacketTable prints packets as an aligned table.
@@ -40,7 +43,7 @@ func formatEndpoint(ip string, port uint16) string {
 	if port == 0 {
 		return ip
 	}
-	return fmt.Sprintf("%s:%d", ip, port)
+	return net.JoinHostPort(ip, strconv.Itoa(int(port)))
 }
 
 // issueGroup is a set of issues sharing severity, category and title.
@@ -129,8 +132,16 @@ func printNothingToAnalyze(w io.Writer, file string, asJSON, filtersActive bool,
 		msg = "No packets matched the specified filters"
 	}
 	if !asJSON {
-		_, err := fmt.Fprintf(w, "%s. Nothing to analyze.\n", msg)
-		return err
+		if _, err := fmt.Fprintf(w, "%s. Nothing to analyze.\n", msg); err != nil {
+			return err
+		}
+		for _, n := range notes {
+			if n.Title == "Skipped Frames" { // explains why a non-empty file has nothing to analyze
+				_, err := fmt.Fprintf(w, "%s: %s\n", n.Title, n.Description)
+				return err
+			}
+		}
+		return nil
 	}
 	if notes == nil {
 		notes = []models.Issue{}
@@ -138,4 +149,22 @@ func printNothingToAnalyze(w io.Writer, file string, asJSON, filtersActive bool,
 	enc := json.NewEncoder(w)
 	enc.SetIndent("", "  ")
 	return enc.Encode(nothingToAnalyze{FileName: file, Issues: notes, Message: msg})
+}
+
+// describeSkipped says which frames were skipped, for example
+// "10667 frames of unsupported link type 198; 3 non-IP frames".
+func describeSkipped(s pcap.ReadStats) string {
+	var parts []string
+	types := make([]int, 0, len(s.UnsupportedLinkTypes))
+	for lt := range s.UnsupportedLinkTypes {
+		types = append(types, lt)
+	}
+	sort.Ints(types)
+	for _, lt := range types {
+		parts = append(parts, fmt.Sprintf("%d frames of unsupported link type %d", s.UnsupportedLinkTypes[lt], lt))
+	}
+	if s.SkippedNonIP > 0 {
+		parts = append(parts, fmt.Sprintf("%d non-IP frames", s.SkippedNonIP))
+	}
+	return strings.Join(parts, "; ")
 }

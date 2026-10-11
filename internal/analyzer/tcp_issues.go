@@ -14,6 +14,7 @@ const (
 	titleRefused = "Connection Refused (Port Closed)"
 	titleAborted = "Connection Abruptly Closed"
 	titleIdle    = "Connection Idle Timeout"
+	titleStray   = "Stray RST / Port Probe"
 
 	titleZeroWindow      = "TCP Zero Window"
 	titleZeroWindowReset = "Connection reset after zero-window stall"
@@ -30,6 +31,7 @@ type connState struct {
 	server     endpoint
 	sawSyn     bool
 	sawSynAck  bool
+	anySYN     bool // a SYN or SYN-ACK was seen, from either side
 	sawAck     bool // client ACK after the SYN-ACK: the handshake completed
 	data       bool // payload seen in either direction
 	fin        [2]bool
@@ -68,6 +70,11 @@ type connState struct {
 //   - Connection Idle Timeout (info): the same, but the RST came more than
 //     10 seconds after the last payload in either direction, which looks
 //     like an idle-timeout cleanup rather than a failure.
+//   - Stray RST / Port Probe (info): an RST on a connection whose SYN,
+//     SYN-ACK and data were never captured, typically a reply to a port
+//     probe or to a segment of a connection the sender no longer knows.
+//     All of them are folded into one issue that names the destinations
+//     (the hosts the RSTs were sent to) most often hit.
 //   - TCP Zero Window (warning): a receiver advertised a window of 0, so the
 //     sender had to stall until its buffer drained.
 //   - Connection reset after zero-window stall (error): a zero window
@@ -101,6 +108,7 @@ func analyzeConnections(packets []models.PacketInfo) []models.Issue {
 	}
 
 	var issues []models.Issue
+	var stray []*connState                   // RST with no handshake and no data captured
 	refused := make(map[string][]*connState) // server ip:port -> refused connections
 	var refusedOrder []string
 
@@ -116,6 +124,8 @@ func analyzeConnections(packets []models.PacketInfo) []models.Issue {
 				refusedOrder = append(refusedOrder, t)
 			}
 			refused[t] = append(refused[t], c)
+		case c.rsts > 0 && !c.anySYN && !c.data:
+			stray = append(stray, c)
 		case c.rsts > 0 && c.established() && !(c.fin[0] && c.fin[1]):
 			issues = append(issues, c.abortedIssue())
 		}
@@ -125,6 +135,9 @@ func analyzeConnections(packets []models.PacketInfo) []models.Issue {
 	}
 	for _, t := range refusedOrder {
 		issues = append(issues, refusedIssue(t, refused[t]))
+	}
+	if len(stray) > 0 {
+		issues = append(issues, strayRSTIssue(stray))
 	}
 	issues = append(issues, synIssues(conns, order, captureEnd)...)
 	sort.SliceStable(issues, func(i, j int) bool { return issues[i].Timestamp.Before(issues[j].Timestamp) })
@@ -138,6 +151,9 @@ func (c *connState) observe(p models.PacketInfo) {
 	fromClient := src == c.client
 	flags := p.TCPFlags
 	has := func(f string) bool { return hasTCPFlag(flags, f) }
+	if has("SYN") {
+		c.anySYN = true
+	}
 
 	switch {
 	case has("SYN") && !has("ACK") && !c.sawSyn:
@@ -274,6 +290,7 @@ func refusedIssue(target string, conns []*connState) models.Issue {
 			n, len(clients), target, first.UTC().Format("15:04:05.000"), last.UTC().Format("15:04:05.000"))
 	}
 	is := models.Issue{
+		Occurrences: connOccurrences(conns, func(c *connState) time.Time { return c.refusedAt }),
 		ID:          "refused-" + target,
 		Severity:    models.SeverityWarning,
 		Category:    "Connection",
@@ -354,5 +371,55 @@ func (c *connState) zeroWindowResetIssue() models.Issue {
 		FlowID:      c.id,
 		Target:      c.server.String(),
 		Count:       c.zeroWindows,
+	}
+}
+
+// connOccurrences lists conns as occurrences: the connection's flow ID at the
+// time at() gives, in capture order.
+func connOccurrences(conns []*connState, at func(*connState) time.Time) []models.Occurrence {
+	occ := make([]models.Occurrence, len(conns))
+	for i, c := range conns {
+		occ[i] = models.Occurrence{Time: at(c), Subject: c.id}
+	}
+	sort.SliceStable(occ, func(i, j int) bool { return occ[i].Time.Before(occ[j].Time) })
+	return occ
+}
+
+// strayRSTIssue folds connections that show nothing but an RST into one
+// issue, grouped by the destination of the RST.
+func strayRSTIssue(conns []*connState) models.Issue {
+	byDst := make(map[string]int)
+	srcs := make(map[string]struct{})
+	occ := make([]models.Occurrence, len(conns))
+	first := conns[0].firstRST.Timestamp
+	for i, c := range conns {
+		byDst[c.firstRST.DstIP]++
+		srcs[c.firstRST.SrcIP] = struct{}{}
+		occ[i] = models.Occurrence{Time: c.firstRST.Timestamp, Subject: c.id}
+		if c.firstRST.Timestamp.Before(first) {
+			first = c.firstRST.Timestamp
+		}
+	}
+	sort.SliceStable(occ, func(i, j int) bool { return occ[i].Time.Before(occ[j].Time) })
+	top := topCounts(byDst, 3)
+	parts := make([]string, len(top))
+	for i, t := range top {
+		parts[i] = fmt.Sprintf("%s (%d)", t.name, t.n)
+	}
+	label := "Top 3 destinations"
+	if len(byDst) <= 3 {
+		label = "Destinations"
+	}
+	return models.Issue{
+		ID:        "stray-rst",
+		Severity:  models.SeverityInfo,
+		Category:  "Connection",
+		Title:     titleStray,
+		Timestamp: first,
+		Target:    top[0].name,
+		Count:     len(conns),
+		Description: fmt.Sprintf("%s with no handshake or data captured, sent by %s to %s. %s. These are usually replies to port probes or to packets of connections the sender no longer knows.",
+			count(len(conns), "RST", "RSTs"), count(len(srcs), "host", "hosts"), count(len(byDst), "destination", "destinations"), label+": "+strings.Join(parts, ", ")),
+		Occurrences: occ,
 	}
 }
