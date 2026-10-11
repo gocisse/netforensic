@@ -9,6 +9,7 @@ import (
 	"io"
 	"net"
 	"os"
+	"sort"
 	"strings"
 
 	"github.com/google/gopacket"
@@ -69,6 +70,25 @@ type ReadStats struct {
 	// SkippedNonIP counts frames that decoded but carry neither IP nor ARP,
 	// such as spanning tree, LLDP or other layer-2 control traffic.
 	SkippedNonIP int
+}
+
+// Describe says which frames were skipped, for example
+// "10667 frames of unsupported link type 18; 3 non-IP frames". It is empty
+// if none were.
+func (s ReadStats) Describe() string {
+	var parts []string
+	types := make([]int, 0, len(s.UnsupportedLinkTypes))
+	for lt := range s.UnsupportedLinkTypes {
+		types = append(types, lt)
+	}
+	sort.Ints(types)
+	for _, lt := range types {
+		parts = append(parts, fmt.Sprintf("%d frames of unsupported link type %d", s.UnsupportedLinkTypes[lt], lt))
+	}
+	if s.SkippedNonIP > 0 {
+		parts = append(parts, fmt.Sprintf("%d non-IP frames", s.SkippedNonIP))
+	}
+	return strings.Join(parts, "; ")
 }
 
 // Skipped returns the number of frames that were read but not analyzed.

@@ -504,3 +504,11 @@ func TestLinkTypeSupported(t *testing.T) {
 		assert.Equal(t, want, linkTypeSupported(lt), lt)
 	}
 }
+
+func TestReadStatsDescribe(t *testing.T) {
+	assert.Equal(t, "", ReadStats{}.Describe())
+	assert.Equal(t, "7 non-IP frames", ReadStats{SkippedNonIP: 7}.Describe())
+	assert.Equal(t, "5 frames of unsupported link type 18; 2 frames of unsupported link type 250; 7 non-IP frames",
+		ReadStats{SkippedNonIP: 7, SkippedUnsupportedLink: 7, UnsupportedLinkTypes: map[int]int{250: 2, 18: 5}}.Describe())
+	assert.Equal(t, 9, ReadStats{SkippedNonIP: 7, SkippedUnsupportedLink: 2}.Skipped())
+}

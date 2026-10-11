@@ -16,6 +16,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/gocisse/netforensic/internal/models"
+	"github.com/gocisse/netforensic/internal/pcap"
 )
 
 func TestValidateFile(t *testing.T) {
@@ -282,4 +283,93 @@ func TestRootCmdNothingToAnalyze(t *testing.T) {
 		require.NoError(t, cmd.Execute())
 		assert.Contains(t, out.String(), `"message": "The capture contains no analyzable packets"`)
 	})
+}
+
+func TestRootCmdWeb(t *testing.T) {
+	const sample = "../../internal/pcap/testdata/sample.pcap"
+	run := func(startServer func(string) error, args ...string) (string, error) {
+		var out, errOut bytes.Buffer
+		cmd := newRootCmdWith(startServer)
+		cmd.SetOut(&out)
+		cmd.SetErr(&errOut)
+		cmd.SetArgs(args)
+		err := cmd.Execute()
+		return out.String(), err
+	}
+	notCalled := func(string) error {
+		t.Error("the server must not start")
+		return nil
+	}
+
+	t.Run("starts the server and says where", func(t *testing.T) {
+		var gotAddr string
+		out, err := run(func(addr string) error { gotAddr = addr; return nil }, "--web", ":8080")
+		require.NoError(t, err)
+		assert.Equal(t, ":8080", gotAddr)
+		assert.Equal(t, "Web UI available at http://localhost:8080 (press Ctrl-C to stop)\n", out)
+		assert.NotContains(t, out, "TRIAGE", "no analysis runs")
+	})
+	t.Run("server errors are returned", func(t *testing.T) {
+		_, err := run(func(string) error { return fmt.Errorf("listen on \":8080\": address already in use") }, "--web", ":8080")
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "address already in use")
+	})
+	t.Run("an equals sign works too", func(t *testing.T) {
+		var gotAddr string
+		_, err := run(func(addr string) error { gotAddr = addr; return nil }, "--web=127.0.0.1:9000")
+		require.NoError(t, err)
+		assert.Equal(t, "127.0.0.1:9000", gotAddr)
+	})
+	t.Run("a capture file is not allowed", func(t *testing.T) {
+		_, err := run(notCalled, "--web", ":8080", sample)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "does not take a capture file")
+	})
+	t.Run("analysis flags are not allowed", func(t *testing.T) {
+		_, err := run(notCalled, "--web", ":8080", "-v", "-s", "dns", "--follow", "a")
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "--web cannot be combined with --service, --verbose, --follow")
+	})
+	t.Run("without --web a file is still required", func(t *testing.T) {
+		_, err := run(notCalled)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "accepts 1 arg(s), received 0")
+		_, err = run(notCalled, sample, sample)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "received 2")
+	})
+	t.Run("an empty --web runs the normal analysis", func(t *testing.T) {
+		out, err := run(notCalled, "--web", "", sample)
+		require.NoError(t, err)
+		assert.Contains(t, out, "Analyzed 2 packets in 2 flows")
+	})
+	t.Run("the real command rejects an unusable address", func(t *testing.T) {
+		cmd := newRootCmd()
+		cmd.SetOut(&bytes.Buffer{})
+		cmd.SetErr(&bytes.Buffer{})
+		cmd.SetArgs([]string{"--web", "not an address"})
+		err := cmd.Execute()
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "listen on")
+	})
+}
+
+func TestWebURL(t *testing.T) {
+	for addr, want := range map[string]string{
+		":8080":          "http://localhost:8080",
+		"localhost:3000": "http://localhost:3000",
+		"127.0.0.1:9000": "http://127.0.0.1:9000",
+		"0.0.0.0:80":     "http://0.0.0.0:80",
+		"[::1]:8080":     "http://[::1]:8080",
+		"[::]:8080":      "http://[::]:8080",
+		"weird":          "http://weird",
+		"host.example:1": "http://host.example:1",
+	} {
+		assert.Equal(t, want, webURL(addr), addr)
+	}
+}
+
+func TestDescribeSkippedDelegates(t *testing.T) {
+	s := pcap.ReadStats{SkippedNonIP: 2, UnsupportedLinkTypes: map[int]int{18: 5}}
+	assert.Equal(t, s.Describe(), describeSkipped(s))
 }

@@ -7,7 +7,6 @@ import (
 	"net"
 	"sort"
 	"strconv"
-	"strings"
 	"text/tabwriter"
 
 	"github.com/gocisse/netforensic/internal/models"
@@ -152,19 +151,5 @@ func printNothingToAnalyze(w io.Writer, file string, asJSON, filtersActive bool,
 }
 
 // describeSkipped says which frames were skipped, for example
-// "10667 frames of unsupported link type 198; 3 non-IP frames".
-func describeSkipped(s pcap.ReadStats) string {
-	var parts []string
-	types := make([]int, 0, len(s.UnsupportedLinkTypes))
-	for lt := range s.UnsupportedLinkTypes {
-		types = append(types, lt)
-	}
-	sort.Ints(types)
-	for _, lt := range types {
-		parts = append(parts, fmt.Sprintf("%d frames of unsupported link type %d", s.UnsupportedLinkTypes[lt], lt))
-	}
-	if s.SkippedNonIP > 0 {
-		parts = append(parts, fmt.Sprintf("%d non-IP frames", s.SkippedNonIP))
-	}
-	return strings.Join(parts, "; ")
-}
+// "10667 frames of unsupported link type 18; 3 non-IP frames".
+func describeSkipped(s pcap.ReadStats) string { return s.Describe() }

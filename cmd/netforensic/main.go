@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -15,6 +16,7 @@ import (
 	"github.com/gocisse/netforensic/internal/analyzer"
 	"github.com/gocisse/netforensic/internal/models"
 	"github.com/gocisse/netforensic/internal/pcap"
+	"github.com/gocisse/netforensic/internal/server"
 )
 
 var validServices = []string{"all", "dns", "http", "tls", "https", "<port>"}
@@ -42,8 +44,13 @@ func normalizeArgs(args []string) []string {
 }
 
 // newRootCmd builds the netforensic root command.
-func newRootCmd() *cobra.Command {
+func newRootCmd() *cobra.Command { return newRootCmdWith(server.StartServer) }
+
+// newRootCmdWith builds the root command with startServer as the function
+// behind --web, so that tests do not have to run a real server.
+func newRootCmdWith(startServer func(addr string) error) *cobra.Command {
 	var (
+		web        string
 		service    string
 		verbose    bool
 		output     string
@@ -56,12 +63,18 @@ func newRootCmd() *cobra.Command {
 	)
 
 	cmd := &cobra.Command{
-		Use:           "netforensic [flags] file.pcap",
+		Use:           "netforensic [flags] file.pcap | netforensic --web addr",
 		Short:         "Analyze a pcap file for network issues",
-		Args:          cobra.ExactArgs(1),
+		Args:          cobra.ArbitraryArgs, // checked below: one file, or none with --web
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if web != "" {
+				return runWeb(cmd, web, args, startServer)
+			}
+			if len(args) != 1 {
+				return fmt.Errorf("accepts 1 arg(s), received %d (give a capture file, or --web <addr> to start the web UI)", len(args))
+			}
 			service = strings.ToLower(service)
 			if err := validateService(service); err != nil {
 				return err
@@ -168,6 +181,7 @@ func newRootCmd() *cobra.Command {
 			return nil
 		},
 	}
+	cmd.Flags().StringVar(&web, "web", "", "serve the web UI and API on this address, for example :8080, instead of analyzing a file")
 	cmd.Flags().StringVarP(&service, "service", "s", "all", "service to analyze: "+strings.Join(validServices, ", "))
 
 	cmd.Flags().StringVarP(&output, "output", "o", "text", "output format: text, json")
@@ -180,6 +194,37 @@ func newRootCmd() *cobra.Command {
 	cmd.Flags().BoolVarP(&verbose, "verbose", "v", false, "print every packet read before the summary")
 
 	return cmd
+}
+
+// runWeb starts the web server on addr. It takes no capture file and no
+// analysis flags: uploads are analyzed with the defaults.
+func runWeb(cmd *cobra.Command, addr string, args []string, startServer func(string) error) error {
+	if len(args) > 0 {
+		return fmt.Errorf("--web serves uploads and does not take a capture file (got %q)", args[0])
+	}
+	var conflicting []string
+	for _, name := range []string{"service", "output", "verbose", "src-ip", "dst-ip", "src-port", "dst-port", "follow", "follow-packets"} {
+		if cmd.Flags().Changed(name) {
+			conflicting = append(conflicting, "--"+name)
+		}
+	}
+	if len(conflicting) > 0 {
+		return fmt.Errorf("--web cannot be combined with %s", strings.Join(conflicting, ", "))
+	}
+	fmt.Fprintf(cmd.OutOrStdout(), "Web UI available at %s (press Ctrl-C to stop)\n", webURL(addr))
+	return startServer(addr)
+}
+
+// webURL turns a listen address such as ":8080" into a URL to open.
+func webURL(addr string) string {
+	host, port, err := net.SplitHostPort(addr)
+	if err != nil {
+		return "http://" + addr
+	}
+	if host == "" {
+		host = "localhost"
+	}
+	return "http://" + net.JoinHostPort(host, port)
 }
 
 // validateService checks that service is a supported filter.
