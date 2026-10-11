@@ -1,4 +1,4 @@
-import type { Issue, Severity } from './types'
+import type { Issue, Occurrence, Severity } from './types'
 
 export interface Tone {
   label: string
@@ -44,3 +44,34 @@ export function sortIssues(issues: Issue[]): Issue[] {
 
 /** Titles of issues that describe the capture file, not the traffic. */
 export const NOTE_TITLES = ['Truncated Capture', 'Skipped Frames'] as const
+
+/** Column heading for the subject of an issue's occurrences. */
+export function subjectLabel(issue: Issue): string {
+  switch (issue.category) {
+    case 'DNS':
+      return 'Domain'
+    case 'ICMP':
+      return 'Target'
+    case 'Performance':
+      return 'Flow'
+    case 'Connection':
+      return 'Connection'
+    case 'PacketLoss':
+      return 'Flow'
+    default:
+      return 'Subject'
+  }
+}
+
+/** Formats an ISO timestamp as "2006-01-02 15:04:05.000" in UTC. */
+export function formatTime(iso: string): string {
+  const d = new Date(iso)
+  if (Number.isNaN(d.getTime())) return iso
+  return d.toISOString().replace('T', ' ').slice(0, 23)
+}
+
+/** Formats a measurement with its unit, for example "7638.96 ms". */
+export function formatValue(o: Occurrence): string {
+  if (o.value === undefined) return ''
+  return o.unit ? `${o.value} ${o.unit}` : String(o.value)
+}

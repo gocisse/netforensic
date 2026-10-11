@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import type { ChangeEvent, DragEvent, ReactNode } from 'react'
 import { analyzeCapture, ApiError } from './api'
 import { healthTone, NOTE_TITLES, severityBadge, sortIssues } from './format'
+import OccurrenceTable from './components/OccurrenceTable'
 import type { AnalysisResult, ApiResult, EmptyResult, Issue } from './types'
 import { isEmptyResult } from './types'
 
@@ -191,6 +192,40 @@ function CaptureNotes({ issues }: { issues: Issue[] }) {
   )
 }
 
+/** One issue, with a drill-down into the events behind it if it has any. */
+function IssueRow({ issue }: { issue: Issue }) {
+  const [open, setOpen] = useState(false)
+  const occurrences = issue.occurrences ?? []
+  return (
+    <li className="px-4 py-3" data-testid="issue-row">
+      <div className="flex flex-wrap items-center gap-2">
+        <span className={`rounded px-2 py-0.5 text-xs font-semibold ${severityBadge(issue.severity)}`}>
+          {issue.severity}
+        </span>
+        <span className="text-xs font-medium uppercase tracking-wide text-slate-500">{issue.category}</span>
+        <span className="text-sm font-medium text-slate-900">{issue.title}</span>
+        {(issue.count ?? 1) > 1 && (
+          <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-600">×{issue.count}</span>
+        )}
+        {occurrences.length > 0 && (
+          <button
+            type="button"
+            onClick={() => setOpen((v) => !v)}
+            aria-expanded={open}
+            className="ml-auto rounded-md border border-slate-300 px-2.5 py-1 text-xs font-medium text-indigo-700 hover:bg-indigo-50"
+          >
+            {open ? 'Hide details' : `View details (${occurrences.length.toLocaleString()})`}
+          </button>
+        )}
+      </div>
+      <p className="mt-1 line-clamp-2 text-sm text-slate-500" title={issue.description}>
+        {issue.description}
+      </p>
+      {open && occurrences.length > 0 && <OccurrenceTable issue={issue} occurrences={occurrences} />}
+    </li>
+  )
+}
+
 function IssueList({ issues }: { issues: Issue[] }) {
   const [showAll, setShowAll] = useState(false)
   const rows = sortIssues(issues.filter((i) => !(NOTE_TITLES as readonly string[]).includes(i.title)))
@@ -202,23 +237,7 @@ function IssueList({ issues }: { issues: Issue[] }) {
     <div>
       <ul className="divide-y divide-slate-100 rounded-lg border border-slate-200">
         {shown.map((issue) => (
-          <li key={issue.id} className="px-4 py-3">
-            <div className="flex flex-wrap items-center gap-2">
-              <span className={`rounded px-2 py-0.5 text-xs font-semibold ${severityBadge(issue.severity)}`}>
-                {issue.severity}
-              </span>
-              <span className="text-xs font-medium uppercase tracking-wide text-slate-500">{issue.category}</span>
-              <span className="text-sm font-medium text-slate-900">{issue.title}</span>
-              {(issue.count ?? 1) > 1 && (
-                <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-600">
-                  ×{issue.count}
-                </span>
-              )}
-            </div>
-            <p className="mt-1 line-clamp-2 text-sm text-slate-500" title={issue.description}>
-              {issue.description}
-            </p>
-          </li>
+          <IssueRow key={issue.id} issue={issue} />
         ))}
       </ul>
       {rows.length > TOP_ISSUES && (
