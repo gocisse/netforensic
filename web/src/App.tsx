@@ -1,8 +1,10 @@
 import { useEffect, useRef, useState } from 'react'
 import type { ChangeEvent, DragEvent, ReactNode } from 'react'
 import { analyzeCapture, ApiError } from './api'
-import { healthTone, NOTE_TITLES, severityBadge, sortIssues } from './format'
+import { flowMatches, healthTone, issueMatches, NOTE_TITLES, PROTOCOL_FILTERS, severityBadge, sortIssues } from './format'
+import FlowTable from './components/FlowTable'
 import OccurrenceTable from './components/OccurrenceTable'
+import ProtocolDistribution from './components/ProtocolDistribution'
 import type { AnalysisResult, ApiResult, EmptyResult, Issue } from './types'
 import { isEmptyResult } from './types'
 
@@ -226,11 +228,15 @@ function IssueRow({ issue }: { issue: Issue }) {
   )
 }
 
-function IssueList({ issues }: { issues: Issue[] }) {
+function IssueList({ issues, filter }: { issues: Issue[]; filter: string }) {
   const [showAll, setShowAll] = useState(false)
   const rows = sortIssues(issues.filter((i) => !(NOTE_TITLES as readonly string[]).includes(i.title)))
   if (rows.length === 0) {
-    return <p className="text-sm text-slate-500">No issues were found in this capture.</p>
+    return (
+      <p className="text-sm text-slate-500" data-testid="no-issues">
+        {filter === 'All' ? 'No issues were found in this capture.' : `No ${filter} issues were found in this capture.`}
+      </p>
+    )
   }
   const shown = showAll ? rows : rows.slice(0, TOP_ISSUES)
   return (
@@ -255,9 +261,21 @@ function IssueList({ issues }: { issues: Issue[] }) {
 
 function Report({ result }: { result: AnalysisResult }) {
   const d = result.diagnosis
+  const [protocol, setProtocol] = useState<string>('All')
+
+  const reportable = result.issues.filter((i) => !(NOTE_TITLES as readonly string[]).includes(i.title))
+  const issues = result.issues.filter((i) => issueMatches(i, protocol))
+  const shownCount = reportable.filter((i) => issueMatches(i, protocol)).length
+  const stats = result.protocol_stats ?? []
+  const stat = stats.find((p) => p.protocol === protocol)
+  const busiest = protocol === 'All' ? (result.top_talkers ?? []) : (stat?.top_flows ?? [])
+  const slowest = (result.slow_flows ?? []).filter((f) => flowMatches(f, protocol))
+
   return (
     <div className="space-y-6" data-testid="report">
       <CaptureNotes issues={result.issues} />
+
+      <ProtocolDistribution stats={stats} selected={protocol} onSelect={setProtocol} />
 
       <div className="flex flex-wrap items-center gap-6">
         <HealthScore score={d.health_score} />
@@ -288,10 +306,50 @@ function Report({ result }: { result: AnalysisResult }) {
         </div>
       </dl>
 
+      <div className="flex flex-wrap items-center justify-between gap-3 border-t border-slate-200 pt-4">
+        <label className="flex items-center gap-2 text-sm font-medium text-slate-700">
+          Protocol filter
+          <select
+            data-testid="protocol-filter"
+            value={protocol}
+            onChange={(e) => setProtocol(e.target.value)}
+            className="rounded-md border border-slate-300 bg-white px-2 py-1 text-sm focus:border-indigo-500 focus:outline-none"
+          >
+            {PROTOCOL_FILTERS.map((p) => (
+              <option key={p} value={p}>
+                {p}
+              </option>
+            ))}
+          </select>
+        </label>
+        {protocol !== 'All' && (
+          <p data-testid="filter-summary" className="text-sm text-slate-500">
+            Showing {shownCount.toLocaleString()} of {reportable.length.toLocaleString()} issues involving {protocol}
+          </p>
+        )}
+      </div>
+
       <div>
         <h3 className="mb-2 text-sm font-semibold text-slate-900">Top issues</h3>
-        <IssueList issues={result.issues} />
+        <IssueList key={protocol} issues={issues} filter={protocol} />
       </div>
+
+      <FlowTable
+        testId="busiest-flows"
+        title={protocol === 'All' ? 'Busiest flows' : `Busiest ${protocol} flows`}
+        flows={busiest}
+        emptyMessage={`No ${protocol} flows were found in this capture.`}
+      />
+      <FlowTable
+        testId="slowest-flows"
+        title={protocol === 'All' ? 'Slowest flows' : `Slowest ${protocol} flows`}
+        flows={slowest}
+        emptyMessage={
+          protocol === 'All'
+            ? 'No flows with measurable timing metrics.'
+            : `None of the slowest flows in this capture are ${protocol}.`
+        }
+      />
 
       {d.recommendations.length > 0 && (
         <div>
@@ -333,7 +391,7 @@ function ResultsCard({ loading, result }: ResultsCardProps) {
           <h2 className="mb-4 truncate text-base font-semibold text-slate-900" title={result.file_name}>
             {result.file_name}
           </h2>
-          {isEmptyResult(result) ? <NothingToAnalyze result={result} /> : <Report result={result} />}
+          {isEmptyResult(result) ? <NothingToAnalyze result={result} /> : <Report key={result.analysis_time} result={result} />}
         </>
       ) : (
         <div className="py-6 text-center">

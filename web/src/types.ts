@@ -6,6 +6,8 @@ export type Severity = 'CRITICAL' | 'ERROR' | 'WARNING' | 'INFO'
 export interface Occurrence {
   time: string
   subject: string
+  /** Most specific protocol of the event: DNS, HTTP or TLS, else the transport. */
+  protocol?: string
   value?: number
   unit?: string
 }
@@ -20,6 +22,8 @@ export interface Issue {
   flow_id?: string
   domain?: string
   target?: string
+  /** Protocols the issue involves, for filtering (for example UDP and DNS). */
+  protocols?: string[]
   /** Number of events folded into this issue. */
   count?: number
   occurrences?: Occurrence[]
@@ -42,13 +46,52 @@ export interface Diagnosis {
   recommendations: string[]
 }
 
+export interface Flow {
+  id: string
+  src_ip: string
+  dst_ip: string
+  src_port: number
+  dst_port: number
+  /** Transport protocol (TCP, UDP, ICMP, ARP); empty for other IP protocols. */
+  protocol: string
+  /** DNS, HTTP or TLS, if recognized in the flow. */
+  app_protocol?: string
+  start_time: string
+  end_time: string
+  packet_count: number
+  bytes_sent: number
+  bytes_recv: number
+  retransmits: number
+  setup_time_ms: number
+  ttfb_ms: number
+  avg_rtt_ms: number
+  max_rtt_ms: number
+}
+
+/** The share of a capture that one protocol accounts for. */
+export interface ProtocolStat {
+  protocol: string
+  /** Transport protocols partition the packets; application protocols overlap them. */
+  layer: 'transport' | 'application'
+  packets: number
+  flows: number
+  /** Share of all packets, in percent, to one decimal. */
+  percent: number
+  /** The busiest flows of this protocol. */
+  top_flows: Flow[]
+}
+
 /** A full analysis. */
 export interface AnalysisResult {
   file_name: string
   total_packets: number
   total_flows: number
+  analysis_time: string
   duration: string
   issues: Issue[]
+  top_talkers: Flow[]
+  slow_flows: Flow[]
+  protocol_stats: ProtocolStat[]
   diagnosis: Diagnosis
 }
 

@@ -94,7 +94,12 @@ func TestAnalyzeUpload(t *testing.T) {
 	assert.Equal(t, 1, res.TotalFlows)
 	assert.Equal(t, 80, res.Diagnosis.HealthScore)
 	assert.Equal(t, "Connection reset after zero-window stall", res.Diagnosis.PrimaryCause)
+	require.NotEmpty(t, res.ProtocolStats, "the protocol distribution is part of the answer")
+	assert.Equal(t, "TCP", res.ProtocolStats[0].Protocol)
+	assert.Equal(t, 64, res.ProtocolStats[0].Packets)
+	assert.Equal(t, 100.0, res.ProtocolStats[0].Percent)
 	require.Len(t, res.Issues, 1)
+	assert.Equal(t, []string{"TCP", "TLS"}, res.Issues[0].Protocols, "the flow is TCP carrying TLS")
 	assert.Equal(t, "ERROR", string(res.Issues[0].Severity))
 }
 

@@ -1,12 +1,12 @@
 import { useMemo, useRef, useState } from 'react'
-import { formatTime, formatValue, subjectLabel } from '../format'
+import { formatTime, formatValue, protocolColor, subjectLabel } from '../format'
 import type { Issue, Occurrence } from '../types'
 
 const ROW_HEIGHT = 32 // px; fixed, so that rows can be windowed
 const VIEWPORT_HEIGHT = 320 // px
 const OVERSCAN = 8 // rows rendered beyond the visible ones
 
-type SortKey = 'time' | 'subject' | 'value'
+type SortKey = 'time' | 'protocol' | 'subject' | 'value'
 type SortDir = 'asc' | 'desc'
 
 function compare(a: Occurrence, b: Occurrence, key: SortKey): number {
@@ -15,6 +15,8 @@ function compare(a: Occurrence, b: Occurrence, key: SortKey): number {
       return Date.parse(a.time) - Date.parse(b.time) || 0
     case 'value':
       return (a.value ?? -Infinity) - (b.value ?? -Infinity)
+    case 'protocol':
+      return (a.protocol ?? '').localeCompare(b.protocol ?? '')
     default:
       return a.subject.localeCompare(b.subject)
   }
@@ -38,7 +40,14 @@ export default function OccurrenceTable({ issue, occurrences }: Props) {
 
   // Columns follow the data: a value column only if some event has a value.
   const hasValue = occurrences.some((o) => o.value !== undefined)
-  const columns = hasValue ? 'grid-cols-[12rem_1fr_9rem]' : 'grid-cols-[12rem_1fr]'
+  const hasProtocol = occurrences.some((o) => o.protocol)
+  const columns = hasProtocol
+    ? hasValue
+      ? 'grid-cols-[12rem_5rem_1fr_9rem]'
+      : 'grid-cols-[12rem_5rem_1fr]'
+    : hasValue
+      ? 'grid-cols-[12rem_1fr_9rem]'
+      : 'grid-cols-[12rem_1fr]'
 
   const rows = useMemo(() => {
     const needle = filter.trim().toLowerCase()
@@ -112,6 +121,7 @@ export default function OccurrenceTable({ issue, occurrences }: Props) {
         className={`grid ${columns} gap-3 border-b border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-500`}
       >
         {heading('time', 'Time (UTC)')}
+        {hasProtocol && heading('protocol', 'Protocol')}
         {heading('subject', subjectLabel(issue))}
         {hasValue && heading('value', 'Value')}
       </div>
@@ -138,6 +148,15 @@ export default function OccurrenceTable({ issue, occurrences }: Props) {
                 className={`grid ${columns} items-center gap-3 px-3 text-sm even:bg-slate-50/60`}
               >
                 <span className="whitespace-nowrap font-mono text-xs text-slate-600">{formatTime(o.time)}</span>
+                {hasProtocol && (
+                  <span data-testid="occurrence-protocol">
+                    {o.protocol && (
+                      <span className={`rounded px-1.5 py-0.5 text-xs font-medium ${protocolColor(o.protocol).badge}`}>
+                        {o.protocol}
+                      </span>
+                    )}
+                  </span>
+                )}
                 <span className="truncate font-mono text-xs text-slate-900" title={o.subject}>
                   {o.subject}
                 </span>

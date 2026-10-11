@@ -118,6 +118,17 @@ top issues, and the recommendations. Truncated captures and skipped frames are
 called out in notices, and a capture with nothing to analyze says so instead of
 showing a score.
 
+At the top of the results, **Protocol distribution** shows the traffic
+composition: a bar and badges for TCP, UDP, ICMP and ARP, which add up to all
+packets, and for the application protocols recognized inside the flows (DNS,
+HTTP, TLS). Application protocols are detected from content (a DNS message, an
+HTTP header, a TLS handshake), so a flow whose handshake or header was not
+captured counts only as TCP or UDP. The **Protocol filter** (or a click on a
+badge) limits the issue list and the flow tables to one protocol, and every
+issue's details table shows the protocol of each event. The same data is in the
+JSON as `protocol_stats`, with `protocols` on issues and `protocol` on their
+occurrences.
+
 `--web` takes an address such as `:8181` or `127.0.0.1:8181`, cannot be
 combined with a capture file or with the analysis flags, and refuses to start if
 the port is taken. Pick a port that is free on your machine.

@@ -34,6 +34,12 @@ func AnalyzeWithIssues(packets []models.PacketInfo, service string, extra ...mod
 	packets, _ = FilterService(packets, service)
 
 	flows := aggregateFlows(packets)
+	classes, perPacket := classifyFlows(packets)
+	for i := range flows {
+		if c := classes[flows[i].ID]; c != nil {
+			flows[i].AppProtocol = string(c.app)
+		}
+	}
 	flows, perfIssues := applyPerformanceMetrics(packets, flows)
 	issues := detectIssues(flows)
 	issues = append(issues, analyzeDNS(packets)...)
@@ -47,19 +53,21 @@ func AnalyzeWithIssues(packets []models.PacketInfo, service string, extra ...mod
 	if issues == nil {
 		issues = []models.Issue{} // serialize as [] rather than null
 	}
+	annotateProtocols(issues, classes)
 	talkers := topTalkers(flows, topTalkerCount)
 	if talkers == nil {
 		talkers = []models.Flow{}
 	}
 	return &models.AnalysisResult{
-		TotalPackets: len(packets),
-		TotalFlows:   len(flows),
-		AnalysisTime: start,
-		Duration:     formatDuration(captureDuration(packets)),
-		Issues:       issues,
-		TopTalkers:   talkers,
-		SlowFlows:    slowFlows(flows, topTalkerCount),
-		Diagnosis:    correlate(packets, flows, issues),
+		TotalPackets:  len(packets),
+		TotalFlows:    len(flows),
+		AnalysisTime:  start,
+		Duration:      formatDuration(captureDuration(packets)),
+		Issues:        issues,
+		TopTalkers:    talkers,
+		SlowFlows:     slowFlows(flows, topTalkerCount),
+		ProtocolStats: protocolStats(packets, flows, classes, perPacket),
+		Diagnosis:     correlate(packets, flows, issues),
 	}
 }
 

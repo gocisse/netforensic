@@ -62,9 +62,9 @@ func analyzeDNS(packets []models.PacketInfo) []models.Issue {
 
 		switch p.DNSResponseCode {
 		case "NXDOMAIN":
-			nx.add(p.SrcIP, dnsEvent{at: p.Timestamp, domain: name})
+			nx.add(p.SrcIP, dnsEvent{at: p.Timestamp, domain: name, proto: p.Protocol})
 		case "SERVFAIL":
-			servfail.add(p.SrcIP, dnsEvent{at: p.Timestamp, domain: name})
+			servfail.add(p.SrcIP, dnsEvent{at: p.Timestamp, domain: name, proto: p.Protocol})
 		}
 
 		txn := dnsTxn{endpoint{p.DstIP, p.DstPort}, endpoint{p.SrcIP, p.SrcPort}, p.DNSID, name}
@@ -76,14 +76,14 @@ func analyzeDNS(packets []models.PacketInfo) []models.Issue {
 		rtt := p.Timestamp.Sub(q.Timestamp)
 		switch {
 		case rtt > dnsTimeout:
-			timeout.add(q.DstIP, dnsEvent{at: q.Timestamp, domain: name, late: true, rtt: rtt})
+			timeout.add(q.DstIP, dnsEvent{at: q.Timestamp, domain: name, late: true, rtt: rtt, proto: q.Protocol})
 		case rtt > dnsSlowResponse:
-			slow.add(q.DstIP, dnsEvent{at: q.Timestamp, domain: name, rtt: rtt})
+			slow.add(q.DstIP, dnsEvent{at: q.Timestamp, domain: name, rtt: rtt, proto: q.Protocol})
 		}
 	}
 	for _, txn := range order {
 		if q, unanswered := pending[txn]; unanswered && captureEnd.Sub(q.Timestamp) > dnsTimeout {
-			timeout.add(q.DstIP, dnsEvent{at: q.Timestamp, domain: strings.ToLower(q.DNSQueryName)})
+			timeout.add(q.DstIP, dnsEvent{at: q.Timestamp, domain: strings.ToLower(q.DNSQueryName), proto: q.Protocol})
 		}
 	}
 
@@ -136,8 +136,9 @@ func analyzeDNS(packets []models.PacketInfo) []models.Issue {
 type dnsEvent struct {
 	at     time.Time
 	domain string
-	late   bool          // answered, but after the timeout
-	rtt    time.Duration // time to the answer, when there was one
+	late   bool            // answered, but after the timeout
+	rtt    time.Duration   // time to the answer, when there was one
+	proto  models.Protocol // transport the message travelled over
 }
 
 // dnsGroup collects events per resolver IP, keeping first-seen order.
@@ -162,8 +163,12 @@ func (g *dnsGroup) issue(resolver, kind string, sev models.Severity, title strin
 	counts := make(map[string]int)
 	occ := make([]models.Occurrence, len(evs))
 	first := evs[0].at
+	transports := make(map[string]struct{})
 	for i, e := range evs {
 		counts[e.domain]++
+		if e.proto != "" {
+			transports[string(e.proto)] = struct{}{}
+		}
 		occ[i] = models.Occurrence{Time: e.at, Subject: e.domain}
 		if e.rtt > 0 {
 			occ[i].Value, occ[i].Unit = ms(e.rtt), "ms"
@@ -181,7 +186,13 @@ func (g *dnsGroup) issue(resolver, kind string, sev models.Severity, title strin
 	for i, t := range top {
 		parts[i] = fmt.Sprintf("%s (%d)", t.name, t.n)
 	}
+	protocols := []string{string(models.ProtocolDNS)}
+	for t := range transports {
+		protocols = append(protocols, t)
+	}
+	sort.Strings(protocols)
 	return models.Issue{
+		Protocols:   protocols,
 		ID:          fmt.Sprintf("dns-%s-%s", kind, resolver),
 		Severity:    sev,
 		Category:    "DNS",

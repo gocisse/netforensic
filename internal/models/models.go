@@ -114,12 +114,15 @@ type PacketInfo struct {
 
 // Flow represents an aggregated view of a network connection (e.g., a TCP stream).
 type Flow struct {
-	ID          string    `json:"id"` // e.g., "src_ip:src_port-dst_ip:dst_port"
-	SrcIP       string    `json:"src_ip"`
-	DstIP       string    `json:"dst_ip"`
-	SrcPort     uint16    `json:"src_port"`
-	DstPort     uint16    `json:"dst_port"`
-	Protocol    Protocol  `json:"protocol"`
+	ID       string   `json:"id"` // e.g., "src_ip:src_port-dst_ip:dst_port"
+	SrcIP    string   `json:"src_ip"`
+	DstIP    string   `json:"dst_ip"`
+	SrcPort  uint16   `json:"src_port"`
+	DstPort  uint16   `json:"dst_port"`
+	Protocol Protocol `json:"protocol"`
+	// AppProtocol is the application protocol recognized in the flow (DNS,
+	// HTTP or TLS), or empty.
+	AppProtocol string    `json:"app_protocol,omitempty"`
 	StartTime   time.Time `json:"start_time"`
 	EndTime     time.Time `json:"end_time"`
 	PacketCount int       `json:"packet_count"`
@@ -150,6 +153,24 @@ type Flow struct {
 	MaxRTTMs    float64 `json:"max_rtt_ms"` // large values relative to the average indicate jitter
 }
 
+// ProtocolStat is the share of a capture that one protocol accounts for.
+//
+// Transport protocols (TCP, UDP, ICMP, ARP) partition the packets, so their
+// percentages add up to 100. Application protocols (DNS, HTTP, TLS) are
+// recognized from the content of a flow and count every packet of such a
+// flow, including its handshake and ACKs; they overlap with the transport
+// protocol that carries them.
+type ProtocolStat struct {
+	Protocol string  `json:"protocol"`
+	Layer    string  `json:"layer"` // "transport" or "application"
+	Packets  int     `json:"packets"`
+	Flows    int     `json:"flows"`
+	Percent  float64 `json:"percent"` // of all packets, to one decimal
+
+	// TopFlows are the busiest flows (by bytes) of this protocol.
+	TopFlows []Flow `json:"top_flows"`
+}
+
 // RetransmitEvent is one retransmitted TCP segment.
 type RetransmitEvent struct {
 	Time time.Time
@@ -175,14 +196,21 @@ type Issue struct {
 	// a UI can drill down from the summary. The analyzer also uses it for
 	// correlation.
 	Occurrences []Occurrence `json:"occurrences,omitempty"`
+
+	// Protocols lists the protocols the issue involves (for example "UDP"
+	// and "DNS"), so that a UI can filter issues by protocol.
+	Protocols []string `json:"protocols,omitempty"`
 }
 
 // Occurrence is one event behind an aggregated issue.
 type Occurrence struct {
 	Time    time.Time `json:"time"`
-	Subject string    `json:"subject"`         // the flow ID, queried domain, target ip:port, ...
-	Value   float64   `json:"value,omitempty"` // a measurement for the event, such as an RTT
-	Unit    string    `json:"unit,omitempty"`  // unit of Value, for example "ms"
+	Subject string    `json:"subject"` // the flow ID, queried domain, target ip:port, ...
+	// Protocol is the most specific protocol of the event: DNS, HTTP or TLS
+	// if recognized, else the transport protocol.
+	Protocol string  `json:"protocol,omitempty"`
+	Value    float64 `json:"value,omitempty"` // a measurement for the event, such as an RTT
+	Unit     string  `json:"unit,omitempty"`  // unit of Value, for example "ms"
 }
 
 // TimelineEvent is one entry in the chronological incident timeline.
@@ -213,6 +241,9 @@ type AnalysisResult struct {
 	Issues       []Issue   `json:"issues"`
 	TopTalkers   []Flow    `json:"top_talkers"` // Top 5 flows by bytes
 	SlowFlows    []Flow    `json:"slow_flows"`  // Top 5 flows by worst timing metric
+
+	// ProtocolStats is the traffic composition, most packets first.
+	ProtocolStats []ProtocolStat `json:"protocol_stats"`
 
 	Diagnosis RootCauseAnalysis `json:"diagnosis"`
 }

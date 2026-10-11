@@ -1,4 +1,4 @@
-import type { Issue, Occurrence, Severity } from './types'
+import type { Flow, Issue, Occurrence, Severity } from './types'
 
 export interface Tone {
   label: string
@@ -74,4 +74,55 @@ export function formatTime(iso: string): string {
 export function formatValue(o: Occurrence): string {
   if (o.value === undefined) return ''
   return o.unit ? `${o.value} ${o.unit}` : String(o.value)
+}
+
+/** The protocols offered by the protocol filter. */
+export const PROTOCOL_FILTERS = ['All', 'TCP', 'UDP', 'DNS', 'HTTP', 'TLS', 'ARP', 'ICMP'] as const
+export type ProtocolFilter = (typeof PROTOCOL_FILTERS)[number]
+
+/** Whether an issue involves the selected protocol. "All" matches everything. */
+export function issueMatches(issue: Issue, filter: string): boolean {
+  if (filter === 'All') return true
+  return issue.protocols?.includes(filter) ?? false
+}
+
+/** Whether a flow belongs to the selected protocol, as transport or application. */
+export function flowMatches(flow: Flow, filter: string): boolean {
+  if (filter === 'All') return true
+  return flow.protocol === filter || flow.app_protocol === filter
+}
+
+/** Formats a byte count, for example "1.5 MB". */
+export function formatBytes(n: number): string {
+  if (n < 1024) return `${n} B`
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`
+  if (n < 1024 * 1024 * 1024) return `${(n / (1024 * 1024)).toFixed(1)} MB`
+  return `${(n / (1024 * 1024 * 1024)).toFixed(1)} GB`
+}
+
+/** Formats a millisecond metric, or a dash if it was not measured. */
+export function formatMs(ms: number): string {
+  return ms > 0 ? `${ms.toLocaleString(undefined, { maximumFractionDigits: 1 })} ms` : '–'
+}
+
+/** Tailwind classes for a protocol's color. */
+export function protocolColor(protocol: string): { dot: string; bar: string; badge: string } {
+  switch (protocol) {
+    case 'TCP':
+      return { dot: 'bg-indigo-500', bar: 'bg-indigo-500', badge: 'bg-indigo-50 text-indigo-800' }
+    case 'UDP':
+      return { dot: 'bg-sky-500', bar: 'bg-sky-500', badge: 'bg-sky-50 text-sky-800' }
+    case 'ICMP':
+      return { dot: 'bg-amber-500', bar: 'bg-amber-500', badge: 'bg-amber-50 text-amber-800' }
+    case 'ARP':
+      return { dot: 'bg-emerald-500', bar: 'bg-emerald-500', badge: 'bg-emerald-50 text-emerald-800' }
+    case 'DNS':
+      return { dot: 'bg-violet-500', bar: 'bg-violet-500', badge: 'bg-violet-50 text-violet-800' }
+    case 'HTTP':
+      return { dot: 'bg-rose-500', bar: 'bg-rose-500', badge: 'bg-rose-50 text-rose-800' }
+    case 'TLS':
+      return { dot: 'bg-teal-500', bar: 'bg-teal-500', badge: 'bg-teal-50 text-teal-800' }
+    default:
+      return { dot: 'bg-slate-400', bar: 'bg-slate-400', badge: 'bg-slate-100 text-slate-700' }
+  }
 }
