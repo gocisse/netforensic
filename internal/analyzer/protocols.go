@@ -44,7 +44,7 @@ func (c *flowClass) primary() string {
 // The application protocol comes from the content: a flow is DNS if any of
 // its packets carries a DNS message, TLS if any carries a TLS record, HTTP if
 // any carries an HTTP request or response, SIP if any carries a SIP request,
-// DHCPv6 if any carries a DHCPv6 message
+// DHCPv6 if any carries a DHCPv6 message, QUIC if any carries a QUIC long header
 // or response. If several apply, DNS beats TLS beats HTTP (a CONNECT tunnel
 // starts as HTTP and carries TLS). A flow that never showed a SIP message but
 // uses a well-known SIP port (5060, 5061) and was recognized as nothing else
@@ -76,6 +76,8 @@ func classifyFlows(packets []models.PacketInfo) (map[string]*flowClass, []*flowC
 			c.app = models.ProtocolSIP
 		case p.DHCPv6MsgType != 0 && c.app != models.ProtocolDNS:
 			c.app = models.ProtocolDHCPv6
+		case p.QUICLongHeader && c.app != models.ProtocolDNS:
+			c.app = models.ProtocolQUIC
 		}
 		if isSIPPort(p) {
 			c.sipPort = true
@@ -268,6 +270,8 @@ func protocolsOf(is *models.Issue, subject string, classes map[string]*flowClass
 		return string(models.ProtocolSIP), []string{string(models.ProtocolSIP)}
 	case "DHCPv6":
 		return string(models.ProtocolDHCPv6), []string{string(models.ProtocolDHCPv6), string(models.ProtocolUDP)}
+	case "QUIC":
+		return string(models.ProtocolQUIC), []string{string(models.ProtocolQUIC), string(models.ProtocolUDP)}
 	}
 	return "", nil
 }

@@ -45,6 +45,11 @@ export default function FlowTable({ title, flows, emptyMessage, testId }: Props)
                         {f.dhcpv6_message_types}
                       </div>
                     )}
+                    {f.app_protocol === 'QUIC' && (
+                      <div className="truncate text-theme-xs text-gray-500 dark:text-gray-400" title={f.quic_packet_types} data-testid="quic-details">
+                        {[f.quic_version, f.quic_packet_types].filter(Boolean).join(' · ')}
+                      </div>
+                    )}
                     {f.app_protocol === 'SIP' && (
                       <div className="truncate text-theme-xs text-gray-500 dark:text-gray-400" title={f.sip_call_id} data-testid="sip-details">
                         {[f.sip_method, f.sip_user_agent].filter(Boolean).join(' · ')}

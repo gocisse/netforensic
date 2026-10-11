@@ -125,6 +125,45 @@ merged capture does not make every request look unanswered. Retransmitted
 requests (same transaction ID) count once. Other messages (Renew, Rebind,
 Confirm, ...) are not checked for timeouts.
 
+**QUIC**: QUIC is encrypted (TLS 1.3 runs inside it), so its payloads cannot
+be decoded, but its long headers are readable and the tool identifies QUIC
+connections by them: the header form bit set and, except in Version Negotiation,
+the fixed bit (RFC 9000, section 17.2), on UDP port 443 with any version, or on
+another port (such as 853 for DNS over QUIC) with a known one. QUIC appears as
+an application protocol in the protocol distribution, and its flows carry
+`quic_version` (`QUIC v1`, `QUIC v2`, `draft-29`, `reserved`, `unknown`) and
+`quic_packet_types` (Initial, 0-RTT, Handshake, Retry, Version Negotiation; a
+"QUIC FLOWS" table in the report). Datagrams that coalesce several packets list
+all of them.
+
+| Issue | Meaning |
+|---|---|
+| `QUIC Version Negotiation` (info) | A server answered with a list of versions: the one the client asked for, matched by the connection IDs the packet echoes, and what the server offered. One issue per server. |
+| `QUIC Retry` (info) | A server asked a client to prove its address with a Retry packet. One issue per server. |
+| `QUIC Handshake Timeout` (warning) | A client Initial that got no packet at all from the server within 10 seconds (or only a later one). A Version Negotiation or Retry counts as an answer. One issue per server. |
+| `QUIC Draft Version` (info) | A client using a draft version (`0xff0000XX`), one issue per draft. |
+
+A Version Negotiation packet has no fixed bit and a version field of just zero,
+so it is only accepted on port 443 and only if it offers at least one known
+version (a real server always offers v1 or a draft); without that, RTP and
+other protocols that start with a high bit would be mistaken for it.
+
+Limits: only long headers are recognized. Short-header packets carry no
+version or connection ID and cannot be told from other UDP traffic without
+connection state, so a flow is QUIC if any of its packets has a long header
+(its short-header packets then count with it), and a capture that only has
+the tail of a connection is not recognized. Since the payload is encrypted,
+nothing inside it (HTTP/3 requests, TLS alerts, transport errors, later
+packet loss) is visible, and a handshake that fails after the first answer
+cannot be told from one that succeeds. The client of a flow is the sender of
+its first Initial (the side that uses port 443 is the server when that is
+ambiguous), and a flow is one UDP 4-tuple, so a connection that migrates to
+another address is two flows. An Initial is called unanswered only if the
+capture session lasted 10 seconds beyond it. QUIC's v2 packet type numbers
+(RFC 9369) differ from v1's and are handled. Google's older QUIC and
+vendor-specific versions are shown as `unknown` (on port 443) or not
+recognized.
+
 **Verbose packet table** (`-v`): print every packet that is analyzed before the
 summary.
 

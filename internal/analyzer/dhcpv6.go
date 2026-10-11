@@ -24,11 +24,6 @@ const (
 	// this many, has a high failure rate.
 	dhcpv6FailPercent  = 20
 	dhcpv6MinResponses = 10
-
-	// sessionGap is the longest silence inside one capture session. A larger
-	// gap, or time running backwards, means that captures were merged, and
-	// what follows says nothing about whether an earlier request was answered.
-	sessionGap = time.Hour
 )
 
 // DHCPv6 message types.
@@ -150,17 +145,7 @@ func dhcpv6Key(p models.PacketInfo) string {
 // from its own. A request is only called unanswered if the capture session it
 // is in lasted 30 seconds beyond it.
 func analyzeDHCPv6(packets []models.PacketInfo) []models.Issue {
-	// session[i] is the time at which the run of packets starting at i ends.
-	session := make([]time.Time, len(packets))
-	for i := len(packets) - 1; i >= 0; i-- {
-		session[i] = packets[i].Timestamp
-		if i+1 < len(packets) {
-			gap := packets[i+1].Timestamp.Sub(packets[i].Timestamp)
-			if gap >= 0 && gap <= sessionGap {
-				session[i] = session[i+1]
-			}
-		}
-	}
+	session := sessionEnds(packets)
 
 	txns := make(map[string]*dhcpv6Txn)
 	var order []*dhcpv6Txn
@@ -413,4 +398,28 @@ func dhcpv6TimeoutIssues(txns []*dhcpv6Txn) []models.Issue {
 		issues = append(issues, is)
 	}
 	return issues
+}
+
+// sessionGap is the longest silence inside one capture session. A larger gap,
+// or time running backwards, means that captures were merged, and what follows
+// says nothing about whether an earlier request was answered.
+const sessionGap = time.Hour
+
+// sessionEnds returns, for every packet, the time at which the capture session
+// it is in ends: the timestamp of the last packet of the run that starts at
+// it, in capture order, without a gap of more than sessionGap or a step back
+// in time. Analyses that call a request unanswered use it to know whether the
+// capture lasted long enough after the request to say so.
+func sessionEnds(packets []models.PacketInfo) []time.Time {
+	end := make([]time.Time, len(packets))
+	for i := len(packets) - 1; i >= 0; i-- {
+		end[i] = packets[i].Timestamp
+		if i+1 < len(packets) {
+			gap := packets[i+1].Timestamp.Sub(packets[i].Timestamp)
+			if gap >= 0 && gap <= sessionGap {
+				end[i] = end[i+1]
+			}
+		}
+	}
+	return end
 }

@@ -56,7 +56,7 @@ export interface Flow {
   protocol: string
   /** Set when the flow was decapsulated from a tunnel: "KIND:outer~outer". */
   tunnel?: string
-  /** DNS, HTTP, TLS, SIP or DHCPv6, if recognized in the flow. */
+  /** DNS, HTTP, TLS, SIP, DHCPv6 or QUIC, if recognized in the flow. */
   app_protocol?: string
   /** SIP flows: the request methods seen (comma-separated), the first Call-ID and the first User-Agent. */
   sip_method?: string
@@ -66,6 +66,9 @@ export interface Flow {
   dhcpv6_message_types?: string
   dhcpv6_client_id?: string
   dhcpv6_server_id?: string
+  /** QUIC flows: the version ("QUIC v1", "draft-29", ...) and the long-header packet types seen (comma-separated). */
+  quic_version?: string
+  quic_packet_types?: string
   start_time: string
   end_time: string
   packet_count: number

@@ -20,17 +20,17 @@ import (
 	"github.com/gocisse/netforensic/internal/pcap"
 )
 
-// A synthetic DHCPv6 capture: messages are serialized with gopacket into a
-// pcap file and read back by the real reader.
+// Synthetic UDP captures: packets are serialized with gopacket into a pcap file
+// and read back by the real reader. Used by the DHCPv6 and QUIC tests.
 
-type d6Pkt struct {
+type udpPkt struct {
 	at             time.Duration // since the start of the capture
 	from, to       string
 	srcPort, dport uint16
 	payload        []byte
 }
 
-func writeD6Capture(t *testing.T, path string, pkts []d6Pkt) {
+func writeUDPCapture(t *testing.T, path string, pkts []udpPkt) {
 	t.Helper()
 	f, err := os.Create(path)
 	require.NoError(t, err)
@@ -39,9 +39,18 @@ func writeD6Capture(t *testing.T, path string, pkts []d6Pkt) {
 	start := time.Unix(1700000000, 0)
 	for _, p := range pkts {
 		eth := &layers.Ethernet{SrcMAC: net.HardwareAddr{0, 1, 2, 3, 4, 5}, DstMAC: net.HardwareAddr{0x33, 0x33, 0, 1, 0, 2}, EthernetType: layers.EthernetTypeIPv6}
-		ip := &layers.IPv6{Version: 6, NextHeader: layers.IPProtocolUDP, HopLimit: 64, SrcIP: net.ParseIP(p.from), DstIP: net.ParseIP(p.to)}
+		var ip gopacket.SerializableLayer
 		udp := &layers.UDP{SrcPort: layers.UDPPort(p.srcPort), DstPort: layers.UDPPort(p.dport)}
-		require.NoError(t, udp.SetNetworkLayerForChecksum(ip))
+		if src := net.ParseIP(p.from); src.To4() != nil { // IPv4 addresses make an IPv4 packet
+			eth.EthernetType = layers.EthernetTypeIPv4
+			v4 := &layers.IPv4{Version: 4, IHL: 5, TTL: 64, Protocol: layers.IPProtocolUDP, SrcIP: src.To4(), DstIP: net.ParseIP(p.to).To4()}
+			require.NoError(t, udp.SetNetworkLayerForChecksum(v4))
+			ip = v4
+		} else {
+			v6 := &layers.IPv6{Version: 6, NextHeader: layers.IPProtocolUDP, HopLimit: 64, SrcIP: src, DstIP: net.ParseIP(p.to)}
+			require.NoError(t, udp.SetNetworkLayerForChecksum(v6))
+			ip = v6
+		}
 		buf := gopacket.NewSerializeBuffer()
 		require.NoError(t, gopacket.SerializeLayers(buf, gopacket.SerializeOptions{FixLengths: true, ComputeChecksums: true}, eth, ip, udp, gopacket.Payload(p.payload)))
 		require.NoError(t, w.WritePacket(gopacket.CaptureInfo{Timestamp: start.Add(p.at), CaptureLength: len(buf.Bytes()), Length: len(buf.Bytes())}, buf.Bytes()))
@@ -49,10 +58,10 @@ func writeD6Capture(t *testing.T, path string, pkts []d6Pkt) {
 	require.NoError(t, f.Close())
 }
 
-func d6Capture(t *testing.T, pkts []d6Pkt) []models.PacketInfo {
+func udpCapture(t *testing.T, pkts []udpPkt) []models.PacketInfo {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "dhcpv6.pcap")
-	writeD6Capture(t, path, pkts)
+	writeUDPCapture(t, path, pkts)
 	packets, err := pcap.ReadPackets(path)
 	require.NoError(t, err)
 	require.Len(t, packets, len(pkts))
@@ -106,31 +115,31 @@ const (
 )
 
 // toServer is a client message to the All_DHCP_Relay_Agents_and_Servers address.
-func toServer(at time.Duration, msg []byte) d6Pkt {
-	return d6Pkt{at: at, from: clientAddr, to: multicast, srcPort: 546, dport: 547, payload: msg}
+func toServer(at time.Duration, msg []byte) udpPkt {
+	return udpPkt{at: at, from: clientAddr, to: multicast, srcPort: 546, dport: 547, payload: msg}
 }
 
 // fromServer is a server's message to the client.
-func fromServer(at time.Duration, msg []byte) d6Pkt {
-	return d6Pkt{at: at, from: serverAddr, to: clientAddr, srcPort: 547, dport: 546, payload: msg}
+func fromServer(at time.Duration, msg []byte) udpPkt {
+	return udpPkt{at: at, from: serverAddr, to: clientAddr, srcPort: 547, dport: 546, payload: msg}
 }
 
 // fromServerN is fromServer from one of several servers, by number.
-func fromServerN(at time.Duration, n int, msg []byte) d6Pkt {
+func fromServerN(at time.Duration, n int, msg []byte) udpPkt {
 	p := fromServer(at, msg)
 	p.from = fmt.Sprintf("fe80::20%d", n)
 	return p
 }
 
 // later is an unrelated packet, so that the capture lasts until at.
-func later(at time.Duration) d6Pkt {
-	return d6Pkt{at: at, from: "2001:db8::1", to: "2001:db8::2", srcPort: 5000, dport: 5001, payload: []byte("x")}
+func later(at time.Duration) udpPkt {
+	return udpPkt{at: at, from: "2001:db8::1", to: "2001:db8::2", srcPort: 5000, dport: 5001, payload: []byte("x")}
 }
 
-func dhcpIssues(t *testing.T, pkts []d6Pkt) []models.Issue {
+func dhcpIssues(t *testing.T, pkts []udpPkt) []models.Issue {
 	t.Helper()
 	var out []models.Issue
-	for _, is := range Analyze(d6Capture(t, pkts), "all").Issues {
+	for _, is := range Analyze(udpCapture(t, pkts), "all").Issues {
 		if is.Category == "DHCPv6" {
 			out = append(out, is)
 		}
@@ -152,31 +161,31 @@ func TestDHCPv6Detection(t *testing.T) {
 	garbage := []byte{99, 1, 2, 3, 4, 5, 6, 7}
 	tests := []struct {
 		name         string
-		pkts         []d6Pkt
+		pkts         []udpPkt
 		wantApp      string
 		wantMessages string
 	}{
-		{"a Solicit to port 547", []d6Pkt{toServer(0, d6msg(1, 1, cidOpt(1)))}, "DHCPv6", "Solicit"},
-		{"an Advertise from port 547", []d6Pkt{fromServer(0, d6msg(2, 1, cidOpt(1), sidOpt(1)))}, "DHCPv6", "Advertise"},
+		{"a Solicit to port 547", []udpPkt{toServer(0, d6msg(1, 1, cidOpt(1)))}, "DHCPv6", "Solicit"},
+		{"an Advertise from port 547", []udpPkt{fromServer(0, d6msg(2, 1, cidOpt(1), sidOpt(1)))}, "DHCPv6", "Advertise"},
 		{"a full exchange",
-			[]d6Pkt{toServer(0, d6msg(1, 1, cidOpt(1))), fromServer(time.Second, d6msg(2, 1, cidOpt(1), sidOpt(1))),
+			[]udpPkt{toServer(0, d6msg(1, 1, cidOpt(1))), fromServer(time.Second, d6msg(2, 1, cidOpt(1), sidOpt(1))),
 				toServer(2*time.Second, d6msg(3, 2, cidOpt(1), sidOpt(1))), fromServer(3*time.Second, d6msg(7, 2, cidOpt(1), sidOpt(1)))},
 			"DHCPv6", "Solicit,Request"}, // the client's flow; the server's is another
 		{"detected by the message on another port",
-			[]d6Pkt{{from: clientAddr, to: serverAddr, srcPort: 40000, dport: 40001, payload: d6msg(3, 5, cidOpt(2), sidOpt(1))}},
+			[]udpPkt{{from: clientAddr, to: serverAddr, srcPort: 40000, dport: 40001, payload: d6msg(3, 5, cidOpt(2), sidOpt(1))}},
 			"DHCPv6", "Request"},
 		{"a port-547 packet that is no readable message is DHCPv6 by port",
-			[]d6Pkt{{from: clientAddr, to: serverAddr, srcPort: 546, dport: 547, payload: garbage}}, "DHCPv6", ""},
+			[]udpPkt{{from: clientAddr, to: serverAddr, srcPort: 546, dport: 547, payload: garbage}}, "DHCPv6", ""},
 		{"another port with the same bytes is not",
-			[]d6Pkt{{from: clientAddr, to: serverAddr, srcPort: 40000, dport: 40001, payload: garbage}}, "", ""},
+			[]udpPkt{{from: clientAddr, to: serverAddr, srcPort: 40000, dport: 40001, payload: garbage}}, "", ""},
 		{"a message type in range but no client ID, on another port, is not",
-			[]d6Pkt{{from: clientAddr, to: serverAddr, srcPort: 40000, dport: 40001, payload: d6msg(1, 1)}}, "", ""},
-		{"a relayed message", []d6Pkt{{from: "2001:db8::1", to: "2001:db8::2", srcPort: 547, dport: 547, payload: d6relay(12, d6msg(1, 7, cidOpt(1)))}},
+			[]udpPkt{{from: clientAddr, to: serverAddr, srcPort: 40000, dport: 40001, payload: d6msg(1, 1)}}, "", ""},
+		{"a relayed message", []udpPkt{{from: "2001:db8::1", to: "2001:db8::2", srcPort: 547, dport: 547, payload: d6relay(12, d6msg(1, 7, cidOpt(1)))}},
 			"DHCPv6", "Relay-forward,Solicit"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			res := Analyze(d6Capture(t, tt.pkts), "all")
+			res := Analyze(udpCapture(t, tt.pkts), "all")
 			require.NotEmpty(t, res.Flows)
 			assert.Equal(t, tt.wantApp, res.Flows[0].AppProtocol)
 			assert.Equal(t, tt.wantMessages, res.Flows[0].DHCPv6MessageTypes)
@@ -198,7 +207,7 @@ func TestDHCPv6Detection(t *testing.T) {
 }
 
 func TestDHCPv6FlowMetadata(t *testing.T) {
-	res := Analyze(d6Capture(t, []d6Pkt{
+	res := Analyze(udpCapture(t, []udpPkt{
 		toServer(0, d6msg(1, 1, cidOpt(7))),
 		fromServer(time.Second, d6msg(2, 1, cidOpt(7), sidOpt(3))),
 		toServer(2*time.Second, d6msg(3, 2, cidOpt(7), sidOpt(3))),
@@ -220,15 +229,15 @@ func TestDHCPv6FlowMetadata(t *testing.T) {
 
 func TestDHCPv6NoAddressesAndConfigErrors(t *testing.T) {
 	// Each case: a request, then a Reply (or Advertise) with the status.
-	reply := func(status []byte, reqType byte, replyType byte) []d6Pkt {
-		return []d6Pkt{
+	reply := func(status []byte, reqType byte, replyType byte) []udpPkt {
+		return []udpPkt{
 			toServer(0, d6msg(reqType, 1, cidOpt(1))),
 			fromServer(time.Second, d6msg(replyType, 1, cidOpt(1), sidOpt(1), status)),
 		}
 	}
 	tests := []struct {
 		name      string
-		pkts      []d6Pkt
+		pkts      []udpPkt
 		wantTitle string // "" means no issue
 		wantDesc  string
 	}{
@@ -255,10 +264,10 @@ func TestDHCPv6NoAddressesAndConfigErrors(t *testing.T) {
 		{"no status at all", reply(nil, 3, 7), "", ""},
 		{"CatchUpComplete is not an error", reply(d6status(13, ""), 3, 7), "", ""},
 		{"a reply with no matching request is still reported",
-			[]d6Pkt{fromServer(0, d6msg(7, 1, cidOpt(1), sidOpt(1), d6status(2, "")))},
+			[]udpPkt{fromServer(0, d6msg(7, 1, cidOpt(1), sidOpt(1), d6status(2, "")))},
 			titleDHCPv6NoAddrs, fmt.Sprintf("server %s returned NoAddrsAvail (2) for Reply", sidHex(1))},
 		{"a server with no identifier is named by its address",
-			[]d6Pkt{fromServer(0, d6msg(7, 1, cidOpt(1), d6status(2, "")))},
+			[]udpPkt{fromServer(0, d6msg(7, 1, cidOpt(1), d6status(2, "")))},
 			titleDHCPv6NoAddrs, "server fe80::2 returned NoAddrsAvail (2) for Reply"},
 	}
 	for _, tt := range tests {
@@ -288,7 +297,7 @@ func TestDHCPv6NoAddressesAndConfigErrors(t *testing.T) {
 }
 
 func TestDHCPv6IssuesAggregateByServer(t *testing.T) {
-	var pkts []d6Pkt
+	var pkts []udpPkt
 	// server 1 fails three requests, with two different statuses; server 2 fails two.
 	add := func(i int, srv byte, status []byte) {
 		xid := uint32(100 + i)
@@ -320,8 +329,8 @@ func TestDHCPv6IssuesAggregateByServer(t *testing.T) {
 
 func TestDHCPv6FailureRate(t *testing.T) {
 	// n Replies from one server, of which the first `failed` carry an error status.
-	replies := func(n, failed int, status uint16) []d6Pkt {
-		var pkts []d6Pkt
+	replies := func(n, failed int, status uint16) []udpPkt {
+		var pkts []udpPkt
 		for i := 0; i < n; i++ {
 			xid := uint32(i + 1)
 			var st []byte
@@ -336,7 +345,7 @@ func TestDHCPv6FailureRate(t *testing.T) {
 	}
 	tests := []struct {
 		name     string
-		pkts     []d6Pkt
+		pkts     []udpPkt
 		wantDesc string
 	}{
 		{"25% of 12", replies(12, 3, 1), fmt.Sprintf("25%% of requests failed (3 of 12 responses from server %s carried an error status)", sidHex(1))},
@@ -363,7 +372,7 @@ func TestDHCPv6FailureRate(t *testing.T) {
 	}
 
 	t.Run("servers are judged separately and folded into one issue", func(t *testing.T) {
-		var pkts []d6Pkt
+		var pkts []udpPkt
 		for srv := 1; srv <= 3; srv++ {
 			failed := []int{0, 3, 8}[srv-1] // 0%, 30%, 80% of 10
 			for i := 0; i < 10; i++ {
@@ -386,46 +395,46 @@ func TestDHCPv6FailureRate(t *testing.T) {
 }
 
 func TestDHCPv6Timeouts(t *testing.T) {
-	solicit := func(at time.Duration, xid uint32) d6Pkt { return toServer(at, d6msg(1, xid, cidOpt(1))) }
-	request := func(at time.Duration, xid uint32) d6Pkt { return toServer(at, d6msg(3, xid, cidOpt(1), sidOpt(1))) }
-	advertise := func(at time.Duration, xid uint32) d6Pkt { return fromServer(at, d6msg(2, xid, cidOpt(1), sidOpt(1))) }
-	replyTo := func(at time.Duration, xid uint32) d6Pkt { return fromServer(at, d6msg(7, xid, cidOpt(1), sidOpt(1))) }
+	solicit := func(at time.Duration, xid uint32) udpPkt { return toServer(at, d6msg(1, xid, cidOpt(1))) }
+	request := func(at time.Duration, xid uint32) udpPkt { return toServer(at, d6msg(3, xid, cidOpt(1), sidOpt(1))) }
+	advertise := func(at time.Duration, xid uint32) udpPkt { return fromServer(at, d6msg(2, xid, cidOpt(1), sidOpt(1))) }
+	replyTo := func(at time.Duration, xid uint32) udpPkt { return fromServer(at, d6msg(7, xid, cidOpt(1), sidOpt(1))) }
 	cid := hexOf(duid(1))
 
 	tests := []struct {
 		name      string
-		pkts      []d6Pkt
+		pkts      []udpPkt
 		wantDesc  string // "" means no issue
 		wantCount int
 	}{
-		{"a Solicit with no reply, the capture running on", []d6Pkt{solicit(0, 1), later(40 * time.Second)},
+		{"a Solicit with no reply, the capture running on", []udpPkt{solicit(0, 1), later(40 * time.Second)},
 			fmt.Sprintf("no reply to Solicit from client %s (sent to ff02::1:2, waited 30s)", cid), 1},
-		{"a Request with no reply", []d6Pkt{request(0, 1), later(31 * time.Second)},
+		{"a Request with no reply", []udpPkt{request(0, 1), later(31 * time.Second)},
 			fmt.Sprintf("no reply to Request from client %s (sent to ff02::1:2, waited 30s)", cid), 1},
-		{"exactly 30 seconds of capture is enough to judge", []d6Pkt{solicit(0, 1), later(30 * time.Second)},
+		{"exactly 30 seconds of capture is enough to judge", []udpPkt{solicit(0, 1), later(30 * time.Second)},
 			fmt.Sprintf("no reply to Solicit from client %s (sent to ff02::1:2, waited 30s)", cid), 1},
-		{"the capture ended too soon to tell", []d6Pkt{solicit(0, 1), later(10 * time.Second)}, "", 0},
-		{"a Solicit that was the last packet", []d6Pkt{solicit(0, 1)}, "", 0},
-		{"answered by an Advertise", []d6Pkt{solicit(0, 1), advertise(time.Second, 1), later(60 * time.Second)}, "", 0},
-		{"answered by a Reply (rapid commit)", []d6Pkt{solicit(0, 1), replyTo(time.Second, 1), later(60 * time.Second)}, "", 0},
-		{"answered in time, at 29 seconds", []d6Pkt{request(0, 1), replyTo(29*time.Second, 1), later(60 * time.Second)}, "", 0},
-		{"answered late, after 45 seconds", []d6Pkt{request(0, 1), replyTo(45*time.Second, 1)},
+		{"the capture ended too soon to tell", []udpPkt{solicit(0, 1), later(10 * time.Second)}, "", 0},
+		{"a Solicit that was the last packet", []udpPkt{solicit(0, 1)}, "", 0},
+		{"answered by an Advertise", []udpPkt{solicit(0, 1), advertise(time.Second, 1), later(60 * time.Second)}, "", 0},
+		{"answered by a Reply (rapid commit)", []udpPkt{solicit(0, 1), replyTo(time.Second, 1), later(60 * time.Second)}, "", 0},
+		{"answered in time, at 29 seconds", []udpPkt{request(0, 1), replyTo(29*time.Second, 1), later(60 * time.Second)}, "", 0},
+		{"answered late, after 45 seconds", []udpPkt{request(0, 1), replyTo(45*time.Second, 1)},
 			fmt.Sprintf("the reply to Request from client %s came only after 45s (sent to ff02::1:2, waited 30s)", cid), 1},
-		{"a Renew with no reply is not judged", []d6Pkt{toServer(0, d6msg(5, 1, cidOpt(1), sidOpt(1))), later(60 * time.Second)}, "", 0},
-		{"a Confirm with no reply is not judged", []d6Pkt{toServer(0, d6msg(4, 1, cidOpt(1))), later(60 * time.Second)}, "", 0},
-		{"a retransmitted Solicit counts once", []d6Pkt{solicit(0, 1), solicit(1*time.Second, 1), solicit(3*time.Second, 1), later(60 * time.Second)},
+		{"a Renew with no reply is not judged", []udpPkt{toServer(0, d6msg(5, 1, cidOpt(1), sidOpt(1))), later(60 * time.Second)}, "", 0},
+		{"a Confirm with no reply is not judged", []udpPkt{toServer(0, d6msg(4, 1, cidOpt(1))), later(60 * time.Second)}, "", 0},
+		{"a retransmitted Solicit counts once", []udpPkt{solicit(0, 1), solicit(1*time.Second, 1), solicit(3*time.Second, 1), later(60 * time.Second)},
 			fmt.Sprintf("no reply to Solicit from client %s (sent to ff02::1:2, waited 30s)", cid), 1},
 		{"a reply to another client's transaction does not answer it",
-			[]d6Pkt{solicit(0, 1), fromServer(time.Second, d6msg(2, 1, cidOpt(2), sidOpt(1))), later(60 * time.Second)},
+			[]udpPkt{solicit(0, 1), fromServer(time.Second, d6msg(2, 1, cidOpt(2), sidOpt(1))), later(60 * time.Second)},
 			fmt.Sprintf("no reply to Solicit from client %s (sent to ff02::1:2, waited 30s)", cid), 1},
 		{"a reply to another transaction ID does not answer it",
-			[]d6Pkt{solicit(0, 1), advertise(time.Second, 2), later(60 * time.Second)},
+			[]udpPkt{solicit(0, 1), advertise(time.Second, 2), later(60 * time.Second)},
 			fmt.Sprintf("no reply to Solicit from client %s (sent to ff02::1:2, waited 30s)", cid), 1},
 		{"three Solicits to one destination are folded into one issue",
-			[]d6Pkt{solicit(0, 1), solicit(time.Second, 2), solicit(2*time.Second, 3), later(60 * time.Second)},
+			[]udpPkt{solicit(0, 1), solicit(time.Second, 2), solicit(2*time.Second, 3), later(60 * time.Second)},
 			fmt.Sprintf("3 requests to ff02::1:2 got no reply within 30s: Solicit (3x); first: no reply to Solicit from client %s", cid), 3},
 		{"a Solicit and a Request",
-			[]d6Pkt{solicit(0, 1), request(time.Second, 2), later(60 * time.Second)},
+			[]udpPkt{solicit(0, 1), request(time.Second, 2), later(60 * time.Second)},
 			fmt.Sprintf("2 requests to ff02::1:2 got no reply within 30s: Request (1x), Solicit (1x); first: no reply to Solicit from client %s", cid), 2},
 	}
 	for _, tt := range tests {
@@ -448,10 +457,10 @@ func TestDHCPv6Timeouts(t *testing.T) {
 	}
 
 	t.Run("a Solicit relayed to a server is answered through the relay", func(t *testing.T) {
-		relayed := func(at time.Duration, typ byte, inner []byte, from, to string) d6Pkt {
-			return d6Pkt{at: at, from: from, to: to, srcPort: 547, dport: 547, payload: d6relay(typ, inner)}
+		relayed := func(at time.Duration, typ byte, inner []byte, from, to string) udpPkt {
+			return udpPkt{at: at, from: from, to: to, srcPort: 547, dport: 547, payload: d6relay(typ, inner)}
 		}
-		pkts := []d6Pkt{
+		pkts := []udpPkt{
 			relayed(0, 12, d6msg(1, 9, cidOpt(1)), "2001:db8::1", "2001:db8::53"),
 			relayed(time.Second, 13, d6msg(2, 9, cidOpt(1), sidOpt(1)), "2001:db8::53", "2001:db8::1"),
 			later(60 * time.Second),
@@ -460,7 +469,7 @@ func TestDHCPv6Timeouts(t *testing.T) {
 	})
 
 	t.Run("a relayed Solicit nobody answered", func(t *testing.T) {
-		pkts := []d6Pkt{
+		pkts := []udpPkt{
 			{at: 0, from: "2001:db8::1", to: "2001:db8::53", srcPort: 547, dport: 547, payload: d6relay(12, d6msg(1, 9, cidOpt(1)))},
 			later(60 * time.Second),
 		}
@@ -472,16 +481,16 @@ func TestDHCPv6Timeouts(t *testing.T) {
 	t.Run("a merged capture does not make every request look unanswered", func(t *testing.T) {
 		// The next packet is from a different capture, years later: it says
 		// nothing about whether the Solicit was answered.
-		pkts := []d6Pkt{solicit(0, 1), later(24 * 365 * 3 * time.Hour)}
+		pkts := []udpPkt{solicit(0, 1), later(24 * 365 * 3 * time.Hour)}
 		assert.Empty(t, issuesTitled(dhcpIssues(t, pkts), titleDHCPv6Timeout))
 		// and neither does one that jumps back in time
-		pkts = []d6Pkt{later(500 * time.Second), solicit(400*time.Second, 1), later(100 * time.Second)}
+		pkts = []udpPkt{later(500 * time.Second), solicit(400*time.Second, 1), later(100 * time.Second)}
 		assert.Empty(t, issuesTitled(dhcpIssues(t, pkts), titleDHCPv6Timeout))
 	})
 
 	t.Run("timeouts are aggregated by destination", func(t *testing.T) {
-		to := func(p d6Pkt, dst string) d6Pkt { p.to = dst; return p }
-		pkts := []d6Pkt{
+		to := func(p udpPkt, dst string) udpPkt { p.to = dst; return p }
+		pkts := []udpPkt{
 			solicit(0, 1), to(solicit(time.Second, 2), "ff02::1:3"), to(request(2*time.Second, 3), "fe80::53"),
 			to(solicit(3*time.Second, 4), "fe80::53"), later(60 * time.Second),
 		}

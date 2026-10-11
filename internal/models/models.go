@@ -2,6 +2,7 @@
 package models
 
 import (
+	"fmt"
 	"strings"
 	"time"
 )
@@ -21,6 +22,7 @@ const (
 	ProtocolSIP  Protocol = "SIP"
 
 	ProtocolDHCPv6 Protocol = "DHCPv6"
+	ProtocolQUIC   Protocol = "QUIC"
 )
 
 // ipProtocolNames names the IP protocols that the tool does not analyze but
@@ -175,6 +177,17 @@ type PacketInfo struct {
 	DHCPv6Elapsed    uint16 `json:"dhcpv6_elapsed,omitempty"`     // Elapsed Time option, in hundredths of a second
 	DHCPv6StatusCode int    `json:"dhcpv6_status_code,omitempty"` // the first non-zero Status Code in the message, in an IA option or not
 	DHCPv6StatusMsg  string `json:"dhcpv6_status_msg,omitempty"`  // its message text
+
+	// QUIC fields are set on UDP packets whose payload starts with a QUIC
+	// long header (QUICLongHeader). Short-header packets carry no version or
+	// connection IDs and cannot be told from other UDP traffic without
+	// connection state, so they are not recognized on their own.
+	QUICLongHeader      bool     `json:"quic_long_header,omitempty"`
+	QUICVersion         uint32   `json:"quic_version,omitempty"`          // 0 in a Version Negotiation packet
+	QUICPacketTypes     string   `json:"quic_packet_types,omitempty"`     // the packets in the datagram, in order, comma-separated: Initial, 0-RTT, Handshake, Retry, Version Negotiation
+	QUICDCID            string   `json:"quic_dcid,omitempty"`             // destination connection ID of the first packet, in hex
+	QUICSCID            string   `json:"quic_scid,omitempty"`             // source connection ID of the first packet, in hex
+	QUICOfferedVersions []uint32 `json:"quic_offered_versions,omitempty"` // the versions a Version Negotiation packet lists
 }
 
 // Flow represents an aggregated view of a network connection (e.g., a TCP stream).
@@ -212,6 +225,12 @@ type Flow struct {
 	DHCPv6MessageTypes string `json:"dhcpv6_message_types,omitempty"`
 	DHCPv6ClientID     string `json:"dhcpv6_client_id,omitempty"`
 	DHCPv6ServerID     string `json:"dhcpv6_server_id,omitempty"`
+
+	// QUIC details of a flow that carries QUIC: the version of its first
+	// packet that names one, and the long-header packet types seen (each once,
+	// in order, comma-separated).
+	QUICVersion     string `json:"quic_version,omitempty"`
+	QUICPacketTypes string `json:"quic_packet_types,omitempty"`
 
 	// Retransmits split by trigger: sent after three or more duplicate
 	// ACKs, or after the connection had been silent (an RTO). The remainder
@@ -376,4 +395,40 @@ type InterfaceInfo struct {
 	SnapLen     uint32 `json:"snap_len"`                       // largest captured packet; 0 means no limit
 	Resolution  string `json:"timestamp_resolution,omitempty"` // for example "nanosecond"
 	Filter      string `json:"filter,omitempty"`               // the capture filter in effect
+}
+
+// QUIC versions.
+const (
+	QUICVersionNegotiation uint32 = 0x00000000
+	QUICVersion1           uint32 = 0x00000001
+	QUICVersion2           uint32 = 0x6b3343cf
+)
+
+// QUICDraft returns the draft number of a QUIC draft version (0xff0000XX), and
+// whether v is one.
+func QUICDraft(v uint32) (int, bool) {
+	if v&0xffffff00 == 0xff000000 {
+		return int(v & 0xff), true
+	}
+	return 0, false
+}
+
+// QUICVersionName names a QUIC version: "QUIC v1", "QUIC v2", "draft-29" for
+// 0xff00001d, "reserved" for the 0x?a?a?a?a values that endpoints send to
+// provoke version negotiation, or the number in hex.
+func QUICVersionName(v uint32) string {
+	if d, ok := QUICDraft(v); ok {
+		return fmt.Sprintf("draft-%d", d)
+	}
+	switch {
+	case v == QUICVersionNegotiation:
+		return "Version Negotiation"
+	case v == QUICVersion1:
+		return "QUIC v1"
+	case v == QUICVersion2:
+		return "QUIC v2"
+	case v&0x0f0f0f0f == 0x0a0a0a0a:
+		return fmt.Sprintf("reserved (0x%08x)", v)
+	}
+	return fmt.Sprintf("unknown (0x%08x)", v)
 }

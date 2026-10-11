@@ -307,3 +307,20 @@ func TestPrintDHCPv6Flows(t *testing.T) {
 	assert.Less(t, strings.Index(report.String(), "TOP SLOW FLOWS"), strings.Index(report.String(), "DHCPV6 FLOWS"))
 	assert.Less(t, strings.Index(report.String(), "DHCPV6 FLOWS"), strings.Index(report.String(), "RECOMMENDATIONS"))
 }
+
+func TestPrintQUICFlows(t *testing.T) {
+	var none bytes.Buffer
+	require.NoError(t, printQUICFlows(&none, []models.Flow{{ID: "a", AppProtocol: "TLS"}}))
+	assert.Empty(t, none.String())
+
+	var buf bytes.Buffer
+	require.NoError(t, printQUICFlows(&buf, []models.Flow{
+		{ID: "[2001:db8::1]:50000-[2001:db8::2]:443", AppProtocol: "QUIC", PacketCount: 12, QUICVersion: "QUIC v1", QUICPacketTypes: "Initial,Retry,Handshake"},
+		{ID: "192.0.2.1:50001-192.0.2.2:443", AppProtocol: "QUIC", PacketCount: 3},
+	}))
+	out := buf.String()
+	assert.Contains(t, out, "QUIC FLOWS (2)")
+	assert.Regexp(t, `FLOW\s+PACKETS\s+VERSION\s+PACKET TYPES`, out)
+	assert.Regexp(t, `\[2001:db8::1\]:50000-\[2001:db8::2\]:443\s+12\s+QUIC v1\s+Initial,Retry,Handshake`, out)
+	assert.Regexp(t, `192\.0\.2\.1:50001-192\.0\.2\.2:443\s+3\s+-\s+-`, out)
+}

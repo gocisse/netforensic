@@ -64,6 +64,9 @@ func printTriageReport(w io.Writer, res *models.AnalysisResult) error {
 	if err := printDHCPv6Flows(w, res.Flows); err != nil {
 		return err
 	}
+	if err := printQUICFlows(w, res.Flows); err != nil {
+		return err
+	}
 
 	fmt.Fprintln(w, "\nRECOMMENDATIONS")
 	for i, r := range d.Recommendations {
@@ -183,6 +186,14 @@ var dhcpv6FlowTable = appFlowTable{
 	},
 }
 
+var quicFlowTable = appFlowTable{
+	app: models.ProtocolQUIC, heading: "QUIC FLOWS",
+	columns: []string{"VERSION", "PACKET TYPES"},
+	row: func(f models.Flow) []string {
+		return []string{dash(f.QUICVersion), dash(f.QUICPacketTypes)}
+	},
+}
+
 // printSIPFlows lists the busiest flows that carry SIP, with the request
 // methods, the User-Agent and the Call-ID of their first message.
 func printSIPFlows(w io.Writer, flows []models.Flow) error {
@@ -193,6 +204,13 @@ func printSIPFlows(w io.Writer, flows []models.Flow) error {
 // message types and the client and server identifiers.
 func printDHCPv6Flows(w io.Writer, flows []models.Flow) error {
 	return printAppFlows(w, flows, dhcpv6FlowTable)
+}
+
+// printQUICFlows lists the busiest flows that carry QUIC, with the version and
+// the long-header packet types seen. The payloads are encrypted, so nothing
+// more can be told.
+func printQUICFlows(w io.Writer, flows []models.Flow) error {
+	return printAppFlows(w, flows, quicFlowTable)
 }
 
 // printAppFlows lists the busiest flows of one application protocol. It
