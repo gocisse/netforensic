@@ -389,6 +389,15 @@ var categoryRecommendations = map[string][]string{
 	titleTimeoutRetransmit: {
 		"Severe congestion or blackhole detected. The sender waited for an RTO (Retransmission Timeout) before retrying. Investigate link quality or MTU issues.",
 	},
+	titleUnansweredSYN: {
+		"Verify if a firewall is silently dropping packets, or if the server is down/unreachable.",
+	},
+	titleSYNFlood: {
+		"Multiple connection attempts are being silently dropped. This may indicate a firewall blocking the source, a server overload, or a SYN flood attack.",
+	},
+	titleSYNRetried: {
+		"The first SYN was lost or ignored and only a retry got through. Check for packet loss on the path, and whether a firewall or an overloaded server drops initial SYNs.",
+	},
 	titleRefused: {
 		"Verify if the service is running on the target port, or if a firewall is actively rejecting connections with an RST instead of dropping them.",
 	},

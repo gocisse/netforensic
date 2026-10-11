@@ -599,3 +599,201 @@ func TestRetransmitFollowMarkerAndPortReuse(t *testing.T) {
 	res := Analyze(packets, "all")
 	assert.Empty(t, retransmitIssues(res), "reusing a sequence number on a new connection is not a retransmission")
 }
+
+// synTo builds a client SYN from 10.0.0.<src>:<port> to <dst>:443.
+func synTo(ms int, src int, port uint16, dst string) models.PacketInfo {
+	p := tcpEv(ms, port, true, "SYN", 0)
+	p.SrcIP, p.DstIP = fmt.Sprintf("10.0.1.%d", src), dst
+	return p
+}
+
+// tail is an unrelated packet that makes the capture run until ms.
+func tail(ms int) models.PacketInfo {
+	return models.PacketInfo{Timestamp: rstT0.Add(time.Duration(ms) * time.Millisecond), Protocol: models.ProtocolUDP, SrcIP: "9.9.9.9", DstIP: "9.9.9.8", SrcPort: 1, DstPort: 2}
+}
+
+func synIssuesOf(res *models.AnalysisResult) (out []models.Issue) {
+	for _, is := range res.Issues {
+		switch is.Title {
+		case titleUnansweredSYN, titleSYNFlood, titleSYNRetried:
+			out = append(out, is)
+		}
+	}
+	return out
+}
+
+func TestUnansweredSYN(t *testing.T) { // Test A
+	res := Analyze([]models.PacketInfo{
+		tcpEv(0, 5000, true, "SYN", 0),
+		tail(3000),
+	}, "all")
+	got := synIssuesOf(res)
+	require.Len(t, got, 1)
+	is := got[0]
+	assert.Equal(t, titleUnansweredSYN, is.Title)
+	assert.Equal(t, models.SeverityWarning, is.Severity)
+	assert.Equal(t, "Connection", is.Category)
+	assert.Equal(t, "10.0.0.2:443", is.Target)
+	assert.Equal(t, 1, is.Count)
+	assert.Equal(t, "10.0.0.1:5000-10.0.0.2:443", is.FlowID)
+	assert.Equal(t, rstT0, is.Timestamp)
+	assert.Contains(t, is.Description, "10.0.0.1:5000 sent a SYN to 10.0.0.2:443")
+	assert.Contains(t, is.Description, "no SYN-ACK or RST")
+	assert.Equal(t, titleUnansweredSYN, res.Diagnosis.PrimaryCause)
+	assert.Equal(t, []string{"Verify if a firewall is silently dropping packets, or if the server is down/unreachable."}, res.Diagnosis.Recommendations)
+	assert.Equal(t, 90, res.Diagnosis.HealthScore)
+}
+
+func TestSYNFlood(t *testing.T) { // Test B
+	var packets []models.PacketInfo
+	for i := 0; i < 15; i++ {
+		packets = append(packets, synTo(i*500, i, uint16(4000+i), "10.0.0.2"))
+	}
+	packets = append(packets, tail(20000))
+	res := Analyze(packets, "all")
+
+	got := synIssuesOf(res)
+	require.Len(t, got, 1, "the flood replaces the plain warning")
+	is := got[0]
+	assert.Equal(t, titleSYNFlood, is.Title)
+	assert.Equal(t, models.SeverityError, is.Severity)
+	assert.Equal(t, "10.0.0.2:443", is.Target)
+	assert.Equal(t, 15, is.Count)
+	assert.Contains(t, is.Description, "15 connection attempts from 15 source(s) to 10.0.0.2:443")
+	assert.Contains(t, is.Description, "15 of them within 10s")
+	assert.Equal(t, titleSYNFlood, res.Diagnosis.PrimaryCause)
+	assert.Contains(t, res.Diagnosis.Recommendations[0], "silently dropped")
+	assert.Equal(t, 80, res.Diagnosis.HealthScore)
+}
+
+func TestSYNFloodThresholdAndWindow(t *testing.T) {
+	run := func(n, spacingMs int) []models.Issue {
+		var packets []models.PacketInfo
+		for i := 0; i < n; i++ {
+			packets = append(packets, synTo(i*spacingMs, i, uint16(4000+i), "10.0.0.2"))
+		}
+		packets = append(packets, tail(n*spacingMs+5000))
+		return synIssuesOf(Analyze(packets, "all"))
+	}
+	tests := []struct {
+		name      string
+		n, gap    int
+		wantTitle string
+	}{
+		{"10 attempts is not more than 10", 10, 100, titleUnansweredSYN},
+		{"11 attempts inside 10s", 11, 100, titleSYNFlood},
+		{"11 attempts spread over 20s", 11, 2000, titleUnansweredSYN},
+		{"11 attempts exactly 10s from first to last", 11, 1000, titleSYNFlood},
+		{"11 attempts just over 10s from first to last", 11, 1001, titleUnansweredSYN},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := run(tt.n, tt.gap)
+			require.Len(t, got, 1)
+			assert.Equal(t, tt.wantTitle, got[0].Title)
+			assert.Equal(t, tt.n, got[0].Count)
+		})
+	}
+}
+
+func TestSYNFloodIsPerDestinationAndRestIsFolded(t *testing.T) {
+	var packets []models.PacketInfo
+	for i := 0; i < 12; i++ { // flood against .2
+		packets = append(packets, synTo(i*100, i, uint16(4000+i), "10.0.0.2"))
+	}
+	for i := 0; i < 4; i++ { // a sweep of single unanswered attempts elsewhere
+		packets = append(packets, synTo(i*100, 50, uint16(6000+i), fmt.Sprintf("10.0.0.%d", 10+i)))
+	}
+	packets = append(packets, tail(5000))
+	got := synIssuesOf(Analyze(packets, "all"))
+	require.Len(t, got, 2)
+	titles := []string{got[0].Title, got[1].Title}
+	assert.ElementsMatch(t, []string{titleSYNFlood, titleUnansweredSYN}, titles)
+	for _, is := range got {
+		if is.Title == titleUnansweredSYN {
+			assert.Equal(t, 4, is.Count)
+			assert.Contains(t, is.Description, "4 connection attempts from 1 source(s) to 4 destination(s)")
+			assert.Contains(t, is.Description, "most affected: 10.0.0.10:443 (1)")
+		} else {
+			assert.Equal(t, 12, is.Count)
+		}
+	}
+}
+
+func TestSYNHandshakeCases(t *testing.T) {
+	tests := []struct {
+		name    string
+		packets []models.PacketInfo
+		want    []string
+	}{
+		{"answered by SYN-ACK", []models.PacketInfo{
+			tcpEv(0, 5000, true, "SYN", 0), tcpEv(10, 5000, false, "SYN,ACK", 0), tcpEv(11, 5000, true, "ACK", 0), tail(5000)}, nil},
+		{"refused is not unanswered", []models.PacketInfo{
+			tcpEv(0, 5000, true, "SYN", 0), tcpEv(1, 5000, false, "RST,ACK", 0), tail(5000)}, nil},
+		{"any server reply counts as an answer", []models.PacketInfo{
+			tcpEv(0, 5000, true, "SYN", 0), tcpEv(10, 5000, false, "ACK", 0), tail(5000)}, nil},
+		{"capture ends right after the SYN", []models.PacketInfo{
+			tcpEv(0, 5000, true, "SYN", 0), tail(999)}, nil},
+		{"capture ends one second after the SYN", []models.PacketInfo{
+			tcpEv(0, 5000, true, "SYN", 0), tail(1000)}, []string{titleUnansweredSYN}},
+		{"a lone SYN with nothing else in the capture", []models.PacketInfo{
+			tcpEv(0, 5000, true, "SYN", 0)}, nil},
+		{"SYN retried until the end, never answered", []models.PacketInfo{
+			tcpEv(0, 5000, true, "SYN", 0), tcpEv(1000, 5000, true, "SYN", 0), tcpEv(3000, 5000, true, "SYN", 0), tail(9000)}, []string{titleUnansweredSYN}},
+		{"first SYN lost, retry answered", []models.PacketInfo{
+			tcpEv(0, 5000, true, "SYN", 0), tcpEv(1000, 5000, true, "SYN", 0), tcpEv(1030, 5000, false, "SYN,ACK", 0), tcpEv(1031, 5000, true, "ACK", 0)}, []string{titleSYNRetried}},
+		{"a SYN after the SYN-ACK is not a retry", []models.PacketInfo{
+			tcpEv(0, 5000, true, "SYN", 0), tcpEv(10, 5000, false, "SYN,ACK", 0), tcpEv(20, 5000, true, "SYN", 0), tail(5000)}, nil},
+		{"client gives up with an RST after a second", []models.PacketInfo{
+			tcpEv(0, 5000, true, "SYN", 0), tcpEv(1500, 5000, true, "RST", 0)}, []string{titleUnansweredSYN}},
+		{"midstream traffic has no SYN", []models.PacketInfo{
+			tcpEv(0, 5000, true, "PSH,ACK", 10), tail(5000)}, nil},
+		{"port reuse: refused then unanswered are separate attempts", []models.PacketInfo{
+			tcpEv(0, 5000, true, "SYN", 0), tcpEv(1, 5000, false, "RST,ACK", 0), tcpEv(100, 5000, true, "SYN", 0), tail(5000)}, []string{titleUnansweredSYN}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var got []string
+			for _, is := range synIssuesOf(Analyze(tt.packets, "all")) {
+				got = append(got, is.Title)
+			}
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}
+
+func TestSYNRetriedIsInfo(t *testing.T) {
+	res := Analyze([]models.PacketInfo{
+		tcpEv(0, 5000, true, "SYN", 0), tcpEv(1000, 5000, true, "SYN", 0), tcpEv(1030, 5000, false, "SYN,ACK", 0), tcpEv(1031, 5000, true, "ACK", 0),
+	}, "all")
+	got := synIssuesOf(res)
+	require.Len(t, got, 1)
+	assert.Equal(t, models.SeverityInfo, got[0].Severity)
+	assert.Contains(t, got[0].Description, "completed after 2 SYNs, with the SYN-ACK arriving 1.03s after the first one")
+	assert.Equal(t, rstT0, got[0].Timestamp)
+
+	// several: folded into one issue
+	var packets []models.PacketInfo
+	for i := 0; i < 3; i++ {
+		port := uint16(5000 + i)
+		packets = append(packets, tcpEv(0, port, true, "SYN", 0), tcpEv(1000, port, true, "SYN", 0), tcpEv(1020, port, false, "SYN,ACK", 0))
+	}
+	got = synIssuesOf(Analyze(packets, "all"))
+	require.Len(t, got, 1)
+	assert.Equal(t, 3, got[0].Count)
+	assert.Contains(t, got[0].Description, "3 connections needed more than one SYN")
+}
+
+func TestSYNFloodSingleSYNCaptureIsQuiet(t *testing.T) {
+	res := Analyze([]models.PacketInfo{tcpEv(0, 5000, true, "SYN", 0)}, "all")
+	assert.Empty(t, res.Issues)
+}
+
+// SYN_Flood.pcap holds a single SYN: there is nothing to compare it with and
+// no evidence about how the capture ended, so no handshake issue is raised.
+func TestSYNFloodRealSingleSYNCapture(t *testing.T) {
+	res := Analyze(readReal(t, "SYN_Flood.pcap"), "all")
+	assert.Equal(t, 1, res.TotalPackets)
+	assert.Empty(t, res.Issues)
+	assert.Equal(t, 100, res.Diagnosis.HealthScore)
+}

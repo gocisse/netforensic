@@ -45,6 +45,10 @@ type connState struct {
 	zeroFromClient bool      // the client was the receiver that ran out of buffer
 	zeroReopened   time.Time // first window > 0 from the same receiver afterwards
 
+	synFirst, synLast time.Time // first and last SYN from the client
+	synTries          int       // SYNs sent before the SYN-ACK (or in total, if none came)
+	synAckAt          time.Time
+
 	firstReply    bool // the server's first packet after the SYN has been seen
 	refusedByRST  bool // ...and it was an RST
 	refusedAt     time.Time
@@ -89,6 +93,13 @@ func analyzeConnections(packets []models.PacketInfo) []models.Issue {
 		c.observe(p)
 	}
 
+	var captureEnd time.Time
+	for _, p := range packets {
+		if p.Timestamp.After(captureEnd) {
+			captureEnd = p.Timestamp
+		}
+	}
+
 	var issues []models.Issue
 	refused := make(map[string][]*connState) // server ip:port -> refused connections
 	var refusedOrder []string
@@ -115,6 +126,7 @@ func analyzeConnections(packets []models.PacketInfo) []models.Issue {
 	for _, t := range refusedOrder {
 		issues = append(issues, refusedIssue(t, refused[t]))
 	}
+	issues = append(issues, synIssues(conns, order, captureEnd)...)
 	sort.SliceStable(issues, func(i, j int) bool { return issues[i].Timestamp.Before(issues[j].Timestamp) })
 	return issues
 }
@@ -132,7 +144,14 @@ func (c *connState) observe(p models.PacketInfo) {
 		c.sawSyn = true
 		c.client, c.server = src, endpoint{p.DstIP, p.DstPort}
 		fromClient = true
+		c.synFirst, c.synLast, c.synTries = p.Timestamp, p.Timestamp, 1
+	case has("SYN") && !has("ACK") && fromClient && !c.sawSynAck:
+		c.synLast = p.Timestamp
+		c.synTries++
 	case has("SYN") && has("ACK") && !fromClient:
+		if !c.sawSynAck {
+			c.synAckAt = p.Timestamp
+		}
 		c.sawSynAck = true
 	case has("ACK") && fromClient && c.sawSynAck && !c.sawAck && !has("RST"):
 		c.sawAck = true

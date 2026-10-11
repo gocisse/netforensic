@@ -458,5 +458,5 @@ func TestCorrelateRealLab4TimeoutRetransmits(t *testing.T) {
 	assert.Equal(t, []string{titleTimeoutRetransmit}, packetLossTitles(res))
 	assert.Equal(t, "Timeout Retransmit (severe congestion or blackhole)", res.Diagnosis.PrimaryCause)
 	assert.Equal(t, categoryRecommendations[titleTimeoutRetransmit], res.Diagnosis.Recommendations)
-	assert.Equal(t, 60, res.Diagnosis.HealthScore, "timeout error plus slow handshake and slow response")
+	assert.Equal(t, 58, res.Diagnosis.HealthScore, "timeout error, slow handshake, slow response and the retried SYN note")
 }
