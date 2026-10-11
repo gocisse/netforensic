@@ -281,6 +281,10 @@ type AnalysisResult struct {
 
 	Diagnosis RootCauseAnalysis `json:"diagnosis"`
 
+	// Metadata describes how and where the capture was taken, as far as the
+	// file says so (only pcapng files carry this). Nil if it says nothing.
+	Metadata *CaptureMetadata `json:"metadata,omitempty"`
+
 	// Flows is every flow of the capture, for exports. It is not part of the
 	// JSON output, which lists only the top flows.
 	Flows []Flow `json:"-"`
@@ -301,4 +305,26 @@ func TunnelKey(t string) string {
 		a, b = b, a
 	}
 	return kind + ":" + a + "~" + b
+}
+
+// CaptureMetadata is what a pcapng file records about its own creation: the
+// section header (tool, operating system, hardware) and the interfaces the
+// packets were captured on. Every field is optional in the format and may be
+// empty.
+type CaptureMetadata struct {
+	CaptureTool string          `json:"capture_tool,omitempty"` // application that wrote the file, e.g. "Dumpcap (Wireshark) 3.4.9"
+	OS          string          `json:"os,omitempty"`           // operating system of the capturing host
+	Hardware    string          `json:"hardware,omitempty"`     // hardware of the capturing host
+	Interfaces  []InterfaceInfo `json:"interfaces,omitempty"`   // the distinct interface configurations that packets came from
+}
+
+// InterfaceInfo describes a capture interface (a pcapng interface description
+// block). Interfaces with identical descriptions are listed once.
+type InterfaceInfo struct {
+	Name        string `json:"name,omitempty"`
+	Description string `json:"description,omitempty"`
+	LinkType    string `json:"link_type"`                      // for example "Ethernet"
+	SnapLen     uint32 `json:"snap_len"`                       // largest captured packet; 0 means no limit
+	Resolution  string `json:"timestamp_resolution,omitempty"` // for example "nanosecond"
+	Filter      string `json:"filter,omitempty"`               // the capture filter in effect
 }

@@ -201,6 +201,7 @@ func (h *handler) analyze(w http.ResponseWriter, r *http.Request) {
 
 	res := analyzer.AnalyzeWithIssues(packets, "all", notes...)
 	res.FileName = name
+	res.Metadata = stats.Metadata
 	writeJSON(w, http.StatusOK, res)
 }
 

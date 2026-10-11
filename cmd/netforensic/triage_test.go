@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"testing"
@@ -115,4 +116,114 @@ func TestPrintTriageReportNegativeHealth(t *testing.T) {
 		require.NoError(t, printTriageReport(&buf, res))
 		assert.Contains(t, buf.String(), want)
 	}
+}
+
+func TestPrintCaptureMetadata(t *testing.T) {
+	eth := models.InterfaceInfo{Name: "eth0", LinkType: "Ethernet", SnapLen: 262144, Resolution: "nanosecond"}
+	tests := []struct {
+		name string
+		md   *models.CaptureMetadata
+		want string
+	}{
+		{"nil prints nothing", nil, ""},
+		{"empty prints nothing", &models.CaptureMetadata{}, ""},
+		{
+			name: "everything",
+			md: &models.CaptureMetadata{CaptureTool: "Dumpcap (Wireshark) 3.4.9", OS: "Linux 5.10", Hardware: "Intel i7",
+				Interfaces: []models.InterfaceInfo{eth}},
+			want: " Captured with: Dumpcap (Wireshark) 3.4.9 on Linux 5.10\n" +
+				" Hardware:      Intel i7\n" +
+				" Interfaces:    eth0 (Ethernet, snaplen 262144, nanosecond timestamps)\n",
+		},
+		{
+			name: "only the tool",
+			md:   &models.CaptureMetadata{CaptureTool: "tcpdump"},
+			want: " Captured with: tcpdump\n",
+		},
+		{
+			name: "only the OS",
+			md:   &models.CaptureMetadata{OS: "macOS"},
+			want: " Captured with: on macOS\n",
+		},
+		{
+			name: "no snaplen limit, a description, a filter and no name",
+			md: &models.CaptureMetadata{Interfaces: []models.InterfaceInfo{
+				{Description: "Wi-Fi", LinkType: "Raw", Filter: "port 53"}}},
+			want: " Interfaces:    (unnamed) - Wi-Fi (Raw, filter: port 53)\n",
+		},
+		{
+			name: "five interfaces: three are shown, the rest counted",
+			md: &models.CaptureMetadata{Interfaces: []models.InterfaceInfo{
+				{Name: "a", LinkType: "Ethernet"}, {Name: "b", LinkType: "Ethernet"}, {Name: "c", LinkType: "Ethernet"},
+				{Name: "d", LinkType: "Ethernet"}, {Name: "e", LinkType: "Ethernet"}}},
+			want: " Interfaces:    a (Ethernet)\n" +
+				"                b (Ethernet)\n" +
+				"                c (Ethernet)\n" +
+				"                ... and 2 more\n",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var buf bytes.Buffer
+			printCaptureMetadata(&buf, tt.md)
+			assert.Equal(t, tt.want, buf.String())
+		})
+	}
+}
+
+func TestTriageReportShowsMetadataInTheHeader(t *testing.T) {
+	res := &models.AnalysisResult{Metadata: &models.CaptureMetadata{CaptureTool: "tcpdump 4.99", OS: "Linux"}}
+	var buf bytes.Buffer
+	require.NoError(t, printTriageReport(&buf, res))
+	out := buf.String()
+	lines := strings.Split(out, "\n")
+	require.Greater(t, len(lines), 5)
+	assert.Contains(t, lines[1], "TRIAGE REPORT")
+	assert.Contains(t, lines[3], "Captured with: tcpdump 4.99 on Linux", "right under the title block")
+	assert.Less(t, strings.Index(out, "Captured with"), strings.Index(out, "ROOT CAUSE"))
+}
+
+func TestRootCmdShowsPcapngMetadata(t *testing.T) {
+	const lab7 = "../../testdata/Lab-7-TCPIssues.pcapng"
+	run := func(args ...string) string {
+		var out bytes.Buffer
+		cmd := newRootCmd()
+		cmd.SetOut(&out)
+		cmd.SetErr(&bytes.Buffer{})
+		cmd.SetArgs(args)
+		require.NoError(t, cmd.Execute())
+		return out.String()
+	}
+
+	text := run(lab7)
+	assert.Contains(t, text, "Captured with: Dumpcap (Wireshark) 3.4.9")
+	assert.Contains(t, text, "on Linux 5.10.0-kali3-amd64")
+	assert.Contains(t, text, "Hardware:      Intel(R) Core(TM) i7-9750H")
+	assert.Contains(t, text, "Interfaces:    eth0 (Ethernet, snaplen 262144, nanosecond timestamps)")
+
+	var res struct {
+		Metadata struct {
+			CaptureTool string `json:"capture_tool"`
+			OS          string `json:"os"`
+			Hardware    string `json:"hardware"`
+			Interfaces  []struct {
+				Name     string `json:"name"`
+				LinkType string `json:"link_type"`
+				SnapLen  uint32 `json:"snap_len"`
+			} `json:"interfaces"`
+		} `json:"metadata"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(run("-o", "json", lab7)), &res))
+	assert.Equal(t, "Linux 5.10.0-kali3-amd64", res.Metadata.OS)
+	assert.Contains(t, res.Metadata.CaptureTool, "Dumpcap")
+	assert.NotEmpty(t, res.Metadata.Hardware)
+	require.Len(t, res.Metadata.Interfaces, 1)
+	assert.Equal(t, "eth0", res.Metadata.Interfaces[0].Name)
+	assert.Equal(t, "Ethernet", res.Metadata.Interfaces[0].LinkType)
+	assert.Equal(t, uint32(262144), res.Metadata.Interfaces[0].SnapLen)
+
+	// a classic pcap has none: no header lines, no JSON key
+	const sample = "../../internal/pcap/testdata/sample.pcap"
+	assert.NotContains(t, run(sample), "Captured with")
+	assert.NotContains(t, run("-o", "json", sample), `"metadata"`)
 }

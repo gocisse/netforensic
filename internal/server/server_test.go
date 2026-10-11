@@ -129,6 +129,12 @@ func TestAnalyzeUpload(t *testing.T) {
 	require.Len(t, res.Issues, 1)
 	assert.Equal(t, []string{"TCP", "TLS"}, res.Issues[0].Protocols, "the flow is TCP carrying TLS")
 	assert.Equal(t, "ERROR", string(res.Issues[0].Severity))
+
+	require.NotNil(t, res.Metadata, "the pcapng metadata is part of the answer")
+	assert.Contains(t, res.Metadata.CaptureTool, "Dumpcap (Wireshark) 3.4.9")
+	assert.Equal(t, "Linux 5.10.0-kali3-amd64", res.Metadata.OS)
+	require.Len(t, res.Metadata.Interfaces, 1)
+	assert.Equal(t, "eth0", res.Metadata.Interfaces[0].Name)
 }
 
 func TestAnalyzeUploadMatchesTheCLIResult(t *testing.T) {

@@ -23,6 +23,7 @@ func printTriageReport(w io.Writer, res *models.AnalysisResult) error {
 	fmt.Fprintln(w, rule)
 	fmt.Fprintf(w, " TRIAGE REPORT  |  Health Score: %d/100 (%s)\n", d.HealthScore, healthLabel(d.HealthScore))
 	fmt.Fprintln(w, rule)
+	printCaptureMetadata(w, res.Metadata)
 
 	fmt.Fprintln(w, "\nROOT CAUSE")
 	fmt.Fprintf(w, "  %s (confidence: %s)\n", d.PrimaryCause, d.Confidence)
@@ -85,4 +86,64 @@ func fmtMs(v float64) string {
 		return "-"
 	}
 	return fmt.Sprintf("%.1fms", v)
+}
+
+// maxInterfacesShown is how many interface descriptions the report header
+// lists; a merged capture can hold hundreds.
+const maxInterfacesShown = 3
+
+// printCaptureMetadata prints what the capture file says about its creation,
+// as lines under the report title: the tool and operating system, the
+// hardware, and the interfaces. It prints nothing if md is nil.
+func printCaptureMetadata(w io.Writer, md *models.CaptureMetadata) {
+	if md == nil {
+		return
+	}
+	var capture []string
+	if md.CaptureTool != "" {
+		capture = append(capture, md.CaptureTool)
+	}
+	if md.OS != "" {
+		capture = append(capture, "on "+md.OS)
+	}
+	if len(capture) > 0 {
+		fmt.Fprintf(w, " Captured with: %s\n", strings.Join(capture, " "))
+	}
+	if md.Hardware != "" {
+		fmt.Fprintf(w, " Hardware:      %s\n", md.Hardware)
+	}
+	for i, ifc := range md.Interfaces {
+		label := " Interfaces:    "
+		if i > 0 {
+			label = strings.Repeat(" ", len(label))
+		}
+		if i == maxInterfacesShown {
+			fmt.Fprintf(w, "%s... and %d more\n", label, len(md.Interfaces)-maxInterfacesShown)
+			break
+		}
+		fmt.Fprintf(w, "%s%s\n", label, describeInterface(ifc))
+	}
+}
+
+// describeInterface summarizes an interface, for example
+// "eth0 (Ethernet, snaplen 262144, nanosecond timestamps)".
+func describeInterface(ifc models.InterfaceInfo) string {
+	name := ifc.Name
+	if name == "" {
+		name = "(unnamed)"
+	}
+	if ifc.Description != "" {
+		name += " - " + ifc.Description
+	}
+	details := []string{ifc.LinkType}
+	if ifc.SnapLen > 0 {
+		details = append(details, fmt.Sprintf("snaplen %d", ifc.SnapLen))
+	}
+	if ifc.Resolution != "" {
+		details = append(details, ifc.Resolution+" timestamps")
+	}
+	if ifc.Filter != "" {
+		details = append(details, "filter: "+ifc.Filter)
+	}
+	return fmt.Sprintf("%s (%s)", name, strings.Join(details, ", "))
 }

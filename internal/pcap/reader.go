@@ -76,6 +76,10 @@ type ReadStats struct {
 	// (for example "STP", "LLDP"); frames whose type is not in the tool's
 	// table of well-known ones are counted as "Other".
 	NonIPTypes map[string]int
+
+	// Metadata is what a pcapng file says about its creation, or nil (for a
+	// classic pcap file, or one that says nothing).
+	Metadata *models.CaptureMetadata
 }
 
 // linkTypeNames names the unsupported link types that turn up in practice.
@@ -199,6 +203,7 @@ func ReadPacketsStats(filePath string, opts ReadOptions) ([]models.PacketInfo, R
 			// and crashed captures. Keep what was read.
 			models.AssignConnections(packets)
 			annotateHandshakes(packets)
+			stats.Metadata = src.metadata()
 			return packets, stats, &TruncatedError{Packets: len(packets), Err: err}
 		}
 		if err != nil {
@@ -234,6 +239,7 @@ func ReadPacketsStats(filePath string, opts ReadOptions) ([]models.PacketInfo, R
 	}
 	models.AssignConnections(packets)
 	annotateHandshakes(packets)
+	stats.Metadata = src.metadata()
 	return packets, stats, nil
 }
 
@@ -513,6 +519,8 @@ type source interface {
 	// cutShort reports, after an io.EOF, whether the file actually ended in
 	// the middle of a record.
 	cutShort() bool
+	// metadata returns what the file says about its creation, or nil.
+	metadata() *models.CaptureMetadata
 }
 
 type pcapSource struct {
@@ -523,6 +531,8 @@ type pcapSource struct {
 // cutShort is always false: pcapgo reports a record cut short as
 // io.ErrUnexpectedEOF, which ReadPackets handles directly.
 func (s pcapSource) cutShort() bool { return false }
+
+func (s pcapSource) metadata() *models.CaptureMetadata { return nil }
 
 func (s pcapSource) linkType(gopacket.CaptureInfo) layers.LinkType { return s.LinkType() }
 
@@ -537,7 +547,20 @@ func (s pcapSource) realLinkType(lt layers.LinkType) int {
 type ngSource struct {
 	*pcapgo.NgReader
 	track *blockTracker
+	meta  *metaCollector
 }
+
+// ReadPacketData reads the next packet and notes the interface it came from.
+func (s ngSource) ReadPacketData() ([]byte, gopacket.CaptureInfo, error) {
+	data, ci, err := s.NgReader.ReadPacketData()
+	if err == nil {
+		s.meta.observe(s, ci)
+	}
+	return data, ci, err
+}
+
+// metadata returns the section header's information and the interfaces seen.
+func (s ngSource) metadata() *models.CaptureMetadata { return s.meta.result(s) }
 
 // cutShort reports whether the file ends inside a block. The pcapng reader
 // returns a plain io.EOF there, so the framing is tracked separately.
@@ -573,7 +596,7 @@ func newSource(r io.Reader) (source, error) {
 		if err != nil {
 			return nil, fmt.Errorf("read pcapng header: %w", err)
 		}
-		return ngSource{ng, track}, nil
+		return ngSource{ng, track, &metaCollector{}}, nil
 	}
 	// The pcap header holds the link type as a 32-bit number (its top bits are
 	// flags); gopacket keeps only 8 bits of it.
@@ -796,4 +819,135 @@ func nonIPFrameType(pkt gopacket.Packet) string {
 		}
 	}
 	return name
+}
+
+// maxMetaLen caps each metadata string; the text comes from the capture file
+// and is shown on a terminal.
+const maxMetaLen = 200
+
+// cleanMeta makes a string from a capture file safe to print: control
+// characters (terminal escape sequences included) become spaces, surrounding
+// space is trimmed, and the length is capped.
+func cleanMeta(s string) string {
+	s = strings.Map(func(r rune) rune {
+		if r < 0x20 || r == 0x7f || (r >= 0x80 && r < 0xa0) {
+			return ' '
+		}
+		return r
+	}, s)
+	s = strings.TrimSpace(s)
+	if r := []rune(s); len(r) > maxMetaLen {
+		s = string(r[:maxMetaLen]) + "…"
+	}
+	return s
+}
+
+// metaCollector gathers the interfaces that packets of a pcapng file come
+// from, as they are read: the reader only knows an interface once it has met
+// its description block, and a merged file may hold hundreds.
+type metaCollector struct {
+	haveFirst  bool
+	first      pcapgo.NgSectionInfo // the first section header, which names the tool
+	last       int
+	lastSect   pcapgo.NgSectionInfo
+	haveLast   bool
+	seen       map[ifaceSig]struct{}
+	interfaces []models.InterfaceInfo
+}
+
+// ifaceSig is what makes two interface descriptions the same.
+type ifaceSig struct {
+	name, desc, filter string
+	linkType           int
+	snapLen            uint32
+	res                pcapgo.NgResolution
+}
+
+// observe notes the interface ci belongs to, looking it up only when the
+// interface or the section changed since the previous packet.
+func (m *metaCollector) observe(s ngSource, ci gopacket.CaptureInfo) {
+	sect := s.NgReader.SectionInfo()
+	if !m.haveFirst {
+		m.first, m.haveFirst = sect, true
+	}
+	if m.haveLast && m.last == ci.InterfaceIndex && m.lastSect == sect {
+		return
+	}
+	m.last, m.lastSect, m.haveLast = ci.InterfaceIndex, sect, true
+	if iface, err := s.NgReader.Interface(ci.InterfaceIndex); err == nil {
+		m.add(s, iface)
+	}
+}
+
+func (m *metaCollector) add(s ngSource, iface pcapgo.NgInterface) {
+	sig := ifaceSig{iface.Name, iface.Description, iface.Filter, s.realLinkType(iface.LinkType), iface.SnapLength, iface.TimestampResolution}
+	if _, ok := m.seen[sig]; ok {
+		return
+	}
+	if m.seen == nil {
+		m.seen = make(map[ifaceSig]struct{})
+	}
+	m.seen[sig] = struct{}{}
+	m.interfaces = append(m.interfaces, models.InterfaceInfo{
+		Name:        cleanMeta(iface.Name),
+		Description: cleanMeta(iface.Description),
+		LinkType:    linkTypeName(iface.LinkType, sig.linkType),
+		SnapLen:     iface.SnapLength,
+		Resolution:  resolutionName(iface.TimestampResolution),
+		Filter:      cleanMeta(iface.Filter),
+	})
+}
+
+// result returns the collected metadata, or nil if the file records none.
+// Interfaces of the current section that no packet used are included.
+func (m *metaCollector) result(s ngSource) *models.CaptureMetadata {
+	for i := 0; i < s.NgReader.NInterfaces(); i++ {
+		if iface, err := s.NgReader.Interface(i); err == nil {
+			m.add(s, iface)
+		}
+	}
+	info := m.first
+	if !m.haveFirst {
+		info = s.NgReader.SectionInfo()
+	}
+	md := &models.CaptureMetadata{
+		CaptureTool: cleanMeta(info.Application),
+		OS:          cleanMeta(info.OS),
+		Hardware:    cleanMeta(info.Hardware),
+		Interfaces:  m.interfaces,
+	}
+	if md.CaptureTool == "" && md.OS == "" && md.Hardware == "" && len(md.Interfaces) == 0 {
+		return nil
+	}
+	return md
+}
+
+// linkTypeName names a link type: gopacket's name for one it knows, else the
+// number as written in the file (see linkTypeNames).
+func linkTypeName(lt layers.LinkType, real int) string {
+	if n, ok := linkTypeNames[real]; ok {
+		return n
+	}
+	if linkTypeSupported(lt) {
+		return layers.LinkTypeMetadata[lt].Name
+	}
+	return fmt.Sprintf("type %d", real)
+}
+
+// resolutionName names a pcapng timestamp resolution, such as "microsecond".
+func resolutionName(r pcapgo.NgResolution) string {
+	if r.Binary() {
+		return fmt.Sprintf("1/2^%d s", r.Exponent())
+	}
+	switch r.Exponent() {
+	case 0:
+		return "second"
+	case 3:
+		return "millisecond"
+	case 6:
+		return "microsecond"
+	case 9:
+		return "nanosecond"
+	}
+	return fmt.Sprintf("1/10^%d s", r.Exponent())
 }

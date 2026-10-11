@@ -170,6 +170,7 @@ func newRootCmdWith(startServer func(addr string, a *auth.Service) error) *cobra
 
 			res := analyzer.AnalyzeWithIssues(packets, "all", notes...) // already filtered
 			res.FileName = args[0]
+			res.Metadata = stats.Metadata
 
 			if csvPrefix != "" {
 				written, err := exportCSV(csvPrefix, res)

@@ -56,6 +56,26 @@ slowest flows, recommendations and a compact count of issues by kind. The JSON
 output holds every issue in full, including the individual events behind
 aggregated issues (`occurrences`).
 
+For pcapng files, the header of the report also shows what the file says about
+its creation: the capturing application and operating system, the hardware and
+the interfaces (name, link type, snap length, timestamp resolution), for
+example:
+
+```
+ TRIAGE REPORT  |  Health Score: 80/100 (DEGRADED)
+========================================================================
+ Captured with: Dumpcap (Wireshark) 3.4.9 on Linux 5.10.0-kali3-amd64
+ Hardware:      Intel(R) Core(TM) i7-9750H CPU @ 2.60GHz (with SSE4.2)
+ Interfaces:    eth0 (Ethernet, snaplen 262144, nanosecond timestamps)
+```
+
+Interfaces with identical settings are listed once, and at most three are
+shown (a merged capture can hold hundreds; the rest are counted). The JSON
+output, the web UI's API answer and the report all carry the same information
+under `metadata` (`capture_tool`, `os`, `hardware`, `interfaces`); classic pcap
+files have none, and fields the file leaves out are omitted. The text comes
+from the file, so control characters are replaced and long values are cut.
+
 **Verbose packet table** (`-v`): print every packet that is analyzed before the
 summary.
 
