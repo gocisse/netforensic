@@ -105,9 +105,16 @@ func newRootCmd() *cobra.Command {
 			if truncated != nil {
 				notes = append(notes, analyzer.TruncatedCaptureIssue(packets))
 			}
+
+			// Every filter is applied here, once. The result is the only
+			// packet list that the table, the follow views and the analysis
+			// ever see, so none of them can show traffic the others dropped.
 			total := len(packets)
-			packets = filter.apply(packets)
-			if filter.active() && len(packets) == 0 && total > 0 {
+			filtered := filter.apply(packets)
+			filtered, _ = analyzer.FilterService(filtered, service) // service was validated above
+			packets = filtered
+			filtersActive := filter.active() || service != "all"
+			if filtersActive && len(packets) == 0 && total > 0 {
 				fmt.Fprintf(cmd.ErrOrStderr(), "warning: no packets match the filters (%d packets in the capture)\n", total)
 			}
 
@@ -118,12 +125,12 @@ func newRootCmd() *cobra.Command {
 				return followPackets(cmd.OutOrStdout(), packets, followPkts)
 			}
 
-			res := analyzer.AnalyzeWithIssues(packets, service, notes...)
+			res := analyzer.AnalyzeWithIssues(packets, "all", notes...) // already filtered
 			res.FileName = args[0]
 
 			if output == "json" {
 				if verbose { // keep stdout valid JSON
-					if err := printPacketTable(cmd.ErrOrStderr(), packets); err != nil {
+					if err := printVerbose(cmd.ErrOrStderr(), packets, filtersActive); err != nil {
 						return fmt.Errorf("write packet table: %w", err)
 					}
 				}
@@ -139,10 +146,9 @@ func newRootCmd() *cobra.Command {
 				return fmt.Errorf("write triage report: %w", err)
 			}
 			if verbose {
-				if err := printPacketTable(cmd.OutOrStdout(), packets); err != nil {
+				if err := printVerbose(cmd.OutOrStdout(), packets, filtersActive); err != nil {
 					return fmt.Errorf("write packet table: %w", err)
 				}
-				fmt.Fprintln(cmd.OutOrStdout())
 			}
 			fmt.Fprintf(cmd.OutOrStdout(), "Analyzed %d packets in %d flows, found %d issues in %s\n",
 				res.TotalPackets, res.TotalFlows, len(res.Issues), res.Duration)

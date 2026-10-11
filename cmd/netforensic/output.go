@@ -100,3 +100,18 @@ func printIssueSummary(w io.Writer, issues []models.Issue) {
 		fmt.Fprintf(w, "  %*dx [%s] %s: %s\n", width, g.count, g.severity, g.category, g.title)
 	}
 }
+
+// printVerbose prints the packet table followed by a blank line, or, when
+// filters removed every packet, a message saying so instead of an empty table.
+func printVerbose(w io.Writer, packets []models.PacketInfo, filtersActive bool) error {
+	if len(packets) == 0 && filtersActive {
+		_, err := fmt.Fprintln(w, "0 packets matched the specified filters")
+		fmt.Fprintln(w)
+		return err
+	}
+	if err := printPacketTable(w, packets); err != nil {
+		return err
+	}
+	fmt.Fprintln(w)
+	return nil
+}

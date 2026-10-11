@@ -28,11 +28,10 @@ func Analyze(packets []models.PacketInfo, service string) *models.AnalysisResult
 func AnalyzeWithIssues(packets []models.PacketInfo, service string, extra ...models.Issue) *models.AnalysisResult {
 	start := time.Now()
 
-	if port, matchAll, ok := parseService(service); !ok {
-		packets = nil
-	} else if !matchAll {
-		packets = filterByPort(packets, port)
-	}
+	// Callers that print or follow packets should filter with FilterService
+	// first and pass the result here, so that what they show is exactly what
+	// is analyzed; filtering again is harmless.
+	packets, _ = FilterService(packets, service)
 
 	flows := aggregateFlows(packets)
 	flows, perfIssues := applyPerformanceMetrics(packets, flows)
@@ -82,6 +81,30 @@ func parseService(service string) (port uint16, matchAll bool, ok bool) {
 		return 0, false, false
 	}
 	return uint16(n), false, true
+}
+
+// FilterService keeps the packets that belong to service: "all" keeps
+// everything, "dns" keeps packets to or from port 53 and any packet that
+// carries a DNS message, "http" is port 80, "tls" and "https" are port 443,
+// and a number is that port. It reports false, with no packets, if service
+// is not recognized.
+func FilterService(packets []models.PacketInfo, service string) ([]models.PacketInfo, bool) {
+	port, matchAll, ok := parseService(service)
+	switch {
+	case !ok:
+		return nil, false
+	case matchAll:
+		return packets, true
+	case strings.EqualFold(service, "dns"):
+		var out []models.PacketInfo
+		for _, p := range packets {
+			if p.SrcPort == port || p.DstPort == port || p.DNSQueryName != "" {
+				out = append(out, p)
+			}
+		}
+		return out, true
+	}
+	return filterByPort(packets, port), true
 }
 
 // filterByPort keeps packets whose source or destination port equals port.

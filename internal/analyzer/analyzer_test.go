@@ -305,3 +305,62 @@ func TestListFlowsAndFollowSeparateReusedPorts(t *testing.T) {
 	_, err = Follow(packets, "1.1.1.1:5000-2.2.2.2:80#3")
 	assert.Error(t, err)
 }
+
+func TestFilterService(t *testing.T) {
+	mk := func(proto models.Protocol, sport, dport uint16, dns string) models.PacketInfo {
+		return models.PacketInfo{Protocol: proto, SrcPort: sport, DstPort: dport, DNSQueryName: dns}
+	}
+	var pkts []models.PacketInfo
+	pkts = []models.PacketInfo{
+		mk(models.ProtocolTCP, 40000, 80, ""),         // 0 http
+		mk(models.ProtocolTCP, 443, 40001, ""),        // 1 tls, from the server
+		mk(models.ProtocolUDP, 40002, 53, ""),         // 2 dns by port
+		mk(models.ProtocolUDP, 53, 40002, "a.com"),    // 3 dns response
+		mk(models.ProtocolUDP, 5353, 5353, "x.local"), // 4 multicast DNS: a DNS message on another port
+		mk(models.ProtocolICMP, 0, 0, ""),             // 5
+		mk(models.ProtocolTCP, 40003, 8080, ""),       // 6
+	}
+	for i := range pkts {
+		pkts[i].Size = i + 1 // identifies the packet
+	}
+	tests := []struct {
+		service string
+		want    []int
+		ok      bool
+	}{
+		{"all", []int{0, 1, 2, 3, 4, 5, 6}, true},
+		{"", []int{0, 1, 2, 3, 4, 5, 6}, true},
+		{"http", []int{0}, true},
+		{"80", []int{0}, true},
+		{"tls", []int{1}, true},
+		{"https", []int{1}, true},
+		{"443", []int{1}, true},
+		{"dns", []int{2, 3, 4}, true},
+		{"DNS", []int{2, 3, 4}, true},
+		{"53", []int{2, 3}, true}, // a plain port number is just a port
+		{"8080", []int{6}, true},
+		{"25", nil, true},
+		{"gopher", nil, false},
+		{"99999", nil, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.service, func(t *testing.T) {
+			got, ok := FilterService(pkts, tt.service)
+			assert.Equal(t, tt.ok, ok)
+			var idx []int
+			for _, g := range got {
+				idx = append(idx, g.Size-1)
+			}
+			assert.Equal(t, tt.want, idx)
+		})
+	}
+	got, _ := FilterService(nil, "dns")
+	assert.Empty(t, got)
+
+	// the analyzer applies the same filter, so analysis and display agree
+	for _, svc := range []string{"dns", "443", "all"} {
+		filtered, _ := FilterService(pkts, svc)
+		assert.Equal(t, len(filtered), Analyze(pkts, svc).TotalPackets, svc)
+		assert.Equal(t, len(filtered), Analyze(filtered, "all").TotalPackets, svc)
+	}
+}
