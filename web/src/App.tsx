@@ -1,9 +1,9 @@
-import Analyzer from './Analyzer'
 import { AuthProvider } from './auth/AuthProvider'
 import { useAuth } from './auth/useAuth'
-import DashboardLayout from './components/DashboardLayout'
 import ForcedPasswordChange from './components/ForcedPasswordChange'
 import LoginPage from './components/LoginPage'
+import DashboardLayout from './layout/DashboardLayout'
+import Analyzer from './pages/Analyzer'
 
 /**
  * Decides what the user sees: the sign-in page without a session, the forced

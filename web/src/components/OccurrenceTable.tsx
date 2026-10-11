@@ -84,7 +84,7 @@ export default function OccurrenceTable({ issue, occurrences }: Props) {
       <button
         type="button"
         onClick={() => toggleSort(key)}
-        className="flex items-center gap-1 text-left font-semibold uppercase tracking-wide hover:text-slate-900"
+        className="flex items-center gap-1 text-left font-semibold uppercase tracking-wide hover:text-gray-900"
         aria-label={`Sort by ${label}`}
       >
         {label}
@@ -96,8 +96,8 @@ export default function OccurrenceTable({ issue, occurrences }: Props) {
   }
 
   return (
-    <div data-testid="occurrence-table" className="mt-3 rounded-lg border border-slate-200 bg-white">
-      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 px-3 py-2">
+    <div data-testid="occurrence-table" className="mt-3 rounded-xl border border-gray-200 bg-white">
+      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-gray-200 px-3 py-2">
         <input
           type="search"
           value={filter}
@@ -107,9 +107,9 @@ export default function OccurrenceTable({ issue, occurrences }: Props) {
           }}
           placeholder={`Filter by ${subjectLabel(issue).toLowerCase()}…`}
           aria-label={`Filter by ${subjectLabel(issue).toLowerCase()}`}
-          className="w-64 rounded-md border border-slate-300 px-2 py-1 text-sm focus:border-indigo-500 focus:outline-none"
+          className="w-64 h-9 rounded-lg border border-gray-300 px-3 text-theme-sm focus:border-brand-300 focus:outline-hidden focus:ring-3 focus:ring-brand-500/10"
         />
-        <span data-testid="occurrence-count" className="text-xs text-slate-500">
+        <span data-testid="occurrence-count" className="text-theme-xs text-gray-500">
           {filter.trim()
             ? `Showing ${rows.length.toLocaleString()} of ${occurrences.length.toLocaleString()}`
             : `${occurrences.length.toLocaleString()} ${occurrences.length === 1 ? 'event' : 'events'}`}
@@ -118,7 +118,7 @@ export default function OccurrenceTable({ issue, occurrences }: Props) {
 
       <div
         role="row"
-        className={`grid ${columns} gap-3 border-b border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-500`}
+        className={`grid ${columns} gap-3 border-b border-gray-200 bg-gray-50 px-3 py-2 text-theme-xs text-gray-500`}
       >
         {heading('time', 'Time (UTC)')}
         {hasProtocol && heading('protocol', 'Protocol')}
@@ -136,7 +136,7 @@ export default function OccurrenceTable({ issue, occurrences }: Props) {
         aria-label="Occurrences"
       >
         {rows.length === 0 ? (
-          <p className="px-3 py-2 text-sm text-slate-500">No events match the filter.</p>
+          <p className="px-3 py-2 text-theme-sm text-gray-500">No events match the filter.</p>
         ) : (
           <div style={{ height: rows.length * ROW_HEIGHT, position: 'relative' }}>
             {visible.map((o, i) => (
@@ -145,9 +145,9 @@ export default function OccurrenceTable({ issue, occurrences }: Props) {
                 role="row"
                 data-testid="occurrence-row"
                 style={{ position: 'absolute', top: (first + i) * ROW_HEIGHT, height: ROW_HEIGHT, left: 0, right: 0 }}
-                className={`grid ${columns} items-center gap-3 px-3 text-sm even:bg-slate-50/60`}
+                className={`grid ${columns} items-center gap-3 px-3 text-sm even:bg-gray-50/60`}
               >
-                <span className="whitespace-nowrap font-mono text-xs text-slate-600">{formatTime(o.time)}</span>
+                <span className="whitespace-nowrap font-mono text-xs text-gray-600">{formatTime(o.time)}</span>
                 {hasProtocol && (
                   <span data-testid="occurrence-protocol">
                     {o.protocol && (
@@ -157,11 +157,11 @@ export default function OccurrenceTable({ issue, occurrences }: Props) {
                     )}
                   </span>
                 )}
-                <span className="truncate font-mono text-xs text-slate-900" title={o.subject}>
+                <span className="truncate font-mono text-xs text-gray-900" title={o.subject}>
                   {o.subject}
                 </span>
                 {hasValue && (
-                  <span className="whitespace-nowrap text-right font-mono text-xs text-slate-700">{formatValue(o)}</span>
+                  <span className="whitespace-nowrap text-right font-mono text-xs text-gray-700">{formatValue(o)}</span>
                 )}
               </div>
             ))}

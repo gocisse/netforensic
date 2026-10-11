@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { ChevronDownIcon, LockIcon, LogoutIcon } from '../icons'
 
 interface Props {
   username: string
@@ -6,7 +7,7 @@ interface Props {
   onLogout: () => void
 }
 
-/** The user's dropdown in the navigation bar: change password and sign out. */
+/** The user's dropdown in the top bar: change password and sign out. */
 export default function UserMenu({ username, onChangePassword, onLogout }: Props) {
   const [open, setOpen] = useState(false)
   const root = useRef<HTMLDivElement>(null)
@@ -27,7 +28,7 @@ export default function UserMenu({ username, onChangePassword, onLogout }: Props
     }
   }, [open])
 
-  const item = 'block w-full px-4 py-2 text-left text-sm text-slate-700 hover:bg-slate-50'
+  const item = 'flex w-full items-center gap-3 rounded-lg px-3 py-2 text-left text-theme-sm font-medium text-gray-700 hover:bg-gray-100 hover:text-gray-900'
   return (
     <div ref={root} className="relative" data-testid="user-menu">
       <button
@@ -36,40 +37,46 @@ export default function UserMenu({ username, onChangePassword, onLogout }: Props
         aria-haspopup="menu"
         aria-expanded={open}
         data-testid="user-menu-button"
-        className="flex items-center gap-2 rounded-lg px-2 py-1.5 hover:bg-slate-100"
+        className="flex items-center gap-3 rounded-lg px-1 py-1 text-gray-700 hover:bg-gray-100"
       >
-        <span aria-hidden="true" className="flex h-8 w-8 items-center justify-center rounded-full bg-indigo-100 text-sm font-semibold uppercase text-indigo-700">
+        <span aria-hidden="true" className="flex h-11 w-11 items-center justify-center rounded-full bg-brand-50 text-base font-semibold uppercase text-brand-600">
           {username.charAt(0) || '?'}
         </span>
-        <span className="text-sm font-medium text-slate-700">{username}</span>
-        <span aria-hidden="true" className="text-xs text-slate-400">
-          ▾
-        </span>
+        <span className="hidden text-theme-sm font-medium sm:block">{username}</span>
+        <ChevronDownIcon className={`hidden h-5 w-5 text-gray-500 transition-transform sm:block ${open ? 'rotate-180' : ''}`} />
       </button>
       {open && (
-        <div role="menu" className="absolute right-0 z-40 mt-2 w-48 overflow-hidden rounded-lg border border-slate-200 bg-white py-1 shadow-lg">
-          <button
-            type="button"
-            role="menuitem"
-            className={item}
-            onClick={() => {
-              setOpen(false)
-              onChangePassword()
-            }}
-          >
-            Change Password
-          </button>
-          <button
-            type="button"
-            role="menuitem"
-            className={`${item} border-t border-slate-100`}
-            onClick={() => {
-              setOpen(false)
-              onLogout()
-            }}
-          >
-            Logout
-          </button>
+        <div role="menu" className="absolute right-0 z-99999 mt-2 w-64 rounded-2xl border border-gray-200 bg-white p-3 shadow-theme-lg">
+          <div className="px-3 pb-3">
+            <span className="block text-theme-sm font-medium text-gray-700">{username}</span>
+            <span className="mt-0.5 block text-theme-xs text-gray-500">Signed in</span>
+          </div>
+          <div className="border-t border-gray-200 pt-2">
+            <button
+              type="button"
+              role="menuitem"
+              className={item}
+              onClick={() => {
+                setOpen(false)
+                onChangePassword()
+              }}
+            >
+              <LockIcon className="h-5 w-5 text-gray-500" />
+              Change Password
+            </button>
+            <button
+              type="button"
+              role="menuitem"
+              className={item}
+              onClick={() => {
+                setOpen(false)
+                onLogout()
+              }}
+            >
+              <LogoutIcon className="h-5 w-5 text-gray-500" />
+              Logout
+            </button>
+          </div>
         </div>
       )}
     </div>

@@ -4,9 +4,11 @@ export interface Tone {
   label: string
   /** Tailwind classes for the score number. */
   text: string
-  /** Tailwind classes for the ring/background. */
+  /** Tailwind classes for the border and the tint of the card. */
   ring: string
   bg: string
+  /** The color of the accent bar. */
+  bar: string
 }
 
 /**
@@ -16,22 +18,23 @@ export interface Tone {
 export function healthTone(score: number): Tone {
   const label =
     score >= 90 ? 'Healthy' : score >= 70 ? 'Degraded' : score >= 40 ? 'Unhealthy' : score >= 0 ? 'Critical' : 'Catastrophic'
-  if (score >= 80) return { label, text: 'text-green-700', ring: 'border-green-500', bg: 'bg-green-50' }
-  if (score >= 40) return { label, text: 'text-yellow-700', ring: 'border-yellow-500', bg: 'bg-yellow-50' }
-  return { label, text: 'text-red-700', ring: 'border-red-500', bg: 'bg-red-50' }
+  if (score >= 80) return { label, text: 'text-success-600', ring: 'border-success-200', bg: 'bg-success-25', bar: 'bg-success-500' }
+  if (score >= 40) return { label, text: 'text-warning-600', ring: 'border-warning-200', bg: 'bg-warning-25', bar: 'bg-warning-500' }
+  return { label, text: 'text-error-600', ring: 'border-error-200', bg: 'bg-error-25', bar: 'bg-error-500' }
 }
 
 const SEVERITY_RANK: Record<Severity, number> = { CRITICAL: 3, ERROR: 2, WARNING: 1, INFO: 0 }
 
-export function severityBadge(severity: Severity): string {
+/** The badge color of a severity. */
+export function severityColor(severity: Severity): 'error' | 'warning' | 'info' {
   switch (severity) {
     case 'CRITICAL':
     case 'ERROR':
-      return 'bg-red-100 text-red-800'
+      return 'error'
     case 'WARNING':
-      return 'bg-yellow-100 text-yellow-800'
+      return 'warning'
     default:
-      return 'bg-sky-100 text-sky-800'
+      return 'info'
   }
 }
 
@@ -105,24 +108,38 @@ export function formatMs(ms: number): string {
   return ms > 0 ? `${ms.toLocaleString(undefined, { maximumFractionDigits: 1 })} ms` : '–'
 }
 
-/** Tailwind classes for a protocol's color. */
+/** Tailwind classes for a protocol's color: a dot, a bar segment and a badge. */
 export function protocolColor(protocol: string): { dot: string; bar: string; badge: string } {
   switch (protocol) {
     case 'TCP':
-      return { dot: 'bg-indigo-500', bar: 'bg-indigo-500', badge: 'bg-indigo-50 text-indigo-800' }
+      return { dot: 'bg-brand-500', bar: 'bg-brand-500', badge: 'bg-brand-50 text-brand-600' }
     case 'UDP':
-      return { dot: 'bg-sky-500', bar: 'bg-sky-500', badge: 'bg-sky-50 text-sky-800' }
+      return { dot: 'bg-blue-light-500', bar: 'bg-blue-light-500', badge: 'bg-blue-light-50 text-blue-light-700' }
     case 'ICMP':
-      return { dot: 'bg-amber-500', bar: 'bg-amber-500', badge: 'bg-amber-50 text-amber-800' }
+      return { dot: 'bg-warning-500', bar: 'bg-warning-500', badge: 'bg-warning-50 text-warning-700' }
     case 'ARP':
-      return { dot: 'bg-emerald-500', bar: 'bg-emerald-500', badge: 'bg-emerald-50 text-emerald-800' }
+      return { dot: 'bg-success-500', bar: 'bg-success-500', badge: 'bg-success-50 text-success-700' }
     case 'DNS':
-      return { dot: 'bg-violet-500', bar: 'bg-violet-500', badge: 'bg-violet-50 text-violet-800' }
+      return { dot: 'bg-violet-500', bar: 'bg-violet-500', badge: 'bg-violet-50 text-violet-700' }
     case 'HTTP':
-      return { dot: 'bg-rose-500', bar: 'bg-rose-500', badge: 'bg-rose-50 text-rose-800' }
+      return { dot: 'bg-pink-500', bar: 'bg-pink-500', badge: 'bg-pink-50 text-pink-700' }
     case 'TLS':
-      return { dot: 'bg-teal-500', bar: 'bg-teal-500', badge: 'bg-teal-50 text-teal-800' }
+      return { dot: 'bg-teal-500', bar: 'bg-teal-500', badge: 'bg-teal-50 text-teal-700' }
     default:
-      return { dot: 'bg-slate-400', bar: 'bg-slate-400', badge: 'bg-slate-100 text-slate-700' }
+      return { dot: 'bg-gray-400', bar: 'bg-gray-400', badge: 'bg-gray-100 text-gray-700' }
   }
+}
+
+/** Whether an issue describes the capture file, not the traffic. */
+export function isCaptureNote(issue: Issue): boolean {
+  return (NOTE_TITLES as readonly string[]).includes(issue.title)
+}
+
+/** The capture file extensions the analyzer accepts. */
+export const ACCEPTED_EXTENSIONS = ['.pcap', '.pcapng']
+
+/** Returns true if the file name ends in a supported capture extension. */
+export function isCaptureFile(file: File): boolean {
+  const name = file.name.toLowerCase()
+  return ACCEPTED_EXTENSIONS.some((ext) => name.endsWith(ext))
 }
