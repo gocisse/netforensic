@@ -1,6 +1,7 @@
 import { Navigate, Route, Routes } from 'react-router-dom'
 import { AnalysisProvider } from './analysis/AnalysisProvider'
 import { AuthProvider } from './auth/AuthProvider'
+import { DashboardModeProvider } from './mode/DashboardModeProvider'
 import { useAuth } from './auth/useAuth'
 import ForcedPasswordChange from './components/ForcedPasswordChange'
 import LoginPage from './components/LoginPage'
@@ -56,7 +57,9 @@ export default function App() {
   return (
     <AuthProvider>
       <AnalysisProvider>
-        <Gate />
+        <DashboardModeProvider>
+          <Gate />
+        </DashboardModeProvider>
       </AnalysisProvider>
     </AuthProvider>
   )

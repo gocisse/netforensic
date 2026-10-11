@@ -8,6 +8,7 @@ import ProtocolNav from '../components/ProtocolNav'
 import Alert from '../components/ui/Alert'
 import { Card } from '../components/ui/Card'
 import { toParams } from '../filters/model'
+import { useDashboardMode } from '../mode/useDashboardMode'
 import { useFilters } from '../filters/useFilters'
 import { isCaptureNote } from '../format'
 import { PROTOCOL_PAGES, involvesProtocol } from '../protocols'
@@ -28,6 +29,7 @@ export default function AnalysisLayout() {
   const cache = useAnalysisCache()
   const filters = useFilters()
   const { search } = useLocation()
+  const { mode } = useDashboardMode()
 
   const cached = cache.current?.id === id ? cache.current.result : null
   const [fetched, setFetched] = useState<{ id: string; result: AnalysisResult } | null>(null)
@@ -127,7 +129,7 @@ export default function AnalysisLayout() {
           Analyze another capture
         </Link>
       </div>
-      <ProtocolNav id={id} counts={counts} search={search} />
+      {mode === 'senior' && <ProtocolNav id={id} counts={counts} search={search} />}
       <Outlet context={view} />
     </div>
   )

@@ -61,6 +61,7 @@ func AnalyzeWithIssues(packets []models.PacketInfo, service string, extra ...mod
 	}
 	annotateProtocols(issues, classes)
 	annotateGuidance(issues, flows)
+	annotateFlowStatus(flows, issues)
 	talkers := topTalkers(flows, topTalkerCount)
 	if talkers == nil {
 		talkers = []models.Flow{}

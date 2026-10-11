@@ -219,6 +219,12 @@ type Flow struct {
 	// TCPStream is the flow's Wireshark stream index (tcp.stream), for TCP
 	// flows of captures in which the numbering can be worked out reliably.
 	TCPStream *int `json:"tcp_stream,omitempty"`
+	// Status says how the flow fared: "working", "slow" (a warning-level issue,
+	// a retransmission or a slow handshake, first response or round trip) or
+	// "broken" (an issue of error severity). IssueCount is the number of
+	// issues that name the flow.
+	Status     string `json:"status,omitempty"`
+	IssueCount int    `json:"issue_count,omitempty"`
 	// AppProtocol is the application protocol recognized in the flow (DNS,
 	// HTTP or TLS), or empty.
 	AppProtocol string    `json:"app_protocol,omitempty"`

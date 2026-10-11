@@ -1,5 +1,6 @@
 import { CloseIcon, MenuIcon, MoonIcon, SunIcon } from '../icons'
 import { useTheme } from '../hooks/useTheme'
+import ModeToggle from '../components/ModeToggle'
 import Logo from '../components/Logo'
 import UserMenu from '../components/UserMenu'
 
@@ -18,7 +19,8 @@ export default function Topbar({ username, mobileOpen, onToggleSidebar, onChange
   return (
     <header className="sticky top-0 z-40 flex w-full border-b border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900">
       <div className="flex w-full items-center justify-between gap-3 px-4 py-3 md:px-6">
-        <div className="flex items-center gap-3">
+        <div className="flex min-w-0 items-center gap-2 sm:gap-3">
+          <ModeToggle />
           <button
             type="button"
             onClick={onToggleSidebar}
@@ -30,7 +32,7 @@ export default function Topbar({ username, mobileOpen, onToggleSidebar, onChange
             {mobileOpen && <CloseIcon className="h-5 w-5 xl:hidden" />}
             <MenuIcon className={mobileOpen ? 'hidden h-5 w-5 xl:block' : 'h-5 w-5'} />
           </button>
-          <div className="xl:hidden">
+          <div className="hidden sm:block xl:hidden">
             <Logo />
           </div>
         </div>

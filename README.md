@@ -414,6 +414,14 @@ login. The server listens on all interfaces for an address like `:8181`; use
 Uploads are kept in a private temporary file that is deleted as soon as the
 analysis is done.
 
+### Junior and Senior mode
+
+The top bar has a "Mode: Junior / Senior" switch (default Senior, remembered in the browser).
+Senior shows the technical detail: Wireshark filters, raw counts and the protocol pages.
+Junior explains the same results in plain words: a traffic-light health summary, issue cards
+with "What this means" and numbered "What to do" steps, grouped protocol bars and a
+From / To / What / Status table (Working, Slow, Broken). Switching is instant.
+
 ### Developing the UI
 
 Run the server (`./netforensic --web :8181`) and, in `web/`, `npm run dev`. The

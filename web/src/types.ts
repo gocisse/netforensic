@@ -85,6 +85,10 @@ export interface Flow {
   ttfb_ms: number
   avg_rtt_ms: number
   max_rtt_ms: number
+  /** How the flow fared: working, slow (warnings, retransmissions, slow timings) or broken (an error-level issue). */
+  status?: 'working' | 'slow' | 'broken'
+  /** The number of issues that name the flow. */
+  issue_count?: number
 }
 
 /** The share of a capture that one protocol accounts for. */
