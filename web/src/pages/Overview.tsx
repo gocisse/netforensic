@@ -1,20 +1,25 @@
-import { useCallback, useMemo } from 'react'
+import { useCallback, useMemo, useState } from 'react'
 import { useAnalysisView } from '../analysis/view'
 import ActiveFilters from '../components/ActiveFilters'
 import CaptureAlerts from '../components/analyzer/CaptureAlerts'
 import HealthCard from '../components/analyzer/HealthCard'
 import IssueGroups from '../components/analyzer/IssueGroups'
 import FilterPanel from '../components/FilterPanel'
+import FlowDetailsModal from '../components/FlowDetailsModal'
 import FlowTable from '../components/FlowTable'
 import ProtocolDistribution from '../components/ProtocolDistribution'
 import TopTalkers from '../components/TopTalkers'
 import { Card, CardHeader } from '../components/ui/Card'
 import { displayIP } from '../filters/ip'
+import { problemFlows } from '../flowTimeline'
+import type { Flow } from '../types'
 import type { Affected } from '../wireshark'
 import { flowBytes, matchFlow, matchIssue, protocolStats, topTalkers, worstTiming } from '../filters/match'
 
 /** How many flows the flow tables list. */
 const FLOWS_SHOWN = 10
+/** How many flows with issues the Bad Traffic tab lists. */
+const PROBLEM_FLOWS_SHOWN = 25
 
 /** The Bad Traffic tab: the verdict, the filters, the composition, the issues grouped by severity and the flows. */
 export default function Overview() {
@@ -49,6 +54,11 @@ export default function Overview() {
         .slice(0, FLOWS_SHOWN),
     [flows],
   )
+
+  const troubled = useMemo(() => problemFlows(flows, PROBLEM_FLOWS_SHOWN), [flows])
+  const troubledTotal = useMemo(() => flows.filter((f) => (f.issue_count ?? 0) > 0).length, [flows])
+  const [selected, setSelected] = useState<Flow | null>(null)
+  const closeFlow = useCallback(() => setSelected(null), [])
 
   const exportDisabledReason = result.analysis_id ? undefined : 'The server did not keep this analysis, so it cannot export it. Analyze the capture again.'
   const { set: setFilters } = filters
@@ -94,6 +104,16 @@ export default function Overview() {
         <IssueGroups issues={issues} filtered={filters.active} onClearFilters={filters.reset} captureName={captureName} onFilterTo={filterTo} />
       </section>
 
+      <FlowTable
+        testId="problem-flows"
+        title={troubledTotal > troubled.length ? `Flows with issues (${troubled.length} of ${troubledTotal.toLocaleString()} shown)` : 'Flows with issues'}
+        flows={troubled}
+        onSelect={setSelected}
+        filtered={filters.active}
+        onClearFilters={filters.reset}
+        emptyMessage={filters.active ? 'None of the flows that match your filters has an issue.' : 'No flow has an issue. Open the Good Traffic tab to see them all.'}
+      />
+
       <p className="text-theme-sm font-medium text-gray-600 dark:text-gray-400" data-testid="flow-summary">
         Showing {flows.length.toLocaleString()} of {result.total_flows.toLocaleString()} {result.total_flows === 1 ? 'flow' : 'flows'}
         {flows.length > FLOWS_SHOWN && <span className="font-normal text-gray-500 dark:text-gray-400"> (the {FLOWS_SHOWN} busiest and slowest are listed)</span>}
@@ -102,6 +122,7 @@ export default function Overview() {
         testId="busiest-flows"
         title={applied.protocol === 'All' ? 'Busiest flows' : `Busiest ${applied.protocol} flows`}
         flows={busiest}
+        onSelect={setSelected}
         filtered={filters.active}
         onClearFilters={filters.reset}
         emptyMessage={filters.active ? 'No flows match your filters.' : 'No flows were found in this capture.'}
@@ -110,6 +131,7 @@ export default function Overview() {
         testId="slowest-flows"
         title={applied.protocol === 'All' ? 'Slowest flows' : `Slowest ${applied.protocol} flows`}
         flows={slowest}
+        onSelect={setSelected}
         filtered={filters.active}
         onClearFilters={filters.reset}
         emptyMessage={filters.active ? 'None of the flows that match your filters have measurable timing metrics.' : 'No flows with measurable timing metrics.'}
@@ -125,6 +147,7 @@ export default function Overview() {
           </ol>
         </Card>
       )}
+      {selected && <FlowDetailsModal flow={selected} issues={reportable} captureName={captureName} onClose={closeFlow} onFilterTo={filterTo} />}
     </div>
   )
 }

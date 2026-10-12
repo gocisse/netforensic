@@ -92,7 +92,7 @@ func AnalyzeWithProgress(packets []models.PacketInfo, service string, progress f
 	if talkers == nil {
 		talkers = []models.Flow{}
 	}
-	return &models.AnalysisResult{
+	res := &models.AnalysisResult{
 		TotalPackets:  len(packets),
 		TotalFlows:    len(flows),
 		AnalysisTime:  start,
@@ -107,6 +107,10 @@ func AnalyzeWithProgress(packets []models.PacketInfo, service string, progress f
 		GoodTrafficFilter: GoodTrafficFilter(issues),
 		HealthyFlows:      HealthyFlows(flows),
 	}
+	// Timelines go on the full flow list only, after the summaries above
+	// copied their flows, so that the other lists stay small.
+	annotateTimelines(packets, res.Flows, issues)
+	return res
 }
 
 // parseService maps a service filter to a port. matchAll is true for "all";

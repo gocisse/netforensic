@@ -281,6 +281,20 @@ for it. The master filter drops the packets the issue filters match, which is
 not always whole flows; issue filters that are not well formed are left out of
 it. A capture with issues opens on Bad Traffic, a clean one on Good Traffic.
 
+**TCP stream timeline.** Below the issues, Bad Traffic lists the flows that have
+issues (worst first); the flow tables there are clickable (**View Details**) and
+open a dialog with the flow's TCP stream number (`tcp.stream`), packet count and
+duration, buttons to copy its Wireshark filter (`tcp.stream eq N`) or a `tshark`
+command, a **timeline** and the issue cards that are about this flow. The
+timeline (`timeline` in the flow JSON of `/api/analyze`, TCP flows with issues
+only) lists the connection start (SYN), the handshake, the first data, what went
+wrong (timeout and fast retransmits, repeated SYNs, zero windows and their
+reopening, RSTs) and how it ended (FIN), in time order, with the **first
+problem** marked. Normal events are green, warnings yellow, errors red. A flow
+with very many retransmissions lists the first ten and summarizes the rest. A
+flow whose packets show no problem of their own (for example a slow response)
+shows the issues that name it instead.
+
 **Pages.** The upload page is at `/`. When the analysis is ready the page
 moves to `/analysis/<id>` (which opens `/analysis/<id>/bad` or `/good`, see
 above), and beneath Bad Traffic a navigation bar offers one page

@@ -2,6 +2,7 @@ import { formatBytes, formatMs, protocolColor } from '../format'
 import type { Flow } from '../types'
 import { Card, CardHeader } from './ui/Card'
 import { ArrowBothIcon, ArrowLeftIcon, ArrowRightIcon } from '../icons'
+import Badge from './ui/Badge'
 import Button from './ui/Button'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from './ui/Table'
 
@@ -49,10 +50,12 @@ export interface Props {
   filtered?: boolean
   /** Clears the filters; offered by the empty message when they are set. */
   onClearFilters?: () => void
+  /** Makes the rows clickable and adds an Issues column and a Timeline button: called with the flow to show. */
+  onSelect?: (flow: Flow) => void
 }
 
 /** A table of flows with their protocol, volume and timing. */
-export default function FlowTable({ title, flows, emptyMessage, testId, filtered = false, onClearFilters }: Props) {
+export default function FlowTable({ title, flows, emptyMessage, testId, filtered = false, onClearFilters, onSelect }: Props) {
   return (
     <Card data-testid={testId}>
       <CardHeader title={title} />
@@ -84,9 +87,38 @@ export default function FlowTable({ title, flows, emptyMessage, testId, filtered
             </TableHeader>
             <TableBody>
               {flows.map((f) => (
-                <TableRow key={f.id} data-testid="flow-row">
+                <TableRow
+                  key={f.id}
+                  data-testid="flow-row"
+                  className={onSelect ? 'cursor-pointer' : ''}
+                  onClick={onSelect ? () => onSelect(f) : undefined}
+                >
                   <TableCell className="max-w-xs text-gray-800 dark:text-white/90">
                     <FlowEndpoints flow={f} />
+                    {onSelect && (
+                      <div className="mt-2 flex items-center gap-2">
+                        {f.issue_count ? (
+                          <span data-testid="flow-issue-count">
+                            <Badge color={f.status === 'broken' ? 'error' : 'warning'}>
+                              {f.issue_count} {f.issue_count === 1 ? 'issue' : 'issues'}
+                            </Badge>
+                          </span>
+                        ) : null}
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="px-3 py-1 text-xs"
+                          data-testid="flow-details-open"
+                          aria-label={`View details and timeline of ${f.id}`}
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            onSelect(f)
+                          }}
+                        >
+                          View Details
+                        </Button>
+                      </div>
+                    )}
                     {f.app_protocol === 'DHCPv6' && (
                       <div className="truncate text-theme-xs text-gray-500 dark:text-gray-400" title={f.dhcpv6_client_id} data-testid="dhcpv6-details">
                         {f.dhcpv6_message_types}

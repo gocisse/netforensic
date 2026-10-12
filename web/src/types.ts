@@ -50,6 +50,18 @@ export interface Diagnosis {
   recommendations: string[]
 }
 
+/** One entry in the timeline of a TCP flow that has issues. */
+export interface FlowEvent {
+  /** When it happened (RFC 3339). */
+  timestamp: string
+  /** Short name, for example "Timeout Retransmit". INFO events are normal; WARNING and ERROR are problems. */
+  event: string
+  severity: Severity
+  description: string
+  /** Set on the first problem of the flow: the moment it started to go wrong. */
+  first_issue?: boolean
+}
+
 export interface Flow {
   id: string
   src_ip: string
@@ -89,6 +101,8 @@ export interface Flow {
   status?: 'working' | 'slow' | 'broken'
   /** The number of issues that name the flow. */
   issue_count?: number
+  /** Key events of a TCP flow with issues, in time order. */
+  timeline?: FlowEvent[]
 }
 
 /** The share of a capture that one protocol accounts for. */

@@ -9,6 +9,8 @@ export default {
   content: ['./index.html', './src/**/*.{js,ts,jsx,tsx}'],
   theme: {
     extend: {
+      // Dialogs, menus and the command palette sit above the sticky header and the verdict card (z-30).
+      zIndex: { 99999: '99999' },
       fontFamily: {
         // System fonts: the UI loads nothing from the network.
         sans: ['ui-sans-serif', 'system-ui', '-apple-system', 'Segoe UI', 'Roboto', 'Helvetica Neue', 'Arial', 'sans-serif'],

@@ -388,3 +388,50 @@ func TestAnalysisWhereEveryFlowHasIssues(t *testing.T) {
 	assert.Empty(t, a.Healthy, "every flow is named by an issue")
 	assert.True(t, strings.HasPrefix(a.GoodTrafficFilter, "!("), a.GoodTrafficFilter)
 }
+
+func TestFlowsCarryTimelines(t *testing.T) {
+	h := authed(t, testAssets, maxUploadBytes)
+
+	t.Run("zero-window stall that ends in a reset", func(t *testing.T) {
+		a := uploadLab(t, h, lab7, "Lab-7.pcapng")
+		require.Len(t, a.Flows, 1)
+		f := a.Flows[0]
+		require.NotNil(t, f.TCPStream)
+		var got []string
+		first := ""
+		for _, e := range f.Timeline {
+			got = append(got, e.Event)
+			if e.FirstIssue {
+				first = e.Event
+			}
+		}
+		assert.Equal(t, []string{"Connection start (SYN)", "Handshake complete", "First data transfer", "Zero Window", "Window reopened", "Connection reset (RST)"}, got)
+		assert.Equal(t, "Zero Window", first)
+
+		rec := get(h, "/api/analysis/"+a.AnalysisID, nil)
+		assert.Contains(t, rec.Body.String(), `"timeline":[{"timestamp":`, "reloaded analyses keep the timelines")
+	})
+
+	t.Run("retransmissions", func(t *testing.T) {
+		a := uploadLab(t, h, lab3, "Lab-3.pcapng")
+		n := 0
+		for _, f := range a.Flows {
+			if f.Retransmits == 0 {
+				continue
+			}
+			n++
+			require.NotEmpty(t, f.Timeline, f.ID)
+			marked := 0
+			for _, e := range f.Timeline {
+				if e.FirstIssue {
+					marked++
+				}
+			}
+			assert.Equal(t, 1, marked, f.ID)
+		}
+		assert.Positive(t, n, "the capture has flows with retransmissions")
+		for _, f := range a.Healthy {
+			assert.Empty(t, f.Timeline, "healthy flows carry no timeline")
+		}
+	})
+}

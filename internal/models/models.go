@@ -271,6 +271,11 @@ type Flow struct {
 	// RetransmitEvents lists every retransmission in capture order.
 	RetransmitEvents []RetransmitEvent `json:"-"`
 
+	// Timeline lists the key events of a TCP flow that has issues, in
+	// time order: how the connection started, when data first flowed, what
+	// went wrong and how it ended. Empty for other flows.
+	Timeline []FlowEvent `json:"timeline,omitempty"`
+
 	// Performance metrics for TCP flows, in milliseconds. Zero means the
 	// metric could not be measured from the capture.
 	SetupTimeMs float64 `json:"setup_time_ms"` // SYN to final handshake ACK
@@ -302,6 +307,16 @@ type RetransmitEvent struct {
 	Time time.Time
 	Seq  uint32
 	Kind string // "fast", "timeout" or "other"
+}
+
+// FlowEvent is one entry in the timeline of a flow.
+type FlowEvent struct {
+	Timestamp   time.Time `json:"timestamp"`
+	Event       string    `json:"event"`    // short name, e.g. "Timeout Retransmit"
+	Severity    Severity  `json:"severity"` // INFO for normal events, WARNING or ERROR for problems
+	Description string    `json:"description"`
+	// FirstIssue marks the first problem in the flow: the moment it started to go wrong.
+	FirstIssue bool `json:"first_issue,omitempty"`
 }
 
 // Issue represents a detected forensic problem or anomaly.
