@@ -281,6 +281,14 @@ for it. The master filter drops the packets the issue filters match, which is
 not always whole flows; issue filters that are not well formed are left out of
 it. A capture with issues opens on Bad Traffic, a clean one on Good Traffic.
 
+**Long lists.** The issue lists (Bad Traffic and the protocol pages), the Good
+Traffic table and the events of an issue are virtual: only the rows in view
+(plus a few more on each side) are in the page, so a capture with hundreds of
+thousands of issues scrolls as smoothly as one with a few. Cards may be any
+height, and expanding one pushes the rest down. A button at the corner takes
+you back to the top once you have scrolled down. The list uses
+`@tanstack/react-virtual` (MIT).
+
 **TCP stream timeline.** Below the issues, Bad Traffic lists the flows that have
 issues (worst first); the flow tables there are clickable (**View Details**) and
 open a dialog with the flow's TCP stream number (`tcp.stream`), packet count and

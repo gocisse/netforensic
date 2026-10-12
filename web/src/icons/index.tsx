@@ -146,6 +146,11 @@ export const ArrowLeftIcon = (p: IconProps) => (
   </Icon>
 )
 
+export const ArrowUpIcon = (p: IconProps) => (
+  <Icon {...p}>
+    <path d="M12 19V5M6 11l6-6 6 6" />
+  </Icon>
+)
 export const ArrowBothIcon = (p: IconProps) => (
   <Icon {...p}>
     <path d="M3 12h18M7 8l-4 4 4 4M17 8l4 4-4 4" />

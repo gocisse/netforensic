@@ -1,11 +1,10 @@
 import { useMemo } from 'react'
-import { useDrawn } from '../../hooks/useDrawn'
 import { useSearchParams } from 'react-router-dom'
 import { useAnalysisView } from '../../analysis/view'
 import ActiveFilters from '../../components/ActiveFilters'
 import IssueCard from '../../components/analyzer/IssueCard'
 import AllClear from '../../components/ui/AllClear'
-import DrawMore from '../../components/ui/DrawMore'
+import VirtualList from '../../components/ui/VirtualList'
 import Button from '../../components/ui/Button'
 import { Card } from '../../components/ui/Card'
 import { displayIP } from '../../filters/ip'
@@ -53,7 +52,6 @@ export default function ProtocolPage({ info }: { info: ProtocolPageInfo }) {
         .sort((a, b) => severityRank(b.severity) - severityRank(a.severity) || (b.count ?? 1) - (a.count ?? 1) || a.title.localeCompare(b.title)),
     [forProtocol, parsed, q],
   )
-  const drawn = useDrawn(issues)
   const severities = SEVERITIES.filter((s) => s !== 'CRITICAL' || forProtocol.some((i) => i.severity === 'CRITICAL'))
   const narrowed = filters.active || q.trim() !== ''
 
@@ -148,12 +146,14 @@ export default function ProtocolPage({ info }: { info: ProtocolPageInfo }) {
           </div>
         </Card>
       ) : (
-        <div className="space-y-4">
-          {issues.slice(0, drawn.count).map((issue) => (
-            <IssueCard key={issue.id} issue={issue} captureName={captureName} onFilterTo={filterTo} />
-          ))}
-          <DrawMore drawn={drawn} />
-        </div>
+        <VirtualList
+          items={issues}
+          getKey={(i) => i.id}
+          estimate={() => 440}
+          gap={16}
+          testId="issue-list"
+          render={(issue) => <IssueCard issue={issue} captureName={captureName} onFilterTo={filterTo} />}
+        />
       )}
     </div>
   )

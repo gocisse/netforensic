@@ -1,10 +1,11 @@
+import { useVirtualizer } from '@tanstack/react-virtual'
 import { useMemo, useRef, useState } from 'react'
 import { formatTime, formatValue, protocolColor, subjectLabel } from '../format'
 import type { Issue, Occurrence } from '../types'
 
-const ROW_HEIGHT = 32 // px; fixed, so that rows can be windowed
+const ROW_HEIGHT = 32 // px; every row has this height
 const VIEWPORT_HEIGHT = 320 // px
-const OVERSCAN = 8 // rows rendered beyond the visible ones
+const OVERSCAN = 8 // rows drawn beyond the visible ones
 
 type SortKey = 'time' | 'protocol' | 'subject' | 'value'
 type SortDir = 'asc' | 'desc'
@@ -35,7 +36,6 @@ interface Props {
 export default function OccurrenceTable({ issue, occurrences }: Props) {
   const [filter, setFilter] = useState('')
   const [sort, setSort] = useState<{ key: SortKey; dir: SortDir } | null>(null)
-  const [scrollTop, setScrollTop] = useState(0)
   const viewport = useRef<HTMLDivElement>(null)
 
   // Columns follow the data: a value column only if some event has a value.
@@ -57,14 +57,11 @@ export default function OccurrenceTable({ issue, occurrences }: Props) {
     return [...list].sort((a, b) => sign * compare(a, b, sort.key))
   }, [occurrences, filter, sort])
 
-  const first = Math.max(0, Math.floor(scrollTop / ROW_HEIGHT) - OVERSCAN)
-  const last = Math.min(rows.length, Math.ceil((scrollTop + VIEWPORT_HEIGHT) / ROW_HEIGHT) + OVERSCAN)
-  const visible = rows.slice(first, last)
+  // The React Compiler is not used here, so the library's un-memoizable functions are fine.
+  // oxlint-disable-next-line react/incompatible-library
+  const virtualizer = useVirtualizer({ count: rows.length, getScrollElement: () => viewport.current, estimateSize: () => ROW_HEIGHT, overscan: OVERSCAN })
 
-  const backToTop = () => {
-    setScrollTop(0)
-    if (viewport.current) viewport.current.scrollTop = 0
-  }
+  const backToTop = () => virtualizer.scrollToOffset(0)
 
   const toggleSort = (key: SortKey) => {
     // First click: the natural order for the column (largest value first,
@@ -128,7 +125,6 @@ export default function OccurrenceTable({ issue, occurrences }: Props) {
 
       <div
         ref={viewport}
-        onScroll={(e) => setScrollTop(e.currentTarget.scrollTop)}
         style={{ height: Math.min(VIEWPORT_HEIGHT, Math.max(rows.length, 1) * ROW_HEIGHT) }}
         className="overflow-y-auto"
         role="rowgroup"
@@ -138,33 +134,36 @@ export default function OccurrenceTable({ issue, occurrences }: Props) {
         {rows.length === 0 ? (
           <p className="px-3 py-2 text-theme-sm text-gray-500 dark:text-gray-400">No events match the filter.</p>
         ) : (
-          <div style={{ height: rows.length * ROW_HEIGHT, position: 'relative' }}>
-            {visible.map((o, i) => (
-              <div
-                key={first + i}
-                role="row"
-                data-testid="occurrence-row"
-                style={{ position: 'absolute', top: (first + i) * ROW_HEIGHT, height: ROW_HEIGHT, left: 0, right: 0 }}
-                className={`grid ${columns} items-center gap-3 px-3 text-sm even:bg-gray-50/60 dark:even:bg-white/[0.03]`}
-              >
-                <span className="whitespace-nowrap font-mono text-xs text-gray-600 dark:text-gray-400">{formatTime(o.time)}</span>
-                {hasProtocol && (
-                  <span data-testid="occurrence-protocol">
-                    {o.protocol && (
-                      <span className={`rounded px-2 py-1 text-xs font-medium ${protocolColor(o.protocol).badge}`}>
-                        {o.protocol}
-                      </span>
-                    )}
+          <div style={{ height: virtualizer.getTotalSize(), position: 'relative' }}>
+            {virtualizer.getVirtualItems().map((v) => {
+              const o = rows[v.index]
+              return (
+                <div
+                  key={v.index}
+                  role="row"
+                  data-testid="occurrence-row"
+                  style={{ position: 'absolute', top: v.start, height: ROW_HEIGHT, left: 0, right: 0 }}
+                  className={`grid ${columns} items-center gap-3 px-3 text-sm even:bg-gray-50/60 dark:even:bg-white/[0.03]`}
+                >
+                  <span className="whitespace-nowrap font-mono text-xs text-gray-600 dark:text-gray-400">{formatTime(o.time)}</span>
+                  {hasProtocol && (
+                    <span data-testid="occurrence-protocol">
+                      {o.protocol && (
+                        <span className={`rounded px-2 py-1 text-xs font-medium ${protocolColor(o.protocol).badge}`}>
+                          {o.protocol}
+                        </span>
+                      )}
+                    </span>
+                  )}
+                  <span className="truncate font-mono text-xs text-gray-900 dark:text-white" title={o.subject}>
+                    {o.subject}
                   </span>
-                )}
-                <span className="truncate font-mono text-xs text-gray-900 dark:text-white" title={o.subject}>
-                  {o.subject}
-                </span>
-                {hasValue && (
-                  <span className="whitespace-nowrap text-right font-mono text-xs text-gray-700 dark:text-gray-300">{formatValue(o)}</span>
-                )}
-              </div>
-            ))}
+                  {hasValue && (
+                    <span className="whitespace-nowrap text-right font-mono text-xs text-gray-700 dark:text-gray-300">{formatValue(o)}</span>
+                  )}
+                </div>
+              )
+            })}
           </div>
         )}
       </div>

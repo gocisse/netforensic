@@ -1,4 +1,5 @@
-import { useDeferredValue, useMemo, useState } from 'react'
+import { useWindowVirtualizer } from '@tanstack/react-virtual'
+import { useDeferredValue, useMemo, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useAnalysisView } from '../analysis/view'
 import { copyText } from '../clipboard'
@@ -7,14 +8,15 @@ import AllClear from '../components/ui/AllClear'
 import Button from '../components/ui/Button'
 import { Card, CardHeader } from '../components/ui/Card'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../components/ui/Table'
+import { useScrollMargin } from '../hooks/useScrollMargin'
 import { formatBytes, formatMs, protocolColor } from '../format'
 import { matchesGoodSearch, sortGoodFlows } from '../goodTraffic'
 import type { GoodSortKey, SortDir } from '../goodTraffic'
 import { useToast } from '../toast/useToast'
 import { tsharkCommand } from '../wireshark'
 
-/** How many rows are drawn at first and added by each "Show more". */
-const PAGE = 200
+/** The height of a row in px before it is drawn and measured. */
+const ROW_HEIGHT = 57
 
 const COLUMNS: { key: GoodSortKey; label: string; right?: boolean }[] = [
   { key: 'flow', label: 'Flow' },
@@ -37,15 +39,22 @@ export default function GoodTraffic() {
   const [query, setQuery] = useState('')
   const deferred = useDeferredValue(query)
   const [sort, setSort] = useState<{ key: GoodSortKey; dir: SortDir }>({ key: 'packets', dir: 'desc' })
-  const [limit, setLimit] = useState(PAGE)
   const master = result.good_traffic_filter ?? ''
 
   const rows = useMemo(() => sortGoodFlows(healthy.filter((f) => matchesGoodSearch(f, deferred)), sort.key, sort.dir), [healthy, deferred, sort])
-  const shown = rows.slice(0, limit)
+
+  // The table is virtual: only the rows in view are drawn, between two spacer rows that keep the scroll height.
+  const bodyTop = useRef<HTMLTableRowElement>(null)
+  const scrollMargin = useScrollMargin(bodyTop)
+  // The React Compiler is not used here, so the library's un-memoizable functions are fine.
+  // oxlint-disable-next-line react/incompatible-library
+  const virtualizer = useWindowVirtualizer({ count: rows.length, estimateSize: () => ROW_HEIGHT, getItemKey: (i) => rows[i].id, overscan: 8, scrollMargin })
+  const drawn = virtualizer.getVirtualItems()
+  const padTop = drawn.length > 0 ? drawn[0].start - scrollMargin : 0
+  const padBottom = drawn.length > 0 ? virtualizer.getTotalSize() - (drawn[drawn.length - 1].end - scrollMargin) : 0
 
   const toggleSort = (key: GoodSortKey) => {
     setSort((s) => (s.key === key ? { key, dir: s.dir === 'asc' ? 'desc' : 'asc' } : { key, dir: key === 'flow' || key === 'protocol' ? 'asc' : 'desc' }))
-    setLimit(PAGE)
   }
   const copy = async (text: string, done: string) => {
     if (await copyText(text)) toast.show(done)
@@ -90,7 +99,6 @@ export default function GoodTraffic() {
             value={query}
             onChange={(e) => {
               setQuery(e.target.value)
-              setLimit(PAGE)
             }}
             placeholder="An address, a port or a protocol"
             autoComplete="off"
@@ -121,41 +129,43 @@ export default function GoodTraffic() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {shown.map((f) => (
-                  <TableRow key={f.id} data-testid="good-flow-row">
-                    <TableCell className="max-w-xs text-gray-800 dark:text-white/90">
-                      <FlowEndpoints flow={f} />
-                    </TableCell>
-                    <TableCell className="text-right tabular-nums">{f.packet_count.toLocaleString()}</TableCell>
-                    <TableCell className="whitespace-nowrap text-right tabular-nums">{formatBytes(f.bytes_sent + f.bytes_recv)}</TableCell>
-                    <TableCell className="whitespace-nowrap text-right tabular-nums">{formatMs(f.avg_rtt_ms)}</TableCell>
-                    <TableCell className="whitespace-nowrap">
-                      <span className={`rounded px-2 py-1 text-theme-xs font-medium ${protocolColor(f.protocol).badge}`}>{f.protocol || 'Other'}</span>
-                      {f.app_protocol && <span className={`ml-1 rounded px-2 py-1 text-theme-xs font-medium ${protocolColor(f.app_protocol).badge}`}>{f.app_protocol}</span>}
-                    </TableCell>
-                    <TableCell className="whitespace-nowrap" data-testid="good-status" data-status={f.status === 'slow' ? 'slow' : 'ok'}>
-                      {f.status === 'slow' ? (
-                        <span className="font-medium text-warning-700 dark:text-warning-400" title="No issue names this flow, but its timings are slow">
-                          Slow
-                        </span>
-                      ) : (
-                        <span className="font-semibold text-success-700 dark:text-success-400" title="No issue names this flow">
-                          <span aria-hidden="true">✓</span>
-                          <span className="sr-only">Healthy</span>
-                        </span>
-                      )}
-                    </TableCell>
-                  </TableRow>
-                ))}
+                <tr ref={bodyTop} aria-hidden="true" style={{ height: padTop }}>
+                  <td colSpan={COLUMNS.length} className="p-0" />
+                </tr>
+                {drawn.map((v) => {
+                  const f = rows[v.index]
+                  return (
+                    <TableRow key={f.id} data-testid="good-flow-row" data-index={v.index} ref={virtualizer.measureElement}>
+                      <TableCell className="max-w-xs text-gray-800 dark:text-white/90">
+                        <FlowEndpoints flow={f} />
+                      </TableCell>
+                      <TableCell className="text-right tabular-nums">{f.packet_count.toLocaleString()}</TableCell>
+                      <TableCell className="whitespace-nowrap text-right tabular-nums">{formatBytes(f.bytes_sent + f.bytes_recv)}</TableCell>
+                      <TableCell className="whitespace-nowrap text-right tabular-nums">{formatMs(f.avg_rtt_ms)}</TableCell>
+                      <TableCell className="whitespace-nowrap">
+                        <span className={`rounded px-2 py-1 text-theme-xs font-medium ${protocolColor(f.protocol).badge}`}>{f.protocol || 'Other'}</span>
+                        {f.app_protocol && <span className={`ml-1 rounded px-2 py-1 text-theme-xs font-medium ${protocolColor(f.app_protocol).badge}`}>{f.app_protocol}</span>}
+                      </TableCell>
+                      <TableCell className="whitespace-nowrap" data-testid="good-status" data-status={f.status === 'slow' ? 'slow' : 'ok'}>
+                        {f.status === 'slow' ? (
+                          <span className="font-medium text-warning-700 dark:text-warning-400" title="No issue names this flow, but its timings are slow">
+                            Slow
+                          </span>
+                        ) : (
+                          <span className="font-semibold text-success-700 dark:text-success-400" title="No issue names this flow">
+                            <span aria-hidden="true">✓</span>
+                            <span className="sr-only">Healthy</span>
+                          </span>
+                        )}
+                      </TableCell>
+                    </TableRow>
+                  )
+                })}
+                <tr aria-hidden="true" style={{ height: padBottom }}>
+                  <td colSpan={COLUMNS.length} className="p-0" />
+                </tr>
               </TableBody>
             </Table>
-          </div>
-        )}
-        {rows.length > shown.length && (
-          <div className="border-t border-gray-100 dark:border-gray-800 p-4 text-center">
-            <Button variant="outline" size="sm" data-testid="good-show-more" onClick={() => setLimit((l) => l + PAGE)}>
-              Show {Math.min(PAGE, rows.length - shown.length).toLocaleString()} more ({(rows.length - shown.length).toLocaleString()} not shown)
-            </Button>
           </div>
         )}
       </Card>

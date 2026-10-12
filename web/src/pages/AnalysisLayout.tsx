@@ -5,6 +5,7 @@ import { useAnalysisCache } from '../analysis/useAnalysisCache'
 import type { AnalysisView } from '../analysis/view'
 import { useAuth } from '../auth/useAuth'
 import ProtocolNav from '../components/ProtocolNav'
+import ScrollToTop from '../components/ScrollToTop'
 import SummaryBar from '../components/SummaryBar'
 import TrafficTabs from '../components/TrafficTabs'
 import Alert from '../components/ui/Alert'
@@ -153,6 +154,7 @@ export default function AnalysisLayout() {
       <div key={pathname} className="animate-fade-in" data-testid="page-transition">
         <Outlet context={view} />
       </div>
+      <ScrollToTop />
     </div>
   )
 }

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { groupBySeverity, impactOf } from './issueView.ts'
+import { groupBySeverity, impactOf, issueRows } from './issueView.ts'
 import type { Issue } from './types.ts'
 
 const issue = (over: Partial<Issue>): Issue => ({ id: 'x', severity: 'INFO', category: 'TCP', title: 't', description: '', timestamp: '', ...over })
@@ -35,4 +35,22 @@ test('impactOf', async (t) => {
   for (const c of cases) {
     await t.test(c.name, () => assert.equal(impactOf(c.issue), c.want))
   }
+})
+
+test('issueRows puts a heading before the issues of each group', () => {
+  const rows = issueRows(groupBySeverity([issue({ id: 'w', severity: 'WARNING' }), issue({ id: 'e1', severity: 'ERROR', count: 5 }), issue({ id: 'e2', severity: 'ERROR' })]))
+  assert.deepEqual(
+    rows.map((r) => (r.kind === 'heading' ? `${r.severity}:${r.count}` : r.issue.id)),
+    ['ERROR:2', 'e1', 'e2', 'WARNING:1', 'w'],
+  )
+  assert.deepEqual(issueRows([]), [])
+})
+
+test('groupBySeverity is linear: a hundred thousand issues group at once', () => {
+  const many = Array.from({ length: 100_000 }, (_, n) => issue({ id: String(n), severity: n % 2 ? 'ERROR' : 'WARNING', count: n % 7 }))
+  const t0 = performance.now()
+  const groups = groupBySeverity(many)
+  assert.equal(groups.length, 2)
+  assert.equal(groups[0].issues.length + groups[1].issues.length, 100_000)
+  assert.ok(performance.now() - t0 < 2000, 'grouping took too long')
 })

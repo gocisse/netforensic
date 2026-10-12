@@ -15,13 +15,30 @@ export interface SeverityGroup {
  */
 export function groupBySeverity(issues: Issue[]): SeverityGroup[] {
   const by = new Map<Severity, Issue[]>()
-  for (const i of issues) by.set(i.severity, [...(by.get(i.severity) ?? []), i])
+  for (const i of issues) {
+    const list = by.get(i.severity)
+    if (list) list.push(i)
+    else by.set(i.severity, [i])
+  }
   return [...by.entries()]
     .sort((a, b) => severityRank(b[0]) - severityRank(a[0]))
     .map(([severity, list]) => ({
       severity,
       issues: list.sort((a, b) => (b.count ?? 1) - (a.count ?? 1) || a.title.localeCompare(b.title)),
     }))
+}
+
+/** One row of the virtual list of issues: a severity heading or an issue card. */
+export type IssueRow = { kind: 'heading'; severity: Severity; count: number } | { kind: 'issue'; issue: Issue }
+
+/** Flattens severity groups into the rows of one list: each group's heading, then its issues. */
+export function issueRows(groups: SeverityGroup[]): IssueRow[] {
+  const rows: IssueRow[] = []
+  for (const g of groups) {
+    rows.push({ kind: 'heading', severity: g.severity, count: g.issues.length })
+    for (const issue of g.issues) rows.push({ kind: 'issue', issue })
+  }
+  return rows
 }
 
 const plural = (n: number, one: string, many = `${one}s`) => `${n.toLocaleString()} ${n === 1 ? one : many}`

@@ -1,12 +1,12 @@
 import { useMemo } from 'react'
-import { useDrawn } from '../../hooks/useDrawn'
-import { groupBySeverity } from '../../issueView'
+import { groupBySeverity, issueRows } from '../../issueView'
+import type { IssueRow } from '../../issueView'
 import type { Issue } from '../../types'
 import type { Affected } from '../../wireshark'
 import AllClear from '../ui/AllClear'
 import Button from '../ui/Button'
 import { Card } from '../ui/Card'
-import DrawMore from '../ui/DrawMore'
+import VirtualList from '../ui/VirtualList'
 import IssueCard from './IssueCard'
 
 const HEADING: Record<string, string> = {
@@ -25,12 +25,17 @@ interface Props {
   onFilterTo: (endpoints: Affected['endpoints']) => void
 }
 
-/** The issues as cards, grouped by severity (the worst first), or the reason there are none. */
-export default function IssueGroups({ issues, filtered, onClearFilters, captureName, onFilterTo }: Props) {
-  const groups = useMemo(() => groupBySeverity(issues), [issues])
+const ROW_GAP = 16
+const rowKey = (r: IssueRow) => (r.kind === 'heading' ? `heading-${r.severity}` : r.issue.id)
+const rowHeight = (r: IssueRow) => (r.kind === 'heading' ? 48 : 440)
 
-  const drawn = useDrawn(issues)
-  const count = drawn.count
+/**
+ * The issues as cards, grouped by severity (the worst first), or the reason
+ * there are none. The list is virtual: only the cards in view are drawn, so
+ * hundreds of thousands of issues scroll as smoothly as a few.
+ */
+export default function IssueGroups({ issues, filtered, onClearFilters, captureName, onFilterTo }: Props) {
+  const rows = useMemo(() => issueRows(groupBySeverity(issues)), [issues])
 
   if (issues.length === 0) {
     return filtered ? (
@@ -51,23 +56,28 @@ export default function IssueGroups({ issues, filtered, onClearFilters, captureN
   }
 
   return (
-    <div className="space-y-8" data-testid="issue-groups">
-      {groups.map((g, gi) => {
-        const before = groups.slice(0, gi).reduce((n, x) => n + x.issues.length, 0)
-        const visible = g.issues.slice(0, Math.max(0, count - before))
-        if (visible.length === 0) return null
-        return (
-          <section key={g.severity} aria-labelledby={`sev-${g.severity}`} data-testid="severity-group" data-severity={g.severity} className="space-y-4">
-            <h3 id={`sev-${g.severity}`} className={`text-theme-sm font-semibold uppercase tracking-wide ${HEADING[g.severity]}`}>
-              {g.severity} · {g.issues.length.toLocaleString()} {g.issues.length === 1 ? 'issue' : 'issues'}
+    <div data-testid="issue-groups">
+      <VirtualList
+        items={rows}
+        getKey={rowKey}
+        estimate={rowHeight}
+        gap={ROW_GAP}
+        testId="issue-list"
+        render={(row) =>
+          row.kind === 'heading' ? (
+            <h3
+              id={`sev-${row.severity}`}
+              data-testid="severity-heading"
+              data-severity={row.severity}
+              className={`pt-4 text-theme-sm font-semibold uppercase tracking-wide ${HEADING[row.severity]}`}
+            >
+              {row.severity} · {row.count.toLocaleString()} {row.count === 1 ? 'issue' : 'issues'}
             </h3>
-            {visible.map((issue) => (
-              <IssueCard key={issue.id} issue={issue} captureName={captureName} onFilterTo={onFilterTo} />
-            ))}
-          </section>
-        )
-      })}
-      <DrawMore drawn={drawn} />
+          ) : (
+            <IssueCard issue={row.issue} captureName={captureName} onFilterTo={onFilterTo} />
+          )
+        }
+      />
     </div>
   )
 }
