@@ -6,7 +6,7 @@ load-testing netforensic. It is not part of the `netforensic` binary.
 ## Usage
 
 ```bash
-go run ./cmd/gencap -packets 1500000 -out /tmp/big.pcap
+go run ./cmd/gencap -packets 1500000 -duration 5m -out /tmp/big.pcap
 ./netforensic /tmp/big.pcap
 ```
 
@@ -15,6 +15,7 @@ go run ./cmd/gencap -packets 1500000 -out /tmp/big.pcap
 | `-out` | (required) | classic pcap file to write (Ethernet, microsecond timestamps) |
 | `-packets` | `1500000` | number of packets to write |
 | `-seed` | `1` | random seed; the same seed and size give a byte-identical file |
+| `-duration` | (off) | spread the packets over about this long, for example `5m` (default: packets about 100 microseconds apart, so 1.5 million span about 2.5 minutes) |
 
 ## What it generates
 

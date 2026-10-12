@@ -492,6 +492,34 @@ Run the server (`./netforensic --web :8181`) and, in `web/`, `npm run dev`. The
 Vite dev server proxies `/api` to `localhost:8181`. After changing the UI, run
 `npm run build` and rebuild the Go binary to embed the new files.
 
+## Performance on large captures
+
+`cmd/gencap` writes a deterministic synthetic capture of any size (see its README);
+`go run ./cmd/gencap -packets 1500000 -duration 5m -out big.pcap` makes 1.5 million packets over five
+minutes: 115,000 flows, 171,000 issues, 307 MB. `NETFORENSIC_PERF_PACKETS=1500000 go test -run
+TestLargeCaptureStreamsProgressively -v ./internal/server` uploads it and checks that the analysis streams
+to the page in chunks (the test is skipped with `-short` and defaults to 100,000 packets).
+
+Measured on an Apple M-series laptop, the web UI in headless Chrome:
+
+| | before | after |
+|---|---|---|
+| Analysis done, result starts to flow | 48 s | 36 s |
+| Health score and root cause on screen | 82 s | 36.7 s |
+| All issues and flows loaded | 82 s | 38.6 s |
+| Longest block of the page's main thread | 11.5 s | 0.6 s |
+| Blocked main-thread time in all | 32 s (123 blocks) | 1.2 s (4 blocks) |
+| Server peak memory (RSS) | 2.6 GB | 2.25 GB |
+| CLI run (read, analyze, report) | 42.8 s | 31.5 s |
+| Analysis kept in memory | 443 MB | 284 MB |
+| Page heap after loading | 383 MB | 381 MB |
+
+"Before" is the code of commit `1d4b9c9`. The server takes 30 s of that for the analysis
+itself (a million and a half packets are decoded and 171,000 issues found), which streaming does not shorten;
+what it removes is the half minute that followed, when the page received, parsed and grouped one document of
+170 MB. The memory the analysis needs is dominated by the packets themselves, about 1 KB each
+(`models.PacketInfo`); see the comment on `analyzer.AnalyzeWithProgress` for where the rest went.
+
 ## Known limitations
 
 - **Tunnels.** GRE, IP-in-IP and IPv6-in-IPv4 (6in4) tunnels are decapsulated:

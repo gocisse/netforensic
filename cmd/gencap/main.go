@@ -164,22 +164,34 @@ func (g *generator) icmpConversation() *conversation {
 	return c
 }
 
+// gap is the time between two packets: 20 to 180 microseconds, or, if
+// duration is set, 20% to 180% of the mean gap that spreads total packets over
+// duration (conversation delays come on top, so the capture runs a little longer).
+func gap(r *rand.Rand, duration time.Duration, total int) time.Duration {
+	if duration <= 0 || total <= 0 {
+		return time.Duration(20+r.Intn(160)) * time.Microsecond
+	}
+	mean := duration / time.Duration(total)
+	return mean/5 + time.Duration(r.Int63n(int64(mean)*8/5+1))
+}
+
 func main() {
 	packets := flag.Int("packets", 1_500_000, "number of packets to write")
 	out := flag.String("out", "", "output pcap file (required)")
 	seed := flag.Int64("seed", 1, "random seed")
+	duration := flag.Duration("duration", 0, "spread the packets over about this long, for example 5m (default: about 100 microseconds apart)")
 	flag.Parse()
 	if *out == "" {
 		fmt.Fprintln(os.Stderr, "gencap: -out is required")
 		os.Exit(2)
 	}
-	if err := run(*out, *packets, *seed); err != nil {
+	if err := run(*out, *packets, *seed, *duration); err != nil {
 		fmt.Fprintln(os.Stderr, "gencap:", err)
 		os.Exit(1)
 	}
 }
 
-func run(path string, total int, seed int64) error {
+func run(path string, total int, seed int64, duration time.Duration) error {
 	f, err := os.Create(path)
 	if err != nil {
 		return err
@@ -230,7 +242,7 @@ func run(path string, total int, seed int64) error {
 		if c.nextAt.After(now) {
 			now = c.nextAt
 		}
-		now = now.Add(time.Duration(20+r.Intn(160)) * time.Microsecond)
+		now = now.Add(gap(r, duration, total))
 
 		src, dst := c.cli, c.srv
 		sp, dp := c.cport, c.sport
