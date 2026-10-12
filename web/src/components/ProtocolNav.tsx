@@ -4,8 +4,8 @@ import { PROTOCOL_PAGES } from '../protocols'
 interface Props {
   /** The analysis the tabs belong to. */
   id: string
-  /** Issues per protocol, for the badges. */
-  counts: Record<string, number>
+  /** Issues per protocol, for the badges; none while the issues are still arriving. */
+  counts?: Record<string, number>
   /** The query string to carry from page to page, so that the filters follow. */
   search: string
 }
@@ -33,21 +33,23 @@ export default function ProtocolNav({ id, counts, search }: Props) {
           </NavLink>
         </li>
         {PROTOCOL_PAGES.map((p) => {
-          const n = counts[p.protocol] ?? 0
+          const n = counts ? (counts[p.protocol] ?? 0) : -1 // -1: not known yet
           return (
             <li key={p.slug}>
               <NavLink to={{ pathname: `/analysis/${id}/${p.slug}`, search }} data-testid={`nav-${p.slug}`} className={({ isActive }) => tab(isActive, n === 0)}>
                 {({ isActive }) => (
                   <>
                     {p.protocol}
-                    <span
-                      data-testid={`nav-count-${p.slug}`}
-                      className={`rounded-full px-2 py-1 text-theme-xs font-semibold ${
-                        isActive ? 'bg-black/20 text-white' : n > 0 ? 'bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-300' : 'bg-gray-50 dark:bg-gray-800/50 text-gray-500 dark:text-gray-400'
-                      }`}
-                    >
-                      {n}
-                    </span>
+                    {n >= 0 && (
+                      <span
+                        data-testid={`nav-count-${p.slug}`}
+                        className={`rounded-full px-2 py-1 text-theme-xs font-semibold ${
+                          isActive ? 'bg-black/20 text-white' : n > 0 ? 'bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-300' : 'bg-gray-50 dark:bg-gray-800/50 text-gray-500 dark:text-gray-400'
+                        }`}
+                      >
+                        {n}
+                      </span>
+                    )}
                   </>
                 )}
               </NavLink>

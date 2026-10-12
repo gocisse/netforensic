@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { ApiError, SessionExpiredError } from '../api'
-import { useAnalysisCache } from '../analysis/useAnalysisCache'
 import { useAuth } from '../auth/useAuth'
 import CaptureAlerts from '../components/analyzer/CaptureAlerts'
 import AnalyzeProgress from '../components/analyzer/AnalyzeProgress'
@@ -10,8 +9,7 @@ import UploadCard from '../components/analyzer/UploadCard'
 import { AnalysisSkeleton } from '../components/ui/Skeleton'
 import { Card } from '../components/ui/Card'
 import { isCaptureFile } from '../format'
-import type { ApiResult, EmptyResult } from '../types'
-import { isEmptyResult } from '../types'
+import type { EmptyResult } from '../types'
 
 /** The answer for a capture with nothing to analyze: no score, just why. */
 function NothingToAnalyze({ result }: { result: EmptyResult }) {
@@ -37,13 +35,12 @@ function NothingToAnalyze({ result }: { result: EmptyResult }) {
  */
 export default function Analyzer() {
   const { api } = useAuth()
-  const cache = useAnalysisCache()
   const navigate = useNavigate()
   const { search } = useLocation()
   const [file, setFile] = useState<File | null>(null)
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [empty, setEmpty] = useState<ApiResult | null>(null)
+  const [empty, setEmpty] = useState<EmptyResult | null>(null)
   const [progress, setProgress] = useState<Progress>({ loaded: 0, total: 0, stage: '' })
   const inFlight = useRef<AbortController | null>(null)
 
@@ -75,12 +72,12 @@ export default function Analyzer() {
         onUpload: (loaded, total) => setProgress((p) => ({ ...p, loaded, total })),
         onStage: (stage) => setProgress((p) => ({ ...p, stage })),
       })
-      if (isEmptyResult(r) || !r.analysis_id) {
-        setEmpty(r)
+      if ('empty' in r) {
+        setEmpty(r.empty)
         return
       }
-      cache.setCurrent({ id: r.analysis_id, result: r })
-      navigate({ pathname: `/analysis/${r.analysis_id}`, search })
+      // The analysis page loads it, in chunks, from the server that holds it.
+      navigate({ pathname: `/analysis/${r.analysisId}`, search })
     } catch (err) {
       if (controller.signal.aborted || err instanceof SessionExpiredError) return // signed out: the sign-in page explains
       setError(err instanceof ApiError ? err.message : 'Something went wrong while analyzing the capture.')
@@ -105,7 +102,7 @@ export default function Analyzer() {
           <AnalysisSkeleton />
         </>
       )}
-      {!isLoading && empty && isEmptyResult(empty) && <NothingToAnalyze result={empty} />}
+      {!isLoading && empty && <NothingToAnalyze result={empty} />}
       {!isLoading && !empty && (
         <Card>
           <div aria-live="polite" className="px-6 py-8 text-center">

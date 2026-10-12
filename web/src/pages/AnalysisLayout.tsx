@@ -4,6 +4,7 @@ import { ApiError, SessionExpiredError } from '../api'
 import { useAnalysisCache } from '../analysis/useAnalysisCache'
 import type { AnalysisView } from '../analysis/view'
 import { useAuth } from '../auth/useAuth'
+import LoadProgressBar from '../components/analyzer/LoadProgressBar'
 import ProtocolNav from '../components/ProtocolNav'
 import ScrollToTop from '../components/ScrollToTop'
 import SummaryBar from '../components/SummaryBar'
@@ -14,8 +15,6 @@ import { toParams } from '../filters/model'
 import { useFilters } from '../filters/useFilters'
 import { isCaptureNote } from '../format'
 import { PROTOCOL_PAGES, involvesProtocol } from '../protocols'
-import type { AnalysisResult } from '../types'
-import { isEmptyResult } from '../types'
 import { saveBlob } from '../download'
 import { isTyping } from '../shortcuts/isTyping'
 import { useToast } from '../toast/useToast'
@@ -23,10 +22,10 @@ import { useToast } from '../toast/useToast'
 /**
  * The frame of an analysis (/analysis/:id): the file name, a summary, the
  * Bad Traffic / Good Traffic tabs, beneath Bad Traffic the tabs of the
- * protocols, and the page the router picks. It gets
- * the analysis from the cache if the page just uploaded it, else from the
- * server, which keeps the latest ones; the filters live here, so they follow
- * the user from tab to tab.
+ * protocols, and the page the router picks. It asks the analysis provider
+ * for the analysis, which streams it in from the server (the verdict first,
+ * then the issues and the flows) or already has it; the filters live here, so
+ * they follow the user from tab to tab.
  */
 export default function AnalysisLayout() {
   const { id = '' } = useParams()
@@ -36,47 +35,26 @@ export default function AnalysisLayout() {
   const { search, pathname } = useLocation()
   const toast = useToast()
 
-  const cached = cache.current?.id === id ? cache.current.result : null
-  const [fetched, setFetched] = useState<{ id: string; result: AnalysisResult } | null>(null)
-  const [failed, setFailed] = useState<{ id: string; message: string; gone: boolean } | null>(null)
+  const { load } = cache
+  useEffect(() => load(id), [id, load])
+  const loaded = cache.current?.id === id ? cache.current : null
+  const result = loaded?.result ?? null
+  const issuesLoaded = loaded?.issuesDone ?? false
+  const flowsLoaded = loaded?.flowsDone ?? false
+  const failed = cache.error?.id === id ? cache.error : null
   const [exporting, setExporting] = useState(false)
   const [exportError, setExportError] = useState<string | null>(null)
 
-  const { setCurrent } = cache
-  useEffect(() => {
-    if (cached) return
-    const controller = new AbortController()
-    api
-      .getAnalysis(id, controller.signal)
-      .then((r) => {
-        if (controller.signal.aborted) return
-        if (isEmptyResult(r)) {
-          setFailed({ id, message: 'That analysis holds nothing to show.', gone: false })
-          return
-        }
-        setFetched({ id, result: r })
-        setCurrent({ id, result: r })
-      })
-      .catch((err) => {
-        if (controller.signal.aborted || err instanceof SessionExpiredError) return
-        setFailed({
-          id,
-          message: err instanceof ApiError ? err.message : 'The analysis could not be loaded.',
-          gone: err instanceof ApiError && err.status === 404,
-        })
-      })
-    return () => controller.abort()
-  }, [api, id, cached, setCurrent])
-
-  const result = cached ?? (fetched?.id === id ? fetched.result : null)
-
   const flows = useMemo(() => result?.flows ?? [], [result])
   const reportable = useMemo(() => (result ? result.issues.filter((i) => !isCaptureNote(i)) : []), [result])
+  const reportableTotal = result?.counts?.reportable_issues ?? reportable.length
+  // The numbers on the protocol tabs are counted from the issues, so they wait until all are there.
   const counts = useMemo(() => {
+    if (!issuesLoaded) return undefined
     const out: Record<string, number> = {}
     for (const p of PROTOCOL_PAGES) out[p.protocol] = reportable.filter((i) => involvesProtocol(i, p.protocol)).length
     return out
-  }, [reportable])
+  }, [reportable, issuesLoaded])
 
   const { applied } = filters
 
@@ -118,12 +96,12 @@ export default function AnalysisLayout() {
   const view = useMemo<AnalysisView | null>(
     () =>
       result
-        ? { id, result, filters, flows, reportable, captureName: result.file_name, onExport: handleExport, exporting, exportError }
+        ? { id, result, filters, flows, reportable, issuesLoaded, flowsLoaded, reportableTotal, captureName: result.file_name, onExport: handleExport, exporting, exportError }
         : null,
-    [id, result, filters, flows, reportable, handleExport, exporting, exportError],
+    [id, result, filters, flows, reportable, issuesLoaded, flowsLoaded, reportableTotal, handleExport, exporting, exportError],
   )
 
-  if (failed && failed.id === id && !result) {
+  if (failed && !result) {
     return (
       <div className="space-y-4" data-testid="analysis-unavailable">
         <Alert variant={failed.gone ? 'info' : 'error'} role={failed.gone ? 'status' : 'alert'}>
@@ -138,7 +116,7 @@ export default function AnalysisLayout() {
   if (!result || !view) return <AnalysisSkeleton />
 
   return (
-    <div className="space-y-6" data-testid="analysis">
+    <div className="space-y-6" data-testid="analysis" data-loaded={issuesLoaded && flowsLoaded ? 'true' : 'false'}>
       <div className="flex flex-wrap items-center justify-between gap-3">
         <h2 className="min-w-0 truncate text-lg font-semibold text-gray-800 dark:text-white/90" title={result.file_name} data-testid="analysis-file-name">
           {result.file_name}
@@ -147,8 +125,9 @@ export default function AnalysisLayout() {
           Analyze another capture
         </Link>
       </div>
-      <SummaryBar result={result} issues={reportable.length} />
-      <TrafficTabs id={id} issues={reportable.length} goodFlows={(result.healthy_flows ?? []).length} search={search} />
+      <SummaryBar result={result} issues={reportableTotal} />
+      <LoadProgressBar />
+      <TrafficTabs id={id} issues={reportableTotal} goodFlows={result.counts?.healthy_flows ?? (result.healthy_flows ?? []).length} search={search} />
       {!pathname.replace(/\/$/, '').endsWith('/good') && <ProtocolNav id={id} counts={counts} search={search} />}
       {/* keyed by the page, so that a change of tab fades the new page in */}
       <div key={pathname} className="animate-fade-in" data-testid="page-transition">

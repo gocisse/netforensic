@@ -11,6 +11,12 @@ export interface AnalysisView {
   flows: Flow[]
   /** The issues about the traffic: capture notes left out. */
   reportable: Issue[]
+  /** Every issue has arrived: until then `reportable` is the issues so far, and counts made from it are partial. */
+  issuesLoaded: boolean
+  /** Every flow has arrived: until then `flows` is empty. */
+  flowsLoaded: boolean
+  /** The number of issues about the traffic, from the server's first chunk, so that it is right before the issues are all there. */
+  reportableTotal: number
   /** The name of the capture file, for the Wireshark commands. */
   captureName: string
   onExport: () => void

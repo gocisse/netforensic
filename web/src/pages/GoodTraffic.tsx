@@ -5,6 +5,7 @@ import { useAnalysisView } from '../analysis/view'
 import { copyText } from '../clipboard'
 import { FlowEndpoints } from '../components/FlowTable'
 import AllClear from '../components/ui/AllClear'
+import { TableSkeleton } from '../components/ui/Skeleton'
 import Button from '../components/ui/Button'
 import { Card, CardHeader } from '../components/ui/Card'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../components/ui/Table'
@@ -33,7 +34,7 @@ const COLUMNS: { key: GoodSortKey; label: string; right?: boolean }[] = [
  * the issues point at.
  */
 export default function GoodTraffic() {
-  const { result, id, captureName } = useAnalysisView()
+  const { result, id, captureName, flowsLoaded } = useAnalysisView()
   const toast = useToast()
   const healthy = useMemo(() => result.healthy_flows ?? [], [result])
   const [query, setQuery] = useState('')
@@ -61,6 +62,13 @@ export default function GoodTraffic() {
     else toast.show('Could not copy. Select the text and copy it by hand.', 'error')
   }
 
+  if (!flowsLoaded) {
+    return (
+      <div data-testid="good-loading">
+        <TableSkeleton title="Healthy flows" rows={6} testId="skeleton-good-flows" />
+      </div>
+    )
+  }
   if (healthy.length === 0) {
     return (
       <Card>

@@ -4,6 +4,7 @@ import type { IssueRow } from '../../issueView'
 import type { Issue } from '../../types'
 import type { Affected } from '../../wireshark'
 import AllClear from '../ui/AllClear'
+import { TableSkeleton } from '../ui/Skeleton'
 import Button from '../ui/Button'
 import { Card } from '../ui/Card'
 import VirtualList from '../ui/VirtualList'
@@ -23,6 +24,8 @@ interface Props {
   onClearFilters: () => void
   captureName: string
   onFilterTo: (endpoints: Affected['endpoints']) => void
+  /** The issues are still arriving: an empty list is not "all clear" yet. */
+  loading?: boolean
 }
 
 const ROW_GAP = 16
@@ -34,9 +37,12 @@ const rowHeight = (r: IssueRow) => (r.kind === 'heading' ? 48 : 440)
  * there are none. The list is virtual: only the cards in view are drawn, so
  * hundreds of thousands of issues scroll as smoothly as a few.
  */
-export default function IssueGroups({ issues, filtered, onClearFilters, captureName, onFilterTo }: Props) {
+export default function IssueGroups({ issues, filtered, onClearFilters, captureName, onFilterTo, loading = false }: Props) {
   const rows = useMemo(() => issueRows(groupBySeverity(issues)), [issues])
 
+  if (issues.length === 0 && loading) {
+    return <TableSkeleton title="Issues" rows={4} testId="skeleton-issues" />
+  }
   if (issues.length === 0) {
     return filtered ? (
       <Card>

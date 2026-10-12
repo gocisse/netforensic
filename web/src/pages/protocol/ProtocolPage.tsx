@@ -4,6 +4,7 @@ import { useAnalysisView } from '../../analysis/view'
 import ActiveFilters from '../../components/ActiveFilters'
 import IssueCard from '../../components/analyzer/IssueCard'
 import AllClear from '../../components/ui/AllClear'
+import { TableSkeleton } from '../../components/ui/Skeleton'
 import VirtualList from '../../components/ui/VirtualList'
 import Button from '../../components/ui/Button'
 import { Card } from '../../components/ui/Card'
@@ -38,7 +39,7 @@ const SEVERITY_STYLE: Record<string, string> = {
  * affected flow filters to it.
  */
 export default function ProtocolPage({ info }: { info: ProtocolPageInfo }) {
-  const { reportable, filters, captureName } = useAnalysisView()
+  const { reportable, filters, captureName, issuesLoaded } = useAnalysisView()
   const [params, setParams] = useSearchParams()
   const q = params.get('q') ?? ''
 
@@ -117,7 +118,9 @@ export default function ProtocolPage({ info }: { info: ProtocolPageInfo }) {
       </Card>
       <ActiveFilters filters={filters} omit={['proto']} />
 
-      {forProtocol.length === 0 ? (
+      {forProtocol.length === 0 && !issuesLoaded ? (
+        <TableSkeleton title={`${info.protocol} issues`} rows={3} testId="skeleton-issues" />
+      ) : forProtocol.length === 0 ? (
         <Card>
           <AllClear
             testId="protocol-empty"

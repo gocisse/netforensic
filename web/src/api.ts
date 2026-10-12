@@ -1,4 +1,7 @@
-import type { ApiResult } from './types'
+import { parseLines } from './analysis/stream.ts'
+import type { ChunkEvent } from './analysis/stream.ts'
+import type { EmptyResult } from './types'
+import { isEmptyResult } from './types'
 
 /** An error with a message that is fit to show to the user. */
 export class ApiError extends Error {
@@ -25,6 +28,9 @@ interface RequestOptions {
   auth?: boolean
   signal?: AbortSignal
 }
+
+/** What an upload comes to: an analysis to fetch, or an explanation that there was nothing to analyze. */
+export type AnalyzeOutcome = { analysisId: string } | { empty: EmptyResult }
 
 /** What analyzeCapture reports while it works. */
 export interface AnalyzeOptions {
@@ -125,18 +131,21 @@ export class ApiClient {
    * Uploads a capture for analysis. `onUpload` is told how many bytes have
    * gone out; once the upload is done, `onStage` is told each step the server
    * starts ("reading", "classifying", "detecting", "reporting"), as the server
-   * streams them. The promise ends with the analysis.
+   * streams them. The promise ends with the ID of the stored analysis, which
+   * streamAnalysis then fetches, or with the explanation for a capture that
+   * holds nothing to analyze.
    */
-  analyzeCapture(file: File, options: AnalyzeOptions = {}): Promise<ApiResult> {
+  analyzeCapture(file: File, options: AnalyzeOptions = {}): Promise<AnalyzeOutcome> {
     const { signal, onUpload, onStage } = options
-    return new Promise<ApiResult>((resolve, reject) => {
+    return new Promise<AnalyzeOutcome>((resolve, reject) => {
       const xhr = new XMLHttpRequest()
-      xhr.open('POST', '/api/analyze?progress=1')
+      xhr.open('POST', '/api/analyze?progress=1&chunked=1')
       const token = this.getToken()
       if (token) xhr.setRequestHeader('Authorization', `Bearer ${token}`)
 
       let parsed = 0 // how much of the streamed answer is handled
-      let result: ApiResult | undefined
+      let analysisId = ''
+      let empty: EmptyResult | undefined
       let failure: ApiError | undefined
       const streaming = () => xhr.status === 200 && (xhr.getResponseHeader('Content-Type') ?? '').startsWith('application/x-ndjson')
       const readLines = (final: boolean) => {
@@ -145,14 +154,15 @@ export class ApiClient {
         if (final) end = text.length
         for (const line of text.slice(parsed, end).split('\n')) {
           if (line.trim() === '') continue
-          let ev: { stage?: string; result?: unknown; error?: string; status?: number }
+          let ev: { stage?: string; result?: unknown; analysis_id?: string; error?: string; status?: number }
           try {
             ev = JSON.parse(line)
           } catch {
             continue
           }
           if (ev.stage) onStage?.(ev.stage)
-          if (ev.result !== undefined) result = ev.result as ApiResult
+          if (ev.analysis_id) analysisId = ev.analysis_id
+          if (ev.result !== undefined && typeof ev.result === 'object' && ev.result !== null && isEmptyResult(ev.result as EmptyResult)) empty = ev.result as EmptyResult
           if (ev.error) failure = new ApiError(capitalize(ev.error), ev.status)
         }
         parsed = end
@@ -197,8 +207,9 @@ export class ApiClient {
         }
         readLines(true)
         if (failure) reject(failure)
-        else if (typeof result !== 'object' || result === null || !('issues' in result)) reject(new ApiError('The server sent a response this page does not understand.'))
-        else resolve(result)
+        else if (analysisId) resolve({ analysisId })
+        else if (empty) resolve({ empty })
+        else reject(new ApiError('The server sent a response this page does not understand.'))
       }
       if (signal?.aborted) {
         cleanup()
@@ -211,13 +222,41 @@ export class ApiClient {
     })
   }
 
-  /** Fetches an analysis the server still holds, to show it again after a page refresh. */
-  async getAnalysis(id: string, signal?: AbortSignal): Promise<ApiResult> {
-    const body = await this.request<unknown>(`/api/analysis/${encodeURIComponent(id)}`, {}, { signal })
-    if (typeof body !== 'object' || body === null || !('issues' in body)) {
-      throw new ApiError('The server sent a response this page does not understand.')
+  /**
+   * Fetches an analysis the server holds, in chunks, and hands each to
+   * `onEvent` as it arrives: the verdict first, then the overview, the issues
+   * and the flows. The answer is read as a stream and kept no longer than it
+   * takes to parse a line, so a very large analysis never sits in memory as
+   * text.
+   */
+  async streamAnalysis(id: string, onEvent: (ev: ChunkEvent) => void, signal?: AbortSignal): Promise<void> {
+    const response = await this.send(`/api/analysis/${encodeURIComponent(id)}?chunked=1`, {}, { signal })
+    if (!response.body) throw new ApiError('The server sent a response this page does not understand.')
+    const reader = response.body.getReader()
+    const decoder = new TextDecoder()
+    let carry = ''
+    const handle = (line: string) => {
+      let ev: ChunkEvent
+      try {
+        ev = JSON.parse(line) as ChunkEvent
+      } catch {
+        throw new ApiError('The server sent a response this page does not understand.')
+      }
+      onEvent(ev)
     }
-    return body as ApiResult
+    try {
+      for (;;) {
+        const { done, value } = await reader.read()
+        if (done) break
+        const parsed = parseLines(carry, decoder.decode(value, { stream: true }))
+        carry = parsed.carry
+        for (const line of parsed.lines) handle(line)
+      }
+    } catch (err) {
+      if (err instanceof ApiError || (err instanceof DOMException && err.name === 'AbortError')) throw err
+      throw new ApiError('The connection to the analysis server was lost while the analysis was loading.')
+    }
+    if (carry.trim() !== '') handle(carry)
   }
 
   /**

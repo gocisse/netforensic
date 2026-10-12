@@ -118,6 +118,21 @@ export interface ProtocolStat {
   top_flows: Flow[]
 }
 
+/** How much of an analysis the server is sending, from its first chunk. */
+export interface ChunkCounts {
+  issues: number
+  /** The issues about the traffic, without the notes about the capture file. */
+  reportable_issues: number
+  flows: number
+  healthy_flows: number
+}
+
+/** How far the lists of an analysis have arrived. */
+export interface LoadProgress {
+  issues: { loaded: number; total: number }
+  flows: { loaded: number; total: number }
+}
+
 /** A full analysis. */
 export interface AnalysisResult {
   file_name: string
@@ -138,6 +153,8 @@ export interface AnalysisResult {
   healthy_flows?: Flow[]
   /** A Wireshark display filter that hides everything the issues point at; empty if no issue has a filter. */
   good_traffic_filter?: string
+  /** What the server sends in all, set on an analysis that arrives in chunks (see the lists above fill up as they do). */
+  counts?: ChunkCounts
 }
 
 /** The answer for a capture that holds nothing to analyze. */

@@ -179,6 +179,9 @@ func writeError(w http.ResponseWriter, status int, msg string) {
 
 // analyze handles POST /api/analyze: it receives a capture as the multipart
 // field "file", analyzes it and answers with the models.AnalysisResult as JSON.
+// With ?progress=1&chunked=1 the answer is the stream of stages followed by
+// {"analysis_id": ...} instead of the result, which the page then fetches in
+// chunks from GET /api/analysis/{id}?chunked=1.
 func (h *handler) analyze(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		w.Header().Set("Allow", http.MethodPost)
@@ -276,7 +279,11 @@ func (h *handler) analyze(w http.ResponseWriter, r *http.Request) {
 	res.AnalysisID = h.analyses.put(res)
 	nPackets := len(packets)
 	packets = nil // the analysis keeps only what it derived; the packets can go
-	done(analysisResponse{res, res.Flows, res.HealthyFlows})
+	if send != nil && r.URL.Query().Get("chunked") == "1" {
+		send(progressEvent{AnalysisID: res.AnalysisID})
+	} else {
+		done(analysisResponse{res, res.Flows, res.HealthyFlows})
+	}
 	if nPackets >= freeMemoryAbove {
 		debug.FreeOSMemory() // hand the packets' memory back now, not at the scavenger's pace
 	}
@@ -292,8 +299,11 @@ const freeMemoryAbove = 200_000
 type progressEvent struct {
 	Stage  string `json:"stage,omitempty"`
 	Result any    `json:"result,omitempty"`
-	Error  string `json:"error,omitempty"`
-	Status int    `json:"status,omitempty"`
+	// AnalysisID ends a ?chunked=1 stream in place of the result: the
+	// analysis is stored, and GET /api/analysis/{id}?chunked=1 delivers it.
+	AnalysisID string `json:"analysis_id,omitempty"`
+	Error      string `json:"error,omitempty"`
+	Status     int    `json:"status,omitempty"`
 }
 
 // analysisResponse is the JSON of an analysis as the web UI gets it: the same
@@ -316,6 +326,10 @@ func (h *handler) getAnalysis(w http.ResponseWriter, r *http.Request) {
 	res, ok := h.analyses.get(strings.TrimPrefix(r.URL.Path, "/api/analysis/"))
 	if !ok {
 		writeError(w, http.StatusNotFound, "that analysis is no longer available; upload the capture again")
+		return
+	}
+	if r.URL.Query().Get("chunked") == "1" {
+		streamAnalysis(w, res, func() bool { return r.Context().Err() != nil })
 		return
 	}
 	writeJSON(w, http.StatusOK, analysisResponse{res, res.Flows, res.HealthyFlows})

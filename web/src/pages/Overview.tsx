@@ -10,6 +10,7 @@ import FlowTable from '../components/FlowTable'
 import ProtocolDistribution from '../components/ProtocolDistribution'
 import TopTalkers from '../components/TopTalkers'
 import { Card, CardHeader } from '../components/ui/Card'
+import { TableSkeleton } from '../components/ui/Skeleton'
 import { displayIP } from '../filters/ip'
 import { problemFlows } from '../flowTimeline'
 import type { Flow } from '../types'
@@ -23,7 +24,7 @@ const PROBLEM_FLOWS_SHOWN = 25
 
 /** The Bad Traffic tab: the verdict, the filters, the composition, the issues grouped by severity and the flows. */
 export default function Overview() {
-  const { result, filters, flows: allFlows, reportable, captureName, onExport, exporting, exportError } = useAnalysisView()
+  const { result, filters, flows: allFlows, reportable, reportableTotal, issuesLoaded, flowsLoaded, captureName, onExport, exporting, exportError } = useAnalysisView()
   const d = result.diagnosis
   const { parsed, applied } = filters
 
@@ -92,50 +93,64 @@ export default function Overview() {
       />
       <ActiveFilters filters={filters} />
 
-      <TopTalkers talkers={talkers} selected={sourceIsTalker ? applied.sourceIp : ''} onSelect={(ip) => filters.set({ sourceIp: ip })} />
+      {flowsLoaded ? (
+        <TopTalkers talkers={talkers} selected={sourceIsTalker ? applied.sourceIp : ''} onSelect={(ip) => filters.set({ sourceIp: ip })} />
+      ) : (
+        <TableSkeleton title="Top talkers" rows={3} testId="skeleton-talkers" />
+      )}
 
       <ProtocolDistribution stats={stats} selected={applied.protocol} onSelect={(p) => filters.set({ protocol: p })} filtered={filters.active} />
 
       <section className="space-y-4" data-testid="bad-traffic-issues">
         <h2 className="text-lg font-semibold text-gray-800 dark:text-white/90">Issues</h2>
         <p className="text-theme-sm font-medium text-gray-600 dark:text-gray-400" data-testid="filter-summary">
-          Showing {issues.length.toLocaleString()} of {reportable.length.toLocaleString()} {reportable.length === 1 ? 'issue' : 'issues'}
+          Showing {issues.length.toLocaleString()} of {reportableTotal.toLocaleString()} {reportableTotal === 1 ? 'issue' : 'issues'}
+          {!issuesLoaded && <span className="font-normal text-gray-500 dark:text-gray-400"> (still loading)</span>}
         </p>
-        <IssueGroups issues={issues} filtered={filters.active} onClearFilters={filters.reset} captureName={captureName} onFilterTo={filterTo} />
+        <IssueGroups issues={issues} filtered={filters.active} onClearFilters={filters.reset} captureName={captureName} onFilterTo={filterTo} loading={!issuesLoaded} />
       </section>
 
-      <FlowTable
-        testId="problem-flows"
-        title={troubledTotal > troubled.length ? `Flows with issues (${troubled.length} of ${troubledTotal.toLocaleString()} shown)` : 'Flows with issues'}
-        flows={troubled}
-        onSelect={setSelected}
-        filtered={filters.active}
-        onClearFilters={filters.reset}
-        emptyMessage={filters.active ? 'None of the flows that match your filters has an issue.' : 'No flow has an issue. Open the Good Traffic tab to see them all.'}
-      />
+      {flowsLoaded ? (
+        <>
+        <FlowTable
+          testId="problem-flows"
+          title={troubledTotal > troubled.length ? `Flows with issues (${troubled.length} of ${troubledTotal.toLocaleString()} shown)` : 'Flows with issues'}
+          flows={troubled}
+          onSelect={setSelected}
+          filtered={filters.active}
+          onClearFilters={filters.reset}
+          emptyMessage={filters.active ? 'None of the flows that match your filters has an issue.' : 'No flow has an issue. Open the Good Traffic tab to see them all.'}
+        />
 
-      <p className="text-theme-sm font-medium text-gray-600 dark:text-gray-400" data-testid="flow-summary">
-        Showing {flows.length.toLocaleString()} of {result.total_flows.toLocaleString()} {result.total_flows === 1 ? 'flow' : 'flows'}
-        {flows.length > FLOWS_SHOWN && <span className="font-normal text-gray-500 dark:text-gray-400"> (the {FLOWS_SHOWN} busiest and slowest are listed)</span>}
-      </p>
-      <FlowTable
-        testId="busiest-flows"
-        title={applied.protocol === 'All' ? 'Busiest flows' : `Busiest ${applied.protocol} flows`}
-        flows={busiest}
-        onSelect={setSelected}
-        filtered={filters.active}
-        onClearFilters={filters.reset}
-        emptyMessage={filters.active ? 'No flows match your filters.' : 'No flows were found in this capture.'}
-      />
-      <FlowTable
-        testId="slowest-flows"
-        title={applied.protocol === 'All' ? 'Slowest flows' : `Slowest ${applied.protocol} flows`}
-        flows={slowest}
-        onSelect={setSelected}
-        filtered={filters.active}
-        onClearFilters={filters.reset}
-        emptyMessage={filters.active ? 'None of the flows that match your filters have measurable timing metrics.' : 'No flows with measurable timing metrics.'}
-      />
+        <p className="text-theme-sm font-medium text-gray-600 dark:text-gray-400" data-testid="flow-summary">
+          Showing {flows.length.toLocaleString()} of {result.total_flows.toLocaleString()} {result.total_flows === 1 ? 'flow' : 'flows'}
+          {flows.length > FLOWS_SHOWN && <span className="font-normal text-gray-500 dark:text-gray-400"> (the {FLOWS_SHOWN} busiest and slowest are listed)</span>}
+        </p>
+        <FlowTable
+          testId="busiest-flows"
+          title={applied.protocol === 'All' ? 'Busiest flows' : `Busiest ${applied.protocol} flows`}
+          flows={busiest}
+          onSelect={setSelected}
+          filtered={filters.active}
+          onClearFilters={filters.reset}
+          emptyMessage={filters.active ? 'No flows match your filters.' : 'No flows were found in this capture.'}
+        />
+        <FlowTable
+          testId="slowest-flows"
+          title={applied.protocol === 'All' ? 'Slowest flows' : `Slowest ${applied.protocol} flows`}
+          flows={slowest}
+          onSelect={setSelected}
+          filtered={filters.active}
+          onClearFilters={filters.reset}
+          emptyMessage={filters.active ? 'None of the flows that match your filters have measurable timing metrics.' : 'No flows with measurable timing metrics.'}
+        />
+        </>
+      ) : (
+        <>
+          <TableSkeleton title="Flows with issues" rows={3} testId="skeleton-problem-flows" />
+          <TableSkeleton title="Busiest flows" rows={3} testId="skeleton-flows" />
+        </>
+      )}
 
       {d.recommendations.length > 0 && (
         <Card>

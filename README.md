@@ -470,6 +470,19 @@ health score counting up, expanding details) are off for people whose system ask
 for each later stage (`classifying`, `detecting`, `reporting`), then `{"result": {...}}` (the same document as without
 the parameter), or `{"error": "...", "status": 400}` when the capture cannot be read.
 
+**Chunked loading.** A large analysis is a large document (a capture of 1.5 million
+packets has 170,000 issues and 115,000 flows), so the page does not wait for all of it.
+`POST /api/analyze?progress=1&chunked=1` ends with `{"analysis_id": "..."}` in place of the
+result, and `GET /api/analysis/{id}?chunked=1` then streams the stored analysis as JSON
+lines, flushed one by one: `{"chunk":"summary","data":{...}}` (the diagnosis, the totals, the
+Good Traffic filter and `counts` of what follows, without the per-issue diagnosis timeline),
+`{"chunk":"overview",...}` (protocol mix, top talkers, slowest flows), `{"chunk":"issues","offset":N,"data":[...]}`
+in batches of 100, worst severity first, `{"chunk":"flows",...}` in batches of 500, and `{"chunk":"done"}`.
+The page shows the health score and root cause as soon as the first chunk is in, the
+tab counts from `counts`, issue cards as batches arrive (a progress bar says "Loading issues: 400 / 1,600"),
+and skeletons for the flow tables and Good Traffic until all flows are there. Without `chunked=1` both
+endpoints answer as before.
+
 `npm test` (in `web/`) runs the UI's unit tests, and `npm run check:spacing` checks that padding, margin and gap
 utilities stay on the 4/8/12/16/24/32 px scale.
 
