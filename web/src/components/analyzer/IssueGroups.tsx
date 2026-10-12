@@ -7,7 +7,7 @@ import AllClear from '../ui/AllClear'
 import { TableSkeleton } from '../ui/Skeleton'
 import Button from '../ui/Button'
 import { Card } from '../ui/Card'
-import VirtualList from '../ui/VirtualList'
+import CappedVirtualList from '../ui/CappedVirtualList'
 import IssueCard from './IssueCard'
 
 const HEADING: Record<string, string> = {
@@ -30,6 +30,7 @@ interface Props {
 
 const ROW_GAP = 16
 const rowKey = (r: IssueRow) => (r.kind === 'heading' ? `heading-${r.severity}` : r.issue.id)
+const isIssue = (r: IssueRow) => r.kind === 'issue'
 const rowHeight = (r: IssueRow) => (r.kind === 'heading' ? 48 : 440)
 
 /**
@@ -63,11 +64,12 @@ export default function IssueGroups({ issues, filtered, onClearFilters, captureN
 
   return (
     <div data-testid="issue-groups">
-      <VirtualList
+      <CappedVirtualList
         items={rows}
         getKey={rowKey}
         estimate={rowHeight}
         gap={ROW_GAP}
+        counts={isIssue}
         testId="issue-list"
         render={(row) =>
           row.kind === 'heading' ? (

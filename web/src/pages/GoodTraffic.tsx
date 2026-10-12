@@ -17,7 +17,7 @@ import { useToast } from '../toast/useToast'
 import { tsharkCommand } from '../wireshark'
 
 /** The height of a row in px before it is drawn and measured. */
-const ROW_HEIGHT = 57
+const ROW_HEIGHT = 47
 
 const COLUMNS: { key: GoodSortKey; label: string; right?: boolean }[] = [
   { key: 'flow', label: 'Flow' },

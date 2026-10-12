@@ -5,7 +5,7 @@ import ActiveFilters from '../../components/ActiveFilters'
 import IssueCard from '../../components/analyzer/IssueCard'
 import AllClear from '../../components/ui/AllClear'
 import { TableSkeleton } from '../../components/ui/Skeleton'
-import VirtualList from '../../components/ui/VirtualList'
+import CappedVirtualList from '../../components/ui/CappedVirtualList'
 import Button from '../../components/ui/Button'
 import { Card } from '../../components/ui/Card'
 import { displayIP } from '../../filters/ip'
@@ -149,7 +149,7 @@ export default function ProtocolPage({ info }: { info: ProtocolPageInfo }) {
           </div>
         </Card>
       ) : (
-        <VirtualList
+        <CappedVirtualList
           items={issues}
           getKey={(i) => i.id}
           estimate={() => 440}

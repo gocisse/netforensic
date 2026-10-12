@@ -286,8 +286,10 @@ Traffic table and the events of an issue are virtual: only the rows in view
 (plus a few more on each side) are in the page, so a capture with hundreds of
 thousands of issues scrolls as smoothly as one with a few. Cards may be any
 height, and expanding one pushes the rest down. A button at the corner takes
-you back to the top once you have scrolled down. The list uses
-`@tanstack/react-virtual` (MIT).
+you back to the top once you have scrolled down. A list longer than 5,000 rows
+shows the first 5,000, the worst first, with a button for 5,000 more (up to 50,000):
+browsers cannot scroll a page taller than about 33 million pixels, and the filters
+and the CSV export are the way to the rest. The list uses `@tanstack/react-virtual` (MIT).
 
 **TCP stream timeline.** Below the issues, Bad Traffic lists the flows that have
 issues (worst first); the flow tables there are clickable (**View Details**) and
