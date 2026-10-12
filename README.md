@@ -414,19 +414,11 @@ login. The server listens on all interfaces for an address like `:8181`; use
 Uploads are kept in a private temporary file that is deleted as soon as the
 analysis is done.
 
-### Junior and Senior mode
-
-The top bar has a "Mode: Junior / Senior" switch (default Senior, remembered in the browser).
-Senior shows the technical detail: Wireshark filters, raw counts and the protocol pages.
-Junior explains the same results in plain words: a traffic-light health summary, issue cards
-with "What this means" and numbered "What to do" steps, grouped protocol bars and a
-From / To / What / Status table (Working, Slow, Broken). Switching is instant.
-
 ### Keyboard shortcuts, loading and notifications
 
 | Key | What it does |
 |---|---|
-| `Ctrl+K` / `Cmd+K` | Command palette: search the issues of the open analysis, jump to a page, switch mode or theme |
+| `Ctrl+K` / `Cmd+K` | Command palette: search the issues of the open analysis, jump to a page, switch theme |
 | `1` – `8` | Jump to the TCP, UDP, DNS, HTTP, TLS, SIP, DHCPv6 or QUIC tab (`0`: the overview) |
 | `Esc` | Close a dialog; otherwise clear the filters |
 | `?` | List the shortcuts |

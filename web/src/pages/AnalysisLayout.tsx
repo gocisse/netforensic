@@ -8,7 +8,6 @@ import ProtocolNav from '../components/ProtocolNav'
 import Alert from '../components/ui/Alert'
 import { AnalysisSkeleton } from '../components/ui/Skeleton'
 import { toParams } from '../filters/model'
-import { useDashboardMode } from '../mode/useDashboardMode'
 import { useFilters } from '../filters/useFilters'
 import { isCaptureNote } from '../format'
 import { PROTOCOL_PAGES, involvesProtocol } from '../protocols'
@@ -31,7 +30,6 @@ export default function AnalysisLayout() {
   const cache = useAnalysisCache()
   const filters = useFilters()
   const { search, pathname } = useLocation()
-  const { mode } = useDashboardMode()
   const toast = useToast()
 
   const cached = cache.current?.id === id ? cache.current.result : null
@@ -145,7 +143,7 @@ export default function AnalysisLayout() {
           Analyze another capture
         </Link>
       </div>
-      {mode === 'senior' && <ProtocolNav id={id} counts={counts} search={search} />}
+      <ProtocolNav id={id} counts={counts} search={search} />
       {/* keyed by the page, so that a change of tab fades the new page in */}
       <div key={pathname} className="animate-fade-in" data-testid="page-transition">
         <Outlet context={view} />

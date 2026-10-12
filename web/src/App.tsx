@@ -2,7 +2,6 @@ import { Navigate, Route, Routes } from 'react-router-dom'
 import { AnalysisProvider } from './analysis/AnalysisProvider'
 import { AuthProvider } from './auth/AuthProvider'
 import { ToastProvider } from './toast/ToastProvider'
-import { DashboardModeProvider } from './mode/DashboardModeProvider'
 import { useAuth } from './auth/useAuth'
 import ForcedPasswordChange from './components/ForcedPasswordChange'
 import LoginPage from './components/LoginPage'
@@ -63,9 +62,7 @@ export default function App() {
     <ToastProvider>
       <AuthProvider>
         <AnalysisProvider>
-          <DashboardModeProvider>
             <Gate />
-          </DashboardModeProvider>
         </AnalysisProvider>
       </AuthProvider>
     </ToastProvider>

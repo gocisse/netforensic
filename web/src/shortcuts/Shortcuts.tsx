@@ -3,7 +3,6 @@ import { useLocation, useMatch, useNavigate } from 'react-router-dom'
 import { useAnalysisCache } from '../analysis/useAnalysisCache'
 import { isCaptureNote } from '../format'
 import { useTheme } from '../hooks/useTheme'
-import { useDashboardMode } from '../mode/useDashboardMode'
 import { PROTOCOL_PAGES, involvesProtocol } from '../protocols'
 import { isTyping } from './isTyping'
 import CommandPalette from './CommandPalette'
@@ -23,7 +22,6 @@ export default function Shortcuts() {
   const match = useMatch('/analysis/:id/*')
   const analysisId = match?.params.id
   const cache = useAnalysisCache()
-  const { mode, toggleMode } = useDashboardMode()
   const { theme, toggleTheme } = useTheme()
 
   const result = cache.current && cache.current.id === analysisId ? cache.current.result : null
@@ -73,7 +71,6 @@ export default function Shortcuts() {
       PROTOCOL_PAGES.forEach((p, i) => out.push({ id: `page-${p.slug}`, group: 'Pages', label: p.title, hint: String(i + 1), keywords: p.protocol }))
     }
     out.push(
-      { id: 'act-mode', group: 'Actions', label: mode === 'junior' ? 'Switch to Senior mode' : 'Switch to Junior mode', keywords: 'dashboard technical plain language' },
       { id: 'act-theme', group: 'Actions', label: theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme', keywords: 'dark light appearance' },
       { id: 'act-help', group: 'Actions', label: 'Show keyboard shortcuts', hint: '?', keywords: 'help keys' },
     )
@@ -89,14 +86,13 @@ export default function Shortcuts() {
       }
     }
     return out
-  }, [analysisId, mode, theme, result])
+  }, [analysisId, theme, result])
 
   const choose = (item: PaletteItem) => {
     setDialog(null)
     if (item.id === 'page-upload') navigate({ pathname: '/', search })
     else if (item.id === 'page-overview') goTo('')
     else if (item.id.startsWith('page-')) goTo(item.id.slice(5))
-    else if (item.id === 'act-mode') toggleMode()
     else if (item.id === 'act-theme') toggleTheme()
     else if (item.id === 'act-help') setDialog('help')
     else if (item.id.startsWith('issue-') && result) {
