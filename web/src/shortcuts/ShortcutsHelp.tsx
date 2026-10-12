@@ -5,7 +5,8 @@ const MOD = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator
 const ROWS: { keys: string[]; what: string }[] = [
   { keys: [MOD, 'K'], what: 'Open the command palette: search issues, jump to a page' },
   { keys: ['1', '–', '8'], what: 'Jump to TCP, UDP, DNS, HTTP, TLS, SIP, DHCPv6 or QUIC (on an analysis)' },
-  { keys: ['0'], what: 'Back to the overview (on an analysis)' },
+  { keys: ['0'], what: 'Bad Traffic (on an analysis)' },
+  { keys: ['9'], what: 'Good Traffic (on an analysis)' },
   { keys: ['Esc'], what: 'Close a dialog; otherwise clear the filters' },
   { keys: ['?'], what: 'Show this help' },
 ]

@@ -1,4 +1,4 @@
-import type { Flow, Issue, Occurrence, Severity } from './types'
+import type { Flow, Issue, Occurrence, Severity } from './types.ts'
 
 export interface Tone {
   label: string

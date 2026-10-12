@@ -1,4 +1,4 @@
-import { ipKey } from './ip'
+import { ipKey } from './ip.ts'
 
 /** An address with an optional port (0 if there is none). */
 export interface Endpoint {

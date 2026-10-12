@@ -20,7 +20,7 @@ const tab = (active: boolean, dim: boolean) =>
   }`
 
 /**
- * The tabs of an analysis: the overview and one page per protocol, each with
+ * The tabs beneath Bad Traffic: all issues and one page per protocol, each with
  * its number of issues. The active tab is highlighted.
  */
 export default function ProtocolNav({ id, counts, search }: Props) {
@@ -28,8 +28,8 @@ export default function ProtocolNav({ id, counts, search }: Props) {
     <nav aria-label="Protocols" data-testid="protocol-nav" className="-mx-1 overflow-x-auto px-1 pb-1">
       <ul className="flex gap-2">
         <li>
-          <NavLink to={{ pathname: `/analysis/${id}`, search }} end data-testid="nav-overview" className={({ isActive }) => tab(isActive, false)}>
-            Overview
+          <NavLink to={{ pathname: `/analysis/${id}/bad`, search }} end data-testid="nav-overview" className={({ isActive }) => tab(isActive, false)}>
+            All issues
           </NavLink>
         </li>
         {PROTOCOL_PAGES.map((p) => {

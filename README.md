@@ -267,8 +267,23 @@ issue's details table shows the protocol of each event. The same data is in the
 JSON as `protocol_stats`, with `protocols` on issues and `protocol` on their
 occurrences.
 
+**Bad Traffic / Good Traffic.** A summary bar ("Total: X packets · Y flows ·
+Z issues · Health: N/100") sits above two tabs. **Bad Traffic** lists the issues
+grouped by severity (errors first), each as a card with *What* is wrong, its
+*Impact* (events and flows), the *Fix*, the Wireshark filter in a code block and
+the buttons **Copy Filter**, **Show N packets** (copies `tshark -r capture.pcap
+-Y '<filter>' | head -N`) and **View Details** (the affected flows and events).
+**Good Traffic** lists the flows no issue names (`healthy_flows`) in a sortable
+table (busiest first) with a search box, and a **master Wireshark filter**
+(`good_traffic_filter`) that hides everything the issues point at, as
+`!(<filter 1> || <filter 2> || …)`, with buttons to copy it or a tshark command
+for it. The master filter drops the packets the issue filters match, which is
+not always whole flows; issue filters that are not well formed are left out of
+it. A capture with issues opens on Bad Traffic, a clean one on Good Traffic.
+
 **Pages.** The upload page is at `/`. When the analysis is ready the page
-moves to `/analysis/<id>`, the overview, and a navigation bar offers one page
+moves to `/analysis/<id>` (which opens `/analysis/<id>/bad` or `/good`, see
+above), and beneath Bad Traffic a navigation bar offers one page
 per protocol with its number of issues: TCP, UDP, DNS, HTTP, TLS, SIP, DHCPv6
 and QUIC (`/analysis/<id>/tcp`, `/udp`, `/dns`, `/http`, `/tls`, `/sip`,
 `/dhcpv6`, `/quic`). A protocol page lists every issue that involves the
@@ -419,7 +434,7 @@ analysis is done.
 | Key | What it does |
 |---|---|
 | `Ctrl+K` / `Cmd+K` | Command palette: search the issues of the open analysis, jump to a page, switch theme |
-| `1` – `8` | Jump to the TCP, UDP, DNS, HTTP, TLS, SIP, DHCPv6 or QUIC tab (`0`: the overview) |
+| `1` – `8` | Jump to the TCP, UDP, DNS, HTTP, TLS, SIP, DHCPv6 or QUIC tab (`0`: Bad Traffic, `9`: Good Traffic) |
 | `Esc` | Close a dialog; otherwise clear the filters |
 | `?` | List the shortcuts |
 

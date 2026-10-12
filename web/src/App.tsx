@@ -9,6 +9,8 @@ import Shortcuts from './shortcuts/Shortcuts'
 import DashboardLayout from './layout/DashboardLayout'
 import AnalysisLayout from './pages/AnalysisLayout'
 import Analyzer from './pages/Analyzer'
+import DefaultTab from './pages/DefaultTab'
+import GoodTraffic from './pages/GoodTraffic'
 import Overview from './pages/Overview'
 import DHCPv6Page from './pages/protocol/DHCPv6Page'
 import DNSPage from './pages/protocol/DNSPage'
@@ -25,7 +27,9 @@ import UDPPage from './pages/protocol/UDPPage'
  * with its pages:
  *
  *	/                       upload a capture
- *	/analysis/:id           the overview of an analysis
+ *	/analysis/:id           opens Bad Traffic if there are issues, else Good Traffic
+ *	/analysis/:id/bad       Bad Traffic: the issues
+ *	/analysis/:id/good      Good Traffic: the flows without issues
  *	/analysis/:id/<proto>   the issues of one protocol (tcp, udp, dns, http, tls, sip, dhcpv6, quic)
  */
 function Gate() {
@@ -39,7 +43,9 @@ function Gate() {
         <Routes>
           <Route path="/" element={<Analyzer />} />
           <Route path="/analysis/:id" element={<AnalysisLayout />}>
-            <Route index element={<Overview />} />
+            <Route index element={<DefaultTab />} />
+            <Route path="bad" element={<Overview />} />
+            <Route path="good" element={<GoodTraffic />} />
             <Route path="tcp" element={<TCPPage />} />
             <Route path="udp" element={<UDPPage />} />
             <Route path="dns" element={<DNSPage />} />

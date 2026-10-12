@@ -269,7 +269,7 @@ func (h *handler) analyze(w http.ResponseWriter, r *http.Request) {
 	res.FileName = name
 	res.Metadata = stats.Metadata
 	res.AnalysisID = h.analyses.put(res)
-	done(analysisResponse{res, res.Flows})
+	done(analysisResponse{res, res.Flows, res.HealthyFlows})
 }
 
 // progressEvent is one line of the progress stream of /api/analyze.
@@ -285,6 +285,8 @@ type progressEvent struct {
 type analysisResponse struct {
 	*models.AnalysisResult
 	Flows []models.Flow `json:"flows"`
+	// Healthy lists the flows no issue names, for the Good Traffic tab.
+	Healthy []models.Flow `json:"healthy_flows"`
 }
 
 // getAnalysis answers GET /api/analysis/{id} with an analysis the server still
@@ -300,7 +302,7 @@ func (h *handler) getAnalysis(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "that analysis is no longer available; upload the capture again")
 		return
 	}
-	writeJSON(w, http.StatusOK, analysisResponse{res, res.Flows})
+	writeJSON(w, http.StatusOK, analysisResponse{res, res.Flows, res.HealthyFlows})
 }
 
 // receiveUpload copies the "file" part of the upload into a private

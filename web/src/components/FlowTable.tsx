@@ -25,7 +25,7 @@ function direction(f: Flow): { Icon: typeof ArrowRightIcon; name: 'forward' | 'r
 }
 
 /** The two endpoints of a flow with an arrow for the heavier direction; a reused-port or tunnel suffix of the ID follows. */
-function FlowEndpoints({ flow }: { flow: Flow }) {
+export function FlowEndpoints({ flow }: { flow: Flow }) {
   const d = direction(flow)
   const suffix = /((?:#\d+)?(?:@.+)?)$/.exec(flow.id)?.[1] ?? ''
   return (

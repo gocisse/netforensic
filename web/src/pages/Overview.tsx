@@ -1,22 +1,22 @@
-import { useMemo } from 'react'
+import { useCallback, useMemo } from 'react'
 import { useAnalysisView } from '../analysis/view'
 import ActiveFilters from '../components/ActiveFilters'
 import CaptureAlerts from '../components/analyzer/CaptureAlerts'
 import HealthCard from '../components/analyzer/HealthCard'
-import IssuesTable from '../components/analyzer/IssuesTable'
+import IssueGroups from '../components/analyzer/IssueGroups'
 import FilterPanel from '../components/FilterPanel'
 import FlowTable from '../components/FlowTable'
 import ProtocolDistribution from '../components/ProtocolDistribution'
 import TopTalkers from '../components/TopTalkers'
 import { Card, CardHeader } from '../components/ui/Card'
-import StatCard from '../components/ui/StatCard'
+import { displayIP } from '../filters/ip'
+import type { Affected } from '../wireshark'
 import { flowBytes, matchFlow, matchIssue, protocolStats, topTalkers, worstTiming } from '../filters/match'
-import { ClockIcon, FlowsIcon, PacketsIcon } from '../icons'
 
 /** How many flows the flow tables list. */
 const FLOWS_SHOWN = 10
 
-/** The overview of an analysis: the verdict, the filters, the composition, the issues and the flows. */
+/** The Bad Traffic tab: the verdict, the filters, the composition, the issues grouped by severity and the flows. */
 export default function Overview() {
   const { result, filters, flows: allFlows, reportable, captureName, onExport, exporting, exportError } = useAnalysisView()
   const d = result.diagnosis
@@ -51,6 +51,14 @@ export default function Overview() {
   )
 
   const exportDisabledReason = result.analysis_id ? undefined : 'The server did not keep this analysis, so it cannot export it. Analyze the capture again.'
+  const { set: setFilters } = filters
+  const filterTo = useCallback(
+    (eps: Affected['endpoints']) => {
+      if (eps.length === 0) return
+      setFilters({ sourceIp: displayIP(eps[0].ip), destIp: eps.length > 1 ? displayIP(eps[1].ip) : '' })
+    },
+    [setFilters],
+  )
   const sourceIsTalker = talkers.some((t) => t.ip === applied.sourceIp)
 
   return (
@@ -60,35 +68,6 @@ export default function Overview() {
       {/* The verdict stays in view while the details below scroll (from the lg breakpoint, where there is room). */}
       <div className="z-30 -mx-4 bg-gray-50 px-4 pb-1 pt-1 dark:bg-gray-950 md:-mx-6 md:px-6 lg:sticky lg:top-[65px]" data-testid="sticky-health">
         <HealthCard diagnosis={d} />
-      </div>
-
-      <div className="grid gap-4 sm:grid-cols-3">
-        <StatCard
-          label="Packets"
-          value={result.total_packets.toLocaleString()}
-          hint={
-            <span className="inline-flex items-center gap-2">
-              <ClockIcon className="h-4 w-4" />
-              over {result.duration}
-            </span>
-          }
-          icon={<PacketsIcon className="h-6 w-6" />}
-          iconTone="bg-brand-50 dark:bg-brand-500/15 text-brand-600 dark:text-brand-400"
-        />
-        <StatCard
-          label="Flows"
-          value={result.total_flows.toLocaleString()}
-          hint={`${reportable.length.toLocaleString()} ${reportable.length === 1 ? 'issue' : 'issues'} found`}
-          icon={<FlowsIcon className="h-6 w-6" />}
-          iconTone="bg-blue-light-50 dark:bg-blue-light-500/15 text-blue-light-500"
-        />
-        <StatCard
-          label="Shown after filters"
-          data-testid="shown-card"
-          value={`${issues.length.toLocaleString()} / ${flows.length.toLocaleString()}`}
-          hint="issues / flows"
-          iconTone="bg-gray-100 dark:bg-gray-800 text-gray-800 dark:text-white/90"
-        />
       </div>
 
       <FilterPanel
@@ -107,19 +86,13 @@ export default function Overview() {
 
       <ProtocolDistribution stats={stats} selected={applied.protocol} onSelect={(p) => filters.set({ protocol: p })} filtered={filters.active} />
 
-      <Card>
-        <CardHeader
-          title="Top issues"
-          description={
-            <span data-testid="filter-summary">
-              Showing {issues.length.toLocaleString()} of {reportable.length.toLocaleString()} {reportable.length === 1 ? 'issue' : 'issues'}
-            </span>
-          }
-        />
-        <div className="border-t border-gray-100 dark:border-gray-800 p-2 sm:p-3">
-          <IssuesTable key={JSON.stringify(applied)} issues={issues} filtered={filters.active} onClearFilters={filters.reset} captureName={captureName} />
-        </div>
-      </Card>
+      <section className="space-y-4" data-testid="bad-traffic-issues">
+        <h2 className="text-lg font-semibold text-gray-800 dark:text-white/90">Issues</h2>
+        <p className="text-theme-sm font-medium text-gray-600 dark:text-gray-400" data-testid="filter-summary">
+          Showing {issues.length.toLocaleString()} of {reportable.length.toLocaleString()} {reportable.length === 1 ? 'issue' : 'issues'}
+        </p>
+        <IssueGroups issues={issues} filtered={filters.active} onClearFilters={filters.reset} captureName={captureName} onFilterTo={filterTo} />
+      </section>
 
       <p className="text-theme-sm font-medium text-gray-600 dark:text-gray-400" data-testid="flow-summary">
         Showing {flows.length.toLocaleString()} of {result.total_flows.toLocaleString()} {result.total_flows === 1 ? 'flow' : 'flows'}

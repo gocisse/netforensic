@@ -390,6 +390,15 @@ type AnalysisResult struct {
 	// export and reload endpoints. It is set only by the web server.
 	AnalysisID string `json:"analysis_id,omitempty"`
 
+	// GoodTrafficFilter is a Wireshark display filter that hides the traffic
+	// every issue is about (see analyzer.GoodTrafficFilter), or empty if no
+	// issue has a filter.
+	GoodTrafficFilter string `json:"good_traffic_filter"`
+
+	// HealthyFlows is every flow that no issue names. Like Flows it is not
+	// part of the `-o json` output; the web server sends it as healthy_flows.
+	HealthyFlows []Flow `json:"-"`
+
 	// Flows is every flow of the capture, for exports. It is not part of the
 	// JSON output, which lists only the top flows.
 	Flows []Flow `json:"-"`

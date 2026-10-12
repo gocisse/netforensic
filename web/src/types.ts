@@ -120,6 +120,10 @@ export interface AnalysisResult {
   analysis_id?: string
   /** Every flow, which the page filters and sums up itself. */
   flows?: Flow[]
+  /** The flows no issue names, for the Good Traffic tab. */
+  healthy_flows?: Flow[]
+  /** A Wireshark display filter that hides everything the issues point at; empty if no issue has a filter. */
+  good_traffic_filter?: string
 }
 
 /** The answer for a capture that holds nothing to analyze. */

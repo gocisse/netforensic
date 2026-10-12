@@ -5,6 +5,8 @@ import { useAnalysisCache } from '../analysis/useAnalysisCache'
 import type { AnalysisView } from '../analysis/view'
 import { useAuth } from '../auth/useAuth'
 import ProtocolNav from '../components/ProtocolNav'
+import SummaryBar from '../components/SummaryBar'
+import TrafficTabs from '../components/TrafficTabs'
 import Alert from '../components/ui/Alert'
 import { AnalysisSkeleton } from '../components/ui/Skeleton'
 import { toParams } from '../filters/model'
@@ -18,8 +20,9 @@ import { isTyping } from '../shortcuts/isTyping'
 import { useToast } from '../toast/useToast'
 
 /**
- * The frame of an analysis (/analysis/:id): the file name, the tabs (the
- * overview and one page per protocol) and the page the router picks. It gets
+ * The frame of an analysis (/analysis/:id): the file name, a summary, the
+ * Bad Traffic / Good Traffic tabs, beneath Bad Traffic the tabs of the
+ * protocols, and the page the router picks. It gets
  * the analysis from the cache if the page just uploaded it, else from the
  * server, which keeps the latest ones; the filters live here, so they follow
  * the user from tab to tab.
@@ -143,7 +146,9 @@ export default function AnalysisLayout() {
           Analyze another capture
         </Link>
       </div>
-      <ProtocolNav id={id} counts={counts} search={search} />
+      <SummaryBar result={result} issues={reportable.length} />
+      <TrafficTabs id={id} issues={reportable.length} goodFlows={(result.healthy_flows ?? []).length} search={search} />
+      {!pathname.replace(/\/$/, '').endsWith('/good') && <ProtocolNav id={id} counts={counts} search={search} />}
       {/* keyed by the page, so that a change of tab fades the new page in */}
       <div key={pathname} className="animate-fade-in" data-testid="page-transition">
         <Outlet context={view} />

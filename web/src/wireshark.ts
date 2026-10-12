@@ -1,6 +1,6 @@
-import { parseRef } from './filters/refs'
-import type { Endpoint } from './filters/refs'
-import type { Issue } from './types'
+import { parseRef } from './filters/refs.ts'
+import type { Endpoint } from './filters/refs.ts'
+import type { Issue } from './types.ts'
 
 /** Quotes a string for a POSIX shell: in single quotes, with each ' written as '\''. */
 export function shellQuote(s: string): string {
@@ -16,8 +16,10 @@ export function wiresharkCommand(captureName: string, filter: string): string {
   return `wireshark -r ${shellQuote(captureName)} -Y ${shellQuote(filter)}`
 }
 
-export function tsharkCommand(captureName: string, filter: string): string {
-  return `tshark -r ${shellQuote(captureName)} -Y ${shellQuote(filter)}`
+/** The tshark command that lists the packets a filter matches; with `head`, only the first that many. */
+export function tsharkCommand(captureName: string, filter: string, head?: number): string {
+  const cmd = `tshark -r ${shellQuote(captureName)} -Y ${shellQuote(filter)}`
+  return head && head > 0 ? `${cmd} | head -${Math.floor(head)}` : cmd
 }
 
 /**

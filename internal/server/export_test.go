@@ -35,7 +35,8 @@ func uploadLab(t *testing.T, h http.Handler, path, name string) analysisAnswer {
 // analysisAnswer is what the page reads from an analysis.
 type analysisAnswer struct {
 	models.AnalysisResult
-	Flows []models.Flow `json:"flows"`
+	Flows   []models.Flow `json:"flows"`
+	Healthy []models.Flow `json:"healthy_flows"`
 }
 
 func get(h http.Handler, path string, params url.Values) *httptest.ResponseRecorder {
@@ -349,4 +350,41 @@ func TestAnalysisStore(t *testing.T) {
 		assert.False(t, seen[id])
 		seen[id] = true
 	}
+}
+
+func TestAnalysisCarriesHealthyFlowsAndTheGoodTrafficFilter(t *testing.T) {
+	h := authed(t, testAssets, maxUploadBytes)
+	for _, path := range []string{lab7, lab3} {
+		t.Run(path, func(t *testing.T) {
+			a := uploadLab(t, h, path, "x.pcapng")
+			require.NotNil(t, a.Healthy)
+			want := 0
+			for _, f := range a.Flows {
+				if f.IssueCount == 0 {
+					want++
+				}
+			}
+			assert.Len(t, a.Healthy, want, "the flows no issue names")
+			for _, f := range a.Healthy {
+				assert.Zero(t, f.IssueCount)
+			}
+			assert.Less(t, len(a.Healthy), len(a.Flows), "this capture has problems")
+			assert.True(t, strings.HasPrefix(a.GoodTrafficFilter, "!("), a.GoodTrafficFilter)
+
+			rec := get(h, "/api/analysis/"+a.AnalysisID, nil)
+			var again analysisAnswer
+			require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &again))
+			assert.Equal(t, a.Healthy, again.Healthy)
+			assert.Equal(t, a.GoodTrafficFilter, again.GoodTrafficFilter)
+		})
+	}
+}
+
+func TestAnalysisWhereEveryFlowHasIssues(t *testing.T) {
+	h := authed(t, testAssets, maxUploadBytes)
+	a := uploadLab(t, h, "../../testdata/all-flows-bad.pcap", "all-bad.pcap")
+	assert.Equal(t, 4, a.TotalFlows)
+	assert.NotNil(t, a.Healthy, "an empty list, not null")
+	assert.Empty(t, a.Healthy, "every flow is named by an issue")
+	assert.True(t, strings.HasPrefix(a.GoodTrafficFilter, "!("), a.GoodTrafficFilter)
 }

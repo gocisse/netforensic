@@ -103,6 +103,9 @@ func AnalyzeWithProgress(packets []models.PacketInfo, service string, progress f
 		ProtocolStats: protocolStats(packets, flows, classes, perPacket),
 		Diagnosis:     correlate(packets, flows, issues),
 		Flows:         flows,
+
+		GoodTrafficFilter: GoodTrafficFilter(issues),
+		HealthyFlows:      HealthyFlows(flows),
 	}
 }
 

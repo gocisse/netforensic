@@ -53,9 +53,9 @@ export default function Shortcuts() {
         setDialog('help')
         return
       }
-      if (analysisId && /^[0-8]$/.test(e.key)) {
+      if (analysisId && /^[0-9]$/.test(e.key)) {
         e.preventDefault()
-        goTo(e.key === '0' ? '' : PROTOCOL_PAGES[Number(e.key) - 1].slug)
+        goTo(e.key === '0' ? 'bad' : e.key === '9' ? 'good' : PROTOCOL_PAGES[Number(e.key) - 1].slug)
       }
     }
     document.addEventListener('keydown', onKey)
@@ -67,7 +67,10 @@ export default function Shortcuts() {
   const items = useMemo<PaletteItem[]>(() => {
     const out: PaletteItem[] = [{ id: 'page-upload', group: 'Pages', label: 'Analyze a capture', keywords: 'upload new file home' }]
     if (analysisId) {
-      out.push({ id: 'page-overview', group: 'Pages', label: 'Overview', hint: '0', keywords: 'summary health' })
+      out.push(
+        { id: 'page-bad', group: 'Pages', label: 'Bad Traffic', hint: '0', keywords: 'issues overview summary health problems' },
+        { id: 'page-good', group: 'Pages', label: 'Good Traffic', hint: '9', keywords: 'healthy flows master filter' },
+      )
       PROTOCOL_PAGES.forEach((p, i) => out.push({ id: `page-${p.slug}`, group: 'Pages', label: p.title, hint: String(i + 1), keywords: p.protocol }))
     }
     out.push(
@@ -91,7 +94,6 @@ export default function Shortcuts() {
   const choose = (item: PaletteItem) => {
     setDialog(null)
     if (item.id === 'page-upload') navigate({ pathname: '/', search })
-    else if (item.id === 'page-overview') goTo('')
     else if (item.id.startsWith('page-')) goTo(item.id.slice(5))
     else if (item.id === 'act-theme') toggleTheme()
     else if (item.id === 'act-help') setDialog('help')
@@ -99,7 +101,7 @@ export default function Shortcuts() {
       const issue = result.issues.find((x) => `issue-${x.id}` === item.id)
       const page = PROTOCOL_PAGES.find((p) => issue && involvesProtocol(issue, p.protocol))
       if (issue && page) goTo(page.slug, { q: issue.title })
-      else goTo('')
+      else goTo('bad')
     }
   }
 
