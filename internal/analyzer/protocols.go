@@ -178,21 +178,18 @@ func protocolStats(packets []models.PacketInfo, flows []models.Flow, classes map
 // topFlowsOf returns the busiest flows (by bytes) that belong to protocol,
 // as their transport or application protocol.
 func topFlowsOf(flows []models.Flow, protocol string) []models.Flow {
-	var matching []models.Flow
-	for _, f := range flows {
+	var idx []int
+	for i := range flows {
+		f := &flows[i]
 		transport := string(f.Protocol)
 		if transport == "" {
 			transport = otherProtocol
 		}
 		if transport == protocol || f.AppProtocol == protocol {
-			matching = append(matching, f)
+			idx = append(idx, i)
 		}
 	}
-	top := topTalkers(matching, topFlowsPerProtocol)
-	if top == nil {
-		top = []models.Flow{}
-	}
-	return top
+	return topByBytes(flows, idx, topFlowsPerProtocol)
 }
 
 // annotateProtocols fills in the protocols of issues and of their

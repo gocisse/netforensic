@@ -8,6 +8,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"runtime/debug"
 	"strconv"
 	"strings"
 
@@ -24,6 +25,10 @@ import (
 var errExportCSVPrefix = errors.New("--export-csv needs a file name prefix, for example --export-csv report (writes report_flows.csv, report_issues.csv and report_protocols.csv)")
 
 var validServices = []string{"all", "dns", "http", "tls", "https", "<port>"}
+
+// bigCaptureBytes is the file size from which the garbage collector is
+// tightened (see the use in the root command).
+const bigCaptureBytes = 32 << 20
 
 func main() {
 	cmd := newRootCmd()
@@ -119,8 +124,14 @@ func newRootCmdWith(startServer func(addr string, a *auth.Service) error) *cobra
 				return fmt.Errorf("--follow and --follow-packets only support text output")
 			}
 
-			// Stream reconstruction needs whole payloads, not previews.
-			packets, stats, err := pcap.ReadPacketsStats(args[0], pcap.ReadOptions{FullPayload: follow != ""})
+			// A big capture holds gigabytes of packets: collect garbage sooner
+			// (50% instead of 100% over the live data) to lower the peak.
+			if fi, serr := os.Stat(args[0]); serr == nil && fi.Size() >= bigCaptureBytes {
+				debug.SetGCPercent(50)
+			}
+			// Stream reconstruction needs whole payloads, not previews, and
+			// nothing else looks at the previews.
+			packets, stats, err := pcap.ReadPacketsStats(args[0], pcap.ReadOptions{FullPayload: follow != "", SkipPreview: follow == "" && followPkts == ""})
 			var truncated *pcap.TruncatedError
 			if errors.As(err, &truncated) {
 				fmt.Fprintf(cmd.ErrOrStderr(), "warning: %s is truncated; analyzing the %d packets read before the cut\n", args[0], len(packets))

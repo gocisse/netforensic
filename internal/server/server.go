@@ -15,6 +15,7 @@ import (
 	"os/signal"
 	"path"
 	"path/filepath"
+	"runtime/debug"
 	"strings"
 	"syscall"
 	"time"
@@ -88,6 +89,7 @@ type handler struct {
 	maxUploadBytes int64
 	auth           *auth.Service
 	analyses       *analysisStore
+	gc             gcGovernor
 }
 
 // newHandler returns the router: the static UI from assets at "/", the login
@@ -236,7 +238,10 @@ func (h *handler) analyze(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, v)
 	}
 
-	packets, stats, err := pcap.ReadPacketsStats(tmpPath, pcap.ReadOptions{})
+	if fi, err := os.Stat(tmpPath); err == nil && fi.Size() >= bigUploadBytes {
+		defer h.gc.lower()()
+	}
+	packets, stats, err := pcap.ReadPacketsStats(tmpPath, pcap.ReadOptions{SkipPreview: true})
 	var truncated *pcap.TruncatedError
 	switch {
 	case errors.As(err, &truncated):
@@ -269,8 +274,19 @@ func (h *handler) analyze(w http.ResponseWriter, r *http.Request) {
 	res.FileName = name
 	res.Metadata = stats.Metadata
 	res.AnalysisID = h.analyses.put(res)
+	nPackets := len(packets)
+	packets = nil // the analysis keeps only what it derived; the packets can go
 	done(analysisResponse{res, res.Flows, res.HealthyFlows})
+	if nPackets >= freeMemoryAbove {
+		debug.FreeOSMemory() // hand the packets' memory back now, not at the scavenger's pace
+	}
 }
+
+// freeMemoryAbove is the number of packets from which a finished analysis
+// returns its memory to the operating system at once: the packets of a large
+// capture take gigabytes, which would otherwise stay with the process for
+// minutes after the work is done.
+const freeMemoryAbove = 200_000
 
 // progressEvent is one line of the progress stream of /api/analyze.
 type progressEvent struct {

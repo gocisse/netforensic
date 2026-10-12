@@ -10,6 +10,7 @@ import (
 	"io"
 	"net"
 	"os"
+	"slices"
 	"sort"
 	"strings"
 
@@ -55,6 +56,12 @@ type ReadOptions struct {
 	// PacketInfo.Payload (needed to reconstruct streams), at the cost of
 	// memory proportional to the capture size.
 	FullPayload bool
+
+	// SkipPreview drops the first bytes of each TCP/UDP payload that are
+	// otherwise kept in PacketInfo.PayloadPreview (about 180 bytes per
+	// packet with payload on a typical capture). Only stream reconstruction
+	// needs them; an analysis does not.
+	SkipPreview bool
 }
 
 // ReadStats accounts for every frame in a capture file, including the ones
@@ -197,6 +204,11 @@ func ReadPacketsStats(filePath string, opts ReadOptions) ([]models.PacketInfo, R
 	}
 
 	var packets []models.PacketInfo
+	var size int64
+	if fi, serr := f.Stat(); serr == nil {
+		size = fi.Size()
+	}
+	sized := false
 	for {
 		data, ci, err := src.ReadPacketData()
 		if errors.Is(err, io.EOF) && !src.cutShort() {
@@ -240,14 +252,48 @@ func ReadPacketsStats(filePath string, opts ReadOptions) ([]models.PacketInfo, R
 		if opts.FullPayload {
 			info.Payload = fullPayload(pkt)
 		}
+		if opts.SkipPreview {
+			info.PayloadPreview = nil
+		}
 		info.Timestamp = ci.Timestamp
 		info.Size = ci.Length
 		packets = append(packets, info)
+
+		// Growing a slice of a million packets by appending copies it again
+		// and again (a PacketInfo is about a kilobyte), which more than
+		// doubles the memory needed at the peak. Once enough of the file has
+		// been read to estimate its size, reserve room for all of it.
+		if !sized && stats.Frames%4096 == 0 {
+			if pos, perr := f.Seek(0, io.SeekCurrent); perr == nil {
+				if est := estimateFrames(stats.Frames, pos, size); est > 0 {
+					sized = true
+					if est > cap(packets) {
+						packets = slices.Grow(packets, est-len(packets))
+					}
+				}
+			}
+		}
 	}
 	stampConnections(packets, stats)
 	annotateHandshakes(packets)
 	stats.Metadata = src.metadata()
 	return packets, stats, nil
+}
+
+// presizeAfter is how many bytes of a file are read before the number of its
+// frames is estimated: far more than any read buffer, so that buffering does
+// not skew the estimate, and small files, which need no help, are left alone.
+const presizeAfter = 32 << 20
+
+// estimateFrames estimates how many frames a file of size bytes holds, given
+// that frames of them lie before offset pos. It returns 0 if too little has
+// been read to tell (see presizeAfter) or the numbers make no sense. It errs
+// on the high side by 2%, so that the slice it sizes rarely has to grow.
+func estimateFrames(frames int, pos, size int64) int {
+	if frames <= 0 || pos < presizeAfter || size <= pos {
+		return 0
+	}
+	return int(float64(frames) * float64(size) / float64(pos) * 1.02)
 }
 
 // linkTypeSupported reports whether gopacket has a real decoder for lt.

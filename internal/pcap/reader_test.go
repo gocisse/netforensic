@@ -863,3 +863,48 @@ func TestTCPFlagNames(t *testing.T) {
 	assert.Equal(t, "FIN,PSH,ACK", tcpFlagNames(0x19))
 	assert.Equal(t, "FIN,SYN,RST,PSH,ACK,URG,ECE,CWR", tcpFlagNames(0xff))
 }
+
+func TestEstimateFrames(t *testing.T) {
+	const mb = 1 << 20
+	tests := []struct {
+		name            string
+		frames          int
+		pos, size, want int64
+	}{
+		{"too little read to tell", 100000, 8 * mb, 300 * mb, 0},
+		{"a small file needs no help", 4096, 20 * mb, 21 * mb, 0},
+		{"no frames", 0, 40 * mb, 300 * mb, 0},
+		{"already at the end", 500000, 300 * mb, 300 * mb, 0},
+		{"size unknown", 500000, 40 * mb, 0, 0},
+		{"a tenth of the file read: ten times the frames, 2% over", 100000, 40 * mb, 400 * mb, 1020000},
+		{"half read", 250000, 150 * mb, 300 * mb, 510000},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, int(tt.want), estimateFrames(tt.frames, tt.pos, tt.size))
+		})
+	}
+}
+
+func TestReadPacketsSkipPreview(t *testing.T) {
+	path := filepath.Join("..", "..", "testdata", "Lab-7-TCPIssues.pcapng")
+	withPreview, err := ReadPacketsWithOptions(path, ReadOptions{})
+	require.NoError(t, err)
+	without, err := ReadPacketsWithOptions(path, ReadOptions{SkipPreview: true})
+	require.NoError(t, err)
+	require.Equal(t, len(withPreview), len(without))
+
+	payloads := 0
+	for i := range withPreview {
+		if withPreview[i].PayloadSize > 0 {
+			payloads++
+			assert.NotEmpty(t, withPreview[i].PayloadPreview, "packet %d keeps its preview by default", i)
+		}
+		assert.Empty(t, without[i].PayloadPreview, "packet %d drops it with SkipPreview", i)
+		// nothing else differs
+		a, b := withPreview[i], without[i]
+		a.PayloadPreview, b.PayloadPreview = nil, nil
+		assert.Equal(t, a, b, "packet %d", i)
+	}
+	assert.Positive(t, payloads)
+}

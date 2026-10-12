@@ -39,6 +39,40 @@ const (
 	StageReporting = "reporting"
 )
 
+// Memory use on large captures
+//
+// Profiled on a synthetic capture of 1.5 million packets in 115,000 flows,
+// with 171,000 issues (cmd/gencap -packets 1500000 -duration 5m), the memory
+// went to, biggest first:
+//
+//  1. The packets: a models.PacketInfo is about 1 KB (every protocol's
+//     fields live in the one struct), so the packet slice alone is 1.6 GB, and
+//     the first 512 payload bytes kept per packet added 0.2 GB. All of it is
+//     live until the analysis is done. This is the floor for the peak, and what
+//     is left to gain: moving the rarely used per-protocol fields behind one
+//     pointer would save more than half of it, but touches every analyzer and
+//     test fixture, so it is not done. The server and the CLI no longer keep
+//     the payload previews (pcap.ReadOptions.SkipPreview), size the slice from
+//     the file instead of growing it by appending (growing copied it several
+//     times over: 8.4 GB of allocations while reading), tighten the garbage
+//     collector for big captures, and the server returns the packets' memory to
+//     the operating system as soon as the analysis is stored.
+//  2. Copies of the packets made during the analysis: applyPerformanceMetrics
+//     gave every TCP flow its own slice of packet values, a second copy of
+//     every TCP packet (1.3 GB held at once, 4.9 GB allocated, all garbage
+//     afterwards). It now keeps indices and copies one flow's packets at a
+//     time into a reused buffer. hasTCPFlag and consumesSeq split the flags
+//     string on every call, which allocated 1 GB; they no longer do. Altogether
+//     the analysis allocates 4.2 GB instead of 10.6 GB, and runs about a
+//     quarter faster.
+//  3. The result itself, which the server keeps for two hours: 443 MB, of which
+//     157 MB were not data but a leak: topTalkers, slowFlows and topFlowsOf
+//     sorted a copy of all the flows and returned its first five, which kept
+//     the whole copy alive. They now copy just the flows they return. What is
+//     left, 284 MB, is the flows, the issues (their descriptions are 40 MB of
+//     it), the diagnosis timeline (one entry per issue, 37 MB) and the flow
+//     timelines (45 MB).
+//
 // AnalyzeWithProgress is AnalyzeWithIssues that calls progress (if not nil)
 // with the name of each stage as it starts: StageClassifying, StageDetecting
 // and StageReporting. The callback runs on the calling goroutine; the
@@ -353,15 +387,7 @@ func isKeepAlive(p models.PacketInfo, next uint32, haveNext bool) bool {
 // consumesSeq reports whether a TCP packet occupies sequence space, i.e. it
 // carries payload or a SYN/FIN flag.
 func consumesSeq(p models.PacketInfo) bool {
-	if p.PayloadSize > 0 {
-		return true
-	}
-	for _, f := range strings.Split(p.TCPFlags, ",") {
-		if f == "SYN" || f == "FIN" {
-			return true
-		}
-	}
-	return false
+	return p.PayloadSize > 0 || hasTCPFlag(p.TCPFlags, "SYN") || hasTCPFlag(p.TCPFlags, "FIN")
 }
 
 // detectIssues inspects flows and returns any anomalies found: one issue
@@ -383,14 +409,21 @@ func detectIssues(flows []models.Flow) []models.Issue {
 
 // topTalkers returns up to n flows with the most total bytes, descending.
 func topTalkers(flows []models.Flow, n int) []models.Flow {
-	sorted := append([]models.Flow(nil), flows...)
-	sort.SliceStable(sorted, func(i, j int) bool {
-		return sorted[i].BytesSent+sorted[i].BytesRecv > sorted[j].BytesSent+sorted[j].BytesRecv
-	})
-	if len(sorted) > n {
-		sorted = sorted[:n]
+	idx := make([]int, len(flows))
+	for i := range idx {
+		idx[i] = i
 	}
-	return sorted
+	return topByBytes(flows, idx, n)
+}
+
+// topByBytes returns copies of the n flows among flows[idx...] with the most
+// total bytes, descending, and nothing else: the result must not keep the
+// whole slice of flows alive, which for a large capture is hundreds of
+// megabytes. It sorts idx.
+func topByBytes(flows []models.Flow, idx []int, n int) []models.Flow {
+	bytes := func(i int) int { return flows[i].BytesSent + flows[i].BytesRecv }
+	sort.SliceStable(idx, func(a, b int) bool { return bytes(idx[a]) > bytes(idx[b]) })
+	return pick(flows, idx, n)
 }
 
 // noteSIP adds the SIP details of p, if it carries any, to flow f: each

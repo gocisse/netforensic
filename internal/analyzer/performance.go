@@ -39,29 +39,49 @@ const (
 // first reverse-direction ACK covering it; retransmitted segments are
 // skipped because their ACK is ambiguous.
 func applyPerformanceMetrics(packets []models.PacketInfo, flows []models.Flow) ([]models.Flow, []models.Issue) {
-	byID := make(map[string][]models.PacketInfo)
+	// The packets of each TCP flow, as indices into packets: copying the
+	// packets themselves (about a kilobyte each) would hold every TCP packet
+	// of the capture a second time. The flow ID is built once per connection,
+	// not once per packet.
+	byKey := make(map[instKey]*[]int32)
+	byID := make(map[string]*[]int32)
 	insts := models.ConnectionInstances(packets)
-	for i, p := range packets {
+	for i := range packets {
+		p := &packets[i]
 		if p.Protocol != models.ProtocolTCP {
 			continue
 		}
-		k, _ := canonicalKey(p)
-		id := instKey{k, insts[i]}.id()
-		byID[id] = append(byID[id], p)
+		k, _ := canonicalKey(*p)
+		ik := instKey{k, insts[i]}
+		list := byKey[ik]
+		if list == nil {
+			list = new([]int32)
+			byKey[ik] = list
+			byID[ik.id()] = list
+		}
+		*list = append(*list, int32(i))
 	}
 
 	out := append([]models.Flow(nil), flows...)
 	var issues []models.Issue
+	var buf []models.PacketInfo
 
 	for i := range out {
 		f := &out[i]
 		if f.Protocol != models.ProtocolTCP {
 			continue
 		}
-		pkts := byID[f.ID]
-		if len(pkts) == 0 {
+		list := byID[f.ID]
+		if list == nil || len(*list) == 0 {
 			continue
 		}
+		// Only this flow's packets are copied, one flow at a time, into a
+		// buffer that is reused for the next flow.
+		pkts := buf[:0]
+		for _, idx := range *list {
+			pkts = append(pkts, packets[idx])
+		}
+		buf = pkts
 		sort.SliceStable(pkts, func(a, b int) bool { return pkts[a].Timestamp.Before(pkts[b].Timestamp) })
 
 		f.SetupTimeMs, f.TTFBMs = handshakeMetrics(pkts)
@@ -185,7 +205,15 @@ func rttMetrics(pkts []models.PacketInfo) (avgMs, maxMs float64) {
 
 // hasTCPFlag reports whether the comma-separated flags string includes flag.
 func hasTCPFlag(flags, flag string) bool {
-	for _, f := range strings.Split(flags, ",") {
+	// Walks the comma-separated list without splitting it: this runs several
+	// times per packet, and strings.Split allocated a slice every time.
+	for len(flags) > 0 {
+		f := flags
+		if i := strings.IndexByte(flags, ','); i >= 0 {
+			f, flags = flags[:i], flags[i+1:]
+		} else {
+			flags = ""
+		}
 		if f == flag {
 			return true
 		}
@@ -296,21 +324,30 @@ func aggregateFlowMetric(flows []models.Flow, kind, title string, value func(mod
 	return aggregated{is, value(hit[0])}, true
 }
 
-// slowFlows returns up to n flows ordered by their worst timing metric.
+// slowFlows returns up to n flows ordered by their worst timing metric. The
+// result holds copies of just those flows: slicing a copy of all of them
+// would keep every flow of the capture alive.
 func slowFlows(flows []models.Flow, n int) []models.Flow {
-	worst := func(f models.Flow) float64 { return math.Max(math.Max(f.SetupTimeMs, f.TTFBMs), f.MaxRTTMs) }
-	var out []models.Flow
-	for _, f := range flows {
-		if worst(f) > 0 {
-			out = append(out, f)
+	worst := func(f *models.Flow) float64 { return math.Max(math.Max(f.SetupTimeMs, f.TTFBMs), f.MaxRTTMs) }
+	var idx []int
+	for i := range flows {
+		if worst(&flows[i]) > 0 {
+			idx = append(idx, i)
 		}
 	}
-	sort.SliceStable(out, func(i, j int) bool { return worst(out[i]) > worst(out[j]) })
-	if len(out) > n {
-		out = out[:n]
+	sort.SliceStable(idx, func(a, b int) bool { return worst(&flows[idx[a]]) > worst(&flows[idx[b]]) })
+	return pick(flows, idx, n)
+}
+
+// pick returns copies of the first n of the flows at idx (all of them if
+// there are fewer), never nil.
+func pick(flows []models.Flow, idx []int, n int) []models.Flow {
+	if len(idx) > n {
+		idx = idx[:n]
 	}
-	if out == nil {
-		out = []models.Flow{}
+	out := make([]models.Flow, len(idx))
+	for i, j := range idx {
+		out[i] = flows[j]
 	}
 	return out
 }
