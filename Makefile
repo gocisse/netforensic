@@ -9,6 +9,7 @@ DIST_DIR    := $(WEB_DIR)/dist
 BUILD_DIR   := build
 RELEASE_DIR := release
 LDFLAGS     := -s -w
+VERSION     := $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 
 # The module is pure Go (no cgo), so release builds cross-compile cleanly.
 PLATFORMS   := linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64
@@ -98,15 +99,24 @@ check: fmt-check vet lint-web test ## Everything CI should run
 # ---------------------------------------------------------------- release
 
 .PHONY: release
-release: frontend ## Cross-compile binaries into release/
-	@mkdir -p $(RELEASE_DIR)
+release: frontend ## Cross-compile and package one .zip per platform in release/
+	@command -v zip >/dev/null || { echo "zip is required"; exit 1; }
+	@rm -rf $(RELEASE_DIR) && mkdir -p $(RELEASE_DIR)
 	@for p in $(PLATFORMS); do \
 		os=$${p%/*}; arch=$${p#*/}; ext=""; \
 		[ "$$os" = windows ] && ext=".exe"; \
-		echo "building $$os/$$arch"; \
+		name=$(BINARY)-$(VERSION)-$$os-$$arch; \
+		stage=$(RELEASE_DIR)/$$name; \
+		echo "packaging $$name.zip"; \
+		mkdir -p $$stage && \
 		GOOS=$$os GOARCH=$$arch CGO_ENABLED=0 $(GO) build -ldflags "$(LDFLAGS)" \
-			-o $(RELEASE_DIR)/$(BINARY)-$$os-$$arch$$ext ./cmd/netforensic || exit 1; \
+			-o $$stage/$(BINARY)$$ext ./cmd/netforensic && \
+		cp README.md $$stage/ && \
+		(cd $(RELEASE_DIR) && zip -qr $$name.zip $$name) && \
+		rm -rf $$stage || exit 1; \
 	done
+	@cd $(RELEASE_DIR) && { command -v sha256sum >/dev/null && sha256sum *.zip || shasum -a 256 *.zip; } > SHA256SUMS
+	@ls -lh $(RELEASE_DIR)
 
 .PHONY: install
 install: frontend ## go install the binary into GOPATH/bin
