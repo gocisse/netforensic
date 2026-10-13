@@ -15,6 +15,7 @@ import { toParams } from '../filters/model'
 import { useFilters } from '../filters/useFilters'
 import { isCaptureNote } from '../format'
 import { PROTOCOL_PAGES, involvesProtocol } from '../protocols'
+import { worthShowing } from '../topology/model'
 import { saveBlob } from '../download'
 import { isTyping } from '../shortcuts/isTyping'
 import { useToast } from '../toast/useToast'
@@ -55,6 +56,9 @@ export default function AnalysisLayout() {
     for (const p of PROTOCOL_PAGES) out[p.protocol] = reportable.filter((i) => involvesProtocol(i, p.protocol)).length
     return out
   }, [reportable, issuesLoaded])
+
+  // The diagram is offered when the capture has issues, or one address carries much of the traffic.
+  const showTopology = useMemo(() => worthShowing(reportableTotal, flows), [reportableTotal, flows])
 
   const { applied } = filters
 
@@ -128,7 +132,7 @@ export default function AnalysisLayout() {
       <SummaryBar result={result} issues={reportableTotal} />
       <LoadProgressBar />
       <TrafficTabs id={id} issues={reportableTotal} goodFlows={result.counts?.healthy_flows ?? (result.healthy_flows ?? []).length} search={search} />
-      {!pathname.replace(/\/$/, '').endsWith('/good') && <ProtocolNav id={id} counts={counts} search={search} />}
+      {!pathname.replace(/\/$/, '').endsWith('/good') && <ProtocolNav id={id} counts={counts} search={search} topology={showTopology} />}
       {/* keyed by the page, so that a change of tab fades the new page in */}
       <div key={pathname} className="animate-fade-in" data-testid="page-transition">
         <Outlet context={view} />

@@ -8,6 +8,8 @@ interface Props {
   counts?: Record<string, number>
   /** The query string to carry from page to page, so that the filters follow. */
   search: string
+  /** Offer the network diagram: the capture has issues or a busy address. */
+  topology?: boolean
 }
 
 const tab = (active: boolean, dim: boolean) =>
@@ -23,7 +25,7 @@ const tab = (active: boolean, dim: boolean) =>
  * The tabs beneath Bad Traffic: all issues and one page per protocol, each with
  * its number of issues. The active tab is highlighted.
  */
-export default function ProtocolNav({ id, counts, search }: Props) {
+export default function ProtocolNav({ id, counts, search, topology = false }: Props) {
   return (
     <nav aria-label="Protocols" data-testid="protocol-nav" className="-mx-1 overflow-x-auto px-1 pb-1">
       <ul className="flex gap-2">
@@ -56,6 +58,13 @@ export default function ProtocolNav({ id, counts, search }: Props) {
             </li>
           )
         })}
+        {topology && (
+          <li>
+            <NavLink to={{ pathname: `/analysis/${id}/topology`, search }} data-testid="nav-topology" className={({ isActive }) => tab(isActive, false)}>
+              Network Topology
+            </NavLink>
+          </li>
+        )}
       </ul>
     </nav>
   )

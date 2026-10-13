@@ -13,6 +13,7 @@ import DefaultTab from './pages/DefaultTab'
 import GoodTraffic from './pages/GoodTraffic'
 import Overview from './pages/Overview'
 import DHCPv6Page from './pages/protocol/DHCPv6Page'
+import Topology from './pages/Topology'
 import DNSPage from './pages/protocol/DNSPage'
 import HTTPPage from './pages/protocol/HTTPPage'
 import QUICPage from './pages/protocol/QUICPage'
@@ -30,7 +31,7 @@ import UDPPage from './pages/protocol/UDPPage'
  *	/analysis/:id           opens Bad Traffic if there are issues, else Good Traffic
  *	/analysis/:id/bad       Bad Traffic: the issues
  *	/analysis/:id/good      Good Traffic: the flows without issues
- *	/analysis/:id/<proto>   the issues of one protocol (tcp, udp, dns, http, tls, sip, dhcpv6, quic)
+ *	/analysis/:id/<proto>   the issues of one protocol (tcp, udp, dns, http, tls, sip, dhcpv6, quic), /analysis/:id/topology the network diagram
  */
 function Gate() {
   const { session } = useAuth()
@@ -54,6 +55,7 @@ function Gate() {
             <Route path="sip" element={<SIPPage />} />
             <Route path="dhcpv6" element={<DHCPv6Page />} />
             <Route path="quic" element={<QUICPage />} />
+            <Route path="topology" element={<Topology />} />
             <Route path="*" element={<Navigate to=".." replace />} />
           </Route>
           <Route path="*" element={<Navigate to="/" replace />} />

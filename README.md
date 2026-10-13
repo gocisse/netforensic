@@ -430,6 +430,39 @@ together with the ID of the analysis, which the server keeps in memory (the last
 server has restarted or the analysis has expired, in which case the page says so
 and keeps the filters.
 
+**Network Topology.** Beneath Bad Traffic, a "Network Topology" tab (offered when
+the capture has issues, or when one address carries a quarter or more of all the
+bytes, such as a DNS server asked by everybody) draws the capture as a graph on
+a canvas: a circle per IP address and a line per pair of addresses that talk,
+with an arrow toward the side that receives most of the bytes. A circle is red
+if an issue names the address, yellow if it is among the busiest tenth and
+green otherwise, and grows with its traffic; a line is as thick as its traffic
+and red if it carries issues. The layout is force-directed (no library: nodes
+push each other apart, lines pull their ends together) and settles within a few
+seconds. The mouse wheel zooms around the pointer, dragging pans, "Reset View"
+fits the graph again, hovering an address shows its role, traffic and issue
+count, and clicking it lists the issues that name it (click one for its
+details; an affected flow there filters Bad Traffic to it). Checkboxes show or
+hide connections by protocol and by the worst severity of their issues, and the
+search box highlights an address (Enter opens its issues). Only what is in view
+is drawn, and at most one picture is drawn per animation frame. A large capture
+is cut to its 500 most telling addresses: the busiest half of them, then those
+with the worst issues; the page says how many there were. The data comes from
+`GET /api/analysis/{id}/topology` (optional `?max=N`, at most 2,000 nodes):
+
+```bash
+curl -H "Authorization: Bearer $TOKEN" http://localhost:8181/api/analysis/$ID/topology
+# {"nodes":[{"ip":"10.0.0.53","type":"dns_server","traffic_volume":612927,"packets":958,
+#            "issue_count":2,"worst_severity":"ERROR","is_problematic":true,"protocols":["DNS","UDP"]}, ...],
+#  "edges":[{"source":"10.0.0.53","target":"10.0.0.1","packets":20,"bytes":5000,"issues":0,"protocol":"DNS"}, ...],
+#  "total_nodes":120,"total_edges":178,"truncated":false}
+```
+
+A node's `type` is `dns_server` or `dhcp_server` (the side with port 53 or 67 of
+a DNS or DHCP flow), `server` (the side with a well-known port, below 1024, of
+other flows) or `client`. A connection between two addresses is one edge however
+many flows it holds.
+
 **Export Filtered** downloads the flows, issues and protocol distribution that
 pass the filters as CSV files in one zip, with the same tables as the CLI's
 `--export-csv`. Over HTTP:
@@ -473,8 +506,8 @@ curl -F "file=@capture.pcapng" -H "Authorization: Bearer $TOKEN" http://localhos
 ```
 
 `POST /api/login` returns a signed JWT that is valid for 24 hours;
-`POST /api/analyze`, `POST /api/change-password`, `GET /api/analysis/{id}` and
-`GET /api/export-csv` need it in an `Authorization: Bearer` header, and answer 401 without one. `POST /api/analyze`
+`POST /api/analyze`, `POST /api/change-password`, `GET /api/analysis/{id}` (and its
+`/topology`) and `GET /api/export-csv` need it in an `Authorization: Bearer` header, and answer 401 without one. `POST /api/analyze`
 takes a multipart upload in the field `file` (`.pcap` or `.pcapng`, up to
 512 MiB) and answers with the JSON of `-o json`; errors come back as
 `{"error": "..."}` with status 400, 401, 413 or 500. New passwords need 6 to 72

@@ -16,6 +16,7 @@ import (
 	"path"
 	"path/filepath"
 	"runtime/debug"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -315,7 +316,8 @@ type analysisResponse struct {
 	Healthy []models.Flow `json:"healthy_flows"`
 }
 
-// getAnalysis answers GET /api/analysis/{id} with an analysis the server still
+// getAnalysis answers GET /api/analysis/{id}/topology with the network graph of
+// an analysis (see getTopology), and GET /api/analysis/{id} with an analysis the server still
 // holds, so that the page can show it again after a refresh.
 func (h *handler) getAnalysis(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
@@ -323,9 +325,19 @@ func (h *handler) getAnalysis(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusMethodNotAllowed, "use GET")
 		return
 	}
-	res, ok := h.analyses.get(strings.TrimPrefix(r.URL.Path, "/api/analysis/"))
+	id, sub, _ := strings.Cut(strings.TrimPrefix(r.URL.Path, "/api/analysis/"), "/")
+	res, ok := h.analyses.get(id)
 	if !ok {
 		writeError(w, http.StatusNotFound, "that analysis is no longer available; upload the capture again")
+		return
+	}
+	switch sub {
+	case "":
+	case "topology":
+		h.getTopology(w, r, res)
+		return
+	default:
+		writeError(w, http.StatusNotFound, "no such resource")
 		return
 	}
 	if r.URL.Query().Get("chunked") == "1" {
@@ -385,4 +397,20 @@ func uploadStatus(err error) int {
 		return http.StatusRequestEntityTooLarge
 	}
 	return http.StatusBadRequest
+}
+
+// getTopology answers GET /api/analysis/{id}/topology with the addresses of an
+// analysis and the traffic between them. ?max=N keeps at most N nodes (500 by
+// default, never more than 2,000).
+func (h *handler) getTopology(w http.ResponseWriter, r *http.Request, res *models.AnalysisResult) {
+	limit := 0
+	if v := r.URL.Query().Get("max"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil || n < 1 {
+			writeError(w, http.StatusBadRequest, "max must be a positive number")
+			return
+		}
+		limit = n
+	}
+	writeJSON(w, http.StatusOK, analyzer.BuildTopology(res.Flows, res.Issues, limit))
 }

@@ -175,3 +175,38 @@ export type ApiResult = AnalysisResult | EmptyResult
 export function isEmptyResult(r: ApiResult): r is EmptyResult {
   return !('diagnosis' in r) || r.diagnosis == null
 }
+
+/** One address of the network topology (GET /api/analysis/{id}/topology). */
+export interface TopologyNode {
+  ip: string
+  /** The role: dns_server, dhcp_server, server or client. */
+  type: string
+  /** Bytes of all the flows the address is in. */
+  traffic_volume: number
+  packets: number
+  /** How many issues name the address, and the worst of their severities. */
+  issue_count: number
+  worst_severity?: Severity
+  is_problematic: boolean
+  protocols: string[]
+}
+
+/** The traffic between two addresses, in the direction of most of its bytes. */
+export interface TopologyEdge {
+  source: string
+  target: string
+  packets: number
+  bytes: number
+  issues: number
+  worst_severity?: Severity
+  protocol: string
+}
+
+export interface Topology {
+  nodes: TopologyNode[]
+  edges: TopologyEdge[]
+  /** How many there were before a large capture was cut to its most telling nodes. */
+  total_nodes: number
+  total_edges: number
+  truncated: boolean
+}

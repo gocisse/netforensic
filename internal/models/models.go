@@ -65,6 +65,45 @@ type DHCPInfo struct {
 	Message      string `json:"message,omitempty"`       // option 56, for example the reason of a NAK
 }
 
+// TopologyNode is one address of a capture in the network topology.
+type TopologyNode struct {
+	IP string `json:"ip"`
+	// Type is the role the address plays: "dns_server", "dhcp_server",
+	// "server" (it answers on a well-known port) or "client".
+	Type string `json:"type"`
+	// TrafficVolume is the bytes of all the flows the address is in; Packets is their packets.
+	TrafficVolume int64 `json:"traffic_volume"`
+	Packets       int   `json:"packets"`
+	// IssueCount is how many issues name the address; WorstSeverity is the worst of them.
+	IssueCount    int      `json:"issue_count"`
+	WorstSeverity Severity `json:"worst_severity,omitempty"`
+	IsProblematic bool     `json:"is_problematic"`
+	Protocols     []string `json:"protocols"`
+}
+
+// TopologyEdge is the traffic between two addresses, in the direction of most of its bytes.
+type TopologyEdge struct {
+	Source        string   `json:"source"`
+	Target        string   `json:"target"`
+	Packets       int      `json:"packets"`
+	Bytes         int64    `json:"bytes"`
+	Issues        int      `json:"issues"`
+	WorstSeverity Severity `json:"worst_severity,omitempty"`
+	// Protocol is the application protocol of most of the packets, else the transport.
+	Protocol string `json:"protocol"`
+}
+
+// Topology is the network of a capture as a graph: its addresses and the
+// traffic between them. A large capture is cut to its most telling nodes;
+// TotalNodes and TotalEdges say how many there were before.
+type Topology struct {
+	Nodes      []TopologyNode `json:"nodes"`
+	Edges      []TopologyEdge `json:"edges"`
+	TotalNodes int            `json:"total_nodes"`
+	TotalEdges int            `json:"total_edges"`
+	Truncated  bool           `json:"truncated"`
+}
+
 // Severity represents the severity level of a detected issue.
 type Severity string
 

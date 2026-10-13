@@ -435,3 +435,64 @@ func TestFlowsCarryTimelines(t *testing.T) {
 		}
 	})
 }
+
+func TestTopologyEndpoint(t *testing.T) {
+	h := authed(t, testAssets, maxUploadBytes)
+	a := uploadLab(t, h, lab7, "Lab-7.pcapng")
+	require.NotEmpty(t, a.AnalysisID)
+
+	t.Run("the graph of an analysis", func(t *testing.T) {
+		rec := get(h, "/api/analysis/"+a.AnalysisID+"/topology", nil)
+		require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+		var topo models.Topology
+		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &topo))
+		require.Len(t, topo.Nodes, 2)
+		require.Len(t, topo.Edges, 1)
+		assert.Equal(t, 2, topo.TotalNodes)
+		for _, n := range topo.Nodes {
+			assert.True(t, n.IsProblematic, n.IP)
+			assert.Equal(t, 1, n.IssueCount, n.IP)
+		}
+		assert.Equal(t, 1, topo.Edges[0].Issues)
+		for _, field := range []string{`"ip"`, `"type"`, `"traffic_volume"`, `"issue_count"`, `"protocols"`, `"is_problematic"`, `"source"`, `"target"`, `"packets"`, `"bytes"`, `"issues"`, `"protocol"`} {
+			assert.Contains(t, rec.Body.String(), field)
+		}
+	})
+
+	t.Run("max limits the nodes", func(t *testing.T) {
+		rec := get(h, "/api/analysis/"+a.AnalysisID+"/topology", url.Values{"max": {"1"}})
+		require.Equal(t, http.StatusOK, rec.Code)
+		var topo models.Topology
+		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &topo))
+		assert.Len(t, topo.Nodes, 1)
+		assert.Equal(t, 2, topo.TotalNodes)
+		assert.True(t, topo.Truncated)
+		assert.Empty(t, topo.Edges)
+	})
+
+	for _, tt := range []struct {
+		name, path string
+		params     url.Values
+		want       int
+	}{
+		{"a bad max", "/api/analysis/" + a.AnalysisID + "/topology", url.Values{"max": {"abc"}}, http.StatusBadRequest},
+		{"a zero max", "/api/analysis/" + a.AnalysisID + "/topology", url.Values{"max": {"0"}}, http.StatusBadRequest},
+		{"an unknown analysis", "/api/analysis/nope/topology", nil, http.StatusNotFound},
+		{"an unknown resource", "/api/analysis/" + a.AnalysisID + "/other", nil, http.StatusNotFound},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, get(h, tt.path, tt.params).Code)
+		})
+	}
+
+	t.Run("it needs the login", func(t *testing.T) {
+		inner := newHandler(testAssets, maxUploadBytes, testAuth(t))
+		rec := httptest.NewRecorder()
+		inner.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/analysis/"+a.AnalysisID+"/topology", nil))
+		assert.Equal(t, http.StatusUnauthorized, rec.Code)
+	})
+
+	t.Run("the analysis itself is unchanged", func(t *testing.T) {
+		assert.Equal(t, http.StatusOK, get(h, "/api/analysis/"+a.AnalysisID, nil).Code)
+	})
+}

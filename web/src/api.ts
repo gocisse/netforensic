@@ -1,6 +1,6 @@
 import { parseLines } from './analysis/stream.ts'
 import type { ChunkEvent } from './analysis/stream.ts'
-import type { EmptyResult } from './types'
+import type { EmptyResult, Topology } from './types'
 import { isEmptyResult } from './types'
 
 /** An error with a message that is fit to show to the user. */
@@ -257,6 +257,12 @@ export class ApiClient {
       throw new ApiError('The connection to the analysis server was lost while the analysis was loading.')
     }
     if (carry.trim() !== '') handle(carry)
+  }
+
+  /** Fetches the network topology of an analysis the server still holds. */
+  async getTopology(analysisId: string, signal?: AbortSignal): Promise<Topology> {
+    const response = await this.send(`/api/analysis/${encodeURIComponent(analysisId)}/topology`, {}, { signal })
+    return (await response.json()) as Topology
   }
 
   /**
