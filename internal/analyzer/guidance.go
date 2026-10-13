@@ -253,6 +253,8 @@ func (g guide) filterFor(is models.Issue) string {
 		return g.dnsFilter(is)
 	case "SIP":
 		return g.sipFilter(is)
+	case "DHCP":
+		return g.dhcpFilter(is)
 	case "DHCPv6":
 		return g.dhcpv6Filter(is)
 	case "QUIC":
@@ -366,6 +368,27 @@ func (g guide) sipFilter(is models.Issue) string {
 		return and(fmt.Sprintf("sip.CSeq.method == %s", wsString(method)), eqAny("sip.Status-Code", codes))
 	case titleSIPErrorRate:
 		return and(g.flowsTerm(is, "udp"), "sip.Status-Code >= 400")
+	}
+	return ""
+}
+
+func (g guide) dhcpFilter(is models.Issue) string {
+	switch is.Title {
+	case titleDHCPNak, titleDHCPExhaustion:
+		// The server is named by its Server Identifier option, which need not be the address the NAK came from (a relay's).
+		server := ""
+		if ip, _, ok := hostPort(is.Target); ok {
+			server = fmt.Sprintf("dhcp.option.dhcp_server_id == %s", ipLiteral(ip))
+		}
+		return and("dhcp.option.dhcp == 6", server)
+	case titleDHCPFailRate:
+		return "(dhcp.option.dhcp == 3 || dhcp.option.dhcp == 6)"
+	case titleDHCPTimeout:
+		dst := ""
+		if ip, _, ok := hostPort(is.Target); ok {
+			dst = fmt.Sprintf("ip.dst == %s", ipLiteral(ip))
+		}
+		return and("dhcp.option.dhcp == 1", dst)
 	}
 	return ""
 }

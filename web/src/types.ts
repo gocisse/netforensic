@@ -74,12 +74,16 @@ export interface Flow {
   tcp_stream?: number
   /** Set when the flow was decapsulated from a tunnel: "KIND:outer~outer". */
   tunnel?: string
-  /** DNS, HTTP, TLS, SIP, DHCPv6 or QUIC, if recognized in the flow. */
+  /** DNS, HTTP, TLS, SIP, DHCP, DHCPv6 or QUIC, if recognized in the flow. */
   app_protocol?: string
   /** SIP flows: the request methods seen (comma-separated), the first Call-ID and the first User-Agent. */
   sip_method?: string
   sip_call_id?: string
   sip_user_agent?: string
+  /** DHCP (IPv4) flows: the message types seen (comma-separated), the first client hardware address and the server. */
+  dhcp_message_types?: string
+  dhcp_client_mac?: string
+  dhcp_server_ip?: string
   /** DHCPv6 flows: the message types seen (comma-separated) and the first client and server identifiers (hex). */
   dhcpv6_message_types?: string
   dhcpv6_client_id?: string

@@ -99,6 +99,31 @@ message of a packet is read, and a message that IP fragmentation split across
 packets (a large INVITE with SDP can exceed the MTU) is not reassembled, so
 that request is not seen.
 
+**DHCP (IPv4)**: DHCP messages are decoded on UDP ports 67 and 68 when they
+carry the BOOTP header, the magic cookie and a DHCP Message Type option (53):
+Discover, Offer, Request, Decline, Ack, Nak, Release and Inform, with the
+transaction ID, the client hardware address (`chaddr`), the client, your and
+server addresses (`ciaddr`, `yiaddr`, `siaddr`) and the options subnet mask (1),
+router (3), DNS servers (6), lease time (51), Server Identifier (54) and message
+(56, the reason of a NAK). DHCP appears as an application protocol in the
+protocol distribution, and its flows carry `dhcp_message_types`,
+`dhcp_client_mac` and `dhcp_server_ip` (a "DHCP FLOWS" table in the report;
+traffic on the DHCP ports that is not a readable DHCP message is still labelled
+DHCP by its port). Requests and answers are matched by transaction ID and client
+hardware address, not by flow, since a client broadcasts and the server answers
+from its own address. The server of a NAK is its Server Identifier, else the
+address it came from.
+
+| Issue | Meaning |
+|---|---|
+| `DHCP NAK` (warning) | A server refused a request with a NAK, with the reason it gave. One issue per server. |
+| `Possible DHCP Address Exhaustion` (warning) | A server sent at least 3 NAKs. One issue per server. |
+| `High DHCP Failure Rate` (warning) | More than 20% of the requests were NAK'd, out of at least 5 requests (a NAK whose request was not captured counts as one). One issue for the capture. |
+| `DHCP Timeout` (warning) | A Discover that got no Offer within 10 seconds (or only a later one), one issue per destination address. A Discover is only called unanswered if the capture lasted 10 seconds beyond it. |
+
+Frames in skipped link types (such as Ethernet mPackets) are not seen, so a
+capture that carries DHCP in them shows less of it than Wireshark does.
+
 **DHCPv6**: DHCPv6 messages (UDP ports 546 and 547, or any port if the
 payload is a well-formed message with a Client Identifier) are decoded:
 message type, transaction ID, client and server identifiers, the identity
@@ -322,7 +347,7 @@ above), and beneath Bad Traffic a navigation bar offers one page
 per protocol with its number of issues: TCP, UDP, DNS, HTTP, TLS, SIP, DHCPv6
 and QUIC (`/analysis/<id>/tcp`, `/udp`, `/dns`, `/http`, `/tls`, `/sip`,
 `/dhcpv6`, `/quic`). A protocol page lists every issue that involves the
-protocol (TCP's includes those of HTTP and TLS, UDP's those of DNS, SIP, DHCPv6
+protocol (TCP's includes those of HTTP and TLS, UDP's those of DNS, SIP, DHCP, DHCPv6
 and QUIC), worst first, each with its description, the flows and names it
 affects (click a flow to filter the page to it), what to do about it, and a
 Wireshark display filter. Severity checkboxes, a search box and the IP and port
@@ -349,6 +374,7 @@ no "open" button. Examples:
 | DNS Timeout | `dns.flags.response == 0 && !dns.response_in && dns.qry.name == "a.example"` |
 | HTTP errors | `tcp.stream eq 7 && http.response.code == 404` |
 | SIP Registration / Call Setup Failed | `sip.CSeq.method == "REGISTER" && sip.Status-Code == 403` |
+| DHCP NAK | `dhcp.option.dhcp == 6 && dhcp.option.dhcp_server_id == 192.168.0.1` |
 | DHCPv6 No Addresses Available | `(dhcpv6.msgtype == 2 \|\| dhcpv6.msgtype == 7) && dhcpv6.status_code == 2` |
 | QUIC Handshake Timeout | `quic.long.packet_type == 0 && ip.dst == 192.0.2.10 && udp.dstport == 443` |
 

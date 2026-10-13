@@ -61,6 +61,9 @@ func printTriageReport(w io.Writer, res *models.AnalysisResult) error {
 	if err := printSIPFlows(w, res.Flows); err != nil {
 		return err
 	}
+	if err := printDHCPFlows(w, res.Flows); err != nil {
+		return err
+	}
 	if err := printDHCPv6Flows(w, res.Flows); err != nil {
 		return err
 	}
@@ -178,6 +181,14 @@ var sipFlowTable = appFlowTable{
 	},
 }
 
+var dhcpFlowTable = appFlowTable{
+	app: models.ProtocolDHCP, heading: "DHCP FLOWS",
+	columns: []string{"MESSAGES", "CLIENT-MAC", "SERVER"},
+	row: func(f models.Flow) []string {
+		return []string{dash(f.DHCPMessageTypes), dash(f.DHCPClientMAC), dash(f.DHCPServerIP)}
+	},
+}
+
 var dhcpv6FlowTable = appFlowTable{
 	app: models.ProtocolDHCPv6, heading: "DHCPV6 FLOWS",
 	columns: []string{"MESSAGES", "CLIENT-ID", "SERVER-ID"},
@@ -198,6 +209,12 @@ var quicFlowTable = appFlowTable{
 // methods, the User-Agent and the Call-ID of their first message.
 func printSIPFlows(w io.Writer, flows []models.Flow) error {
 	return printAppFlows(w, flows, sipFlowTable)
+}
+
+// printDHCPFlows lists the busiest flows that carry DHCP (IPv4), with the
+// message types, the client hardware address and the server.
+func printDHCPFlows(w io.Writer, flows []models.Flow) error {
+	return printAppFlows(w, flows, dhcpFlowTable)
 }
 
 // printDHCPv6Flows lists the busiest flows that carry DHCPv6, with the

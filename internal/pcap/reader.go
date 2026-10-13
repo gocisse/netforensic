@@ -353,6 +353,7 @@ func packetInfo(pkt gopacket.Packet) (models.PacketInfo, bool) {
 		info.PayloadSize = len(t.Payload)
 		info.PayloadPreview = previewPayload(t.Payload)
 		fillSIP(&info, t.Payload)
+		fillDHCP(&info, t.Payload, info.SrcPort, info.DstPort)
 		fillDHCPv6(&info, t.Payload, info.SrcPort, info.DstPort)
 		fillQUIC(&info, t.Payload, info.SrcPort, info.DstPort)
 	case *layers.ICMPv4:

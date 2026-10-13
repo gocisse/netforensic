@@ -21,6 +21,7 @@ const (
 	ProtocolARP  Protocol = "ARP"
 	ProtocolSIP  Protocol = "SIP"
 
+	ProtocolDHCP   Protocol = "DHCP"
 	ProtocolDHCPv6 Protocol = "DHCPv6"
 	ProtocolQUIC   Protocol = "QUIC"
 )
@@ -46,6 +47,23 @@ var ipProtocolNames = map[uint8]Protocol{
 // the well-known protocols the tool recognizes but does not analyze, or ""
 // otherwise.
 func IPProtocolName(n uint8) Protocol { return ipProtocolNames[n] }
+
+// DHCPInfo is what is read from one DHCP (IPv4) message: the BOOTP header
+// fields and the options the tool uses.
+type DHCPInfo struct {
+	MsgType      int    `json:"msg_type"`                // option 53: 1 Discover ... 8 Inform
+	XID          uint32 `json:"xid"`                     // transaction ID
+	ClientMAC    string `json:"client_mac,omitempty"`    // chaddr
+	ClientIP     string `json:"client_ip,omitempty"`     // ciaddr, if not 0.0.0.0
+	YourIP       string `json:"your_ip,omitempty"`       // yiaddr, if not 0.0.0.0
+	NextServerIP string `json:"server_ip,omitempty"`     // siaddr, if not 0.0.0.0
+	ServerID     string `json:"server_id,omitempty"`     // option 54, the server's identifier
+	SubnetMask   string `json:"subnet_mask,omitempty"`   // option 1
+	Router       string `json:"router,omitempty"`        // option 3, the first router
+	DNS          string `json:"dns,omitempty"`           // option 6, the servers, comma-separated
+	LeaseSeconds uint32 `json:"lease_seconds,omitempty"` // option 51
+	Message      string `json:"message,omitempty"`       // option 56, for example the reason of a NAK
+}
 
 // Severity represents the severity level of a detected issue.
 type Severity string
@@ -179,6 +197,10 @@ type PacketInfo struct {
 	SIPCSeq       int    `json:"sip_cseq,omitempty"`       // the CSeq number
 	SIPCSeqMethod string `json:"sip_cseq_method,omitempty"`
 
+	// DHCP is set on UDP packets that carry a DHCP (IPv4) message. It is a
+	// pointer so that the other packets of a capture do not pay for it.
+	DHCP *DHCPInfo `json:"dhcp,omitempty"`
+
 	// DHCPv6 fields are set on UDP packets that carry a DHCPv6 message
 	// (DHCPv6MsgType != 0). A relay message (types 12 and 13) wraps the
 	// client or server message it relays: DHCPv6MsgType is the wrapper's
@@ -242,6 +264,14 @@ type Flow struct {
 	SIPMethod    string `json:"sip_method,omitempty"`
 	SIPCallID    string `json:"sip_call_id,omitempty"`
 	SIPUserAgent string `json:"sip_user_agent,omitempty"`
+
+	// DHCP details of a flow that carries DHCP (IPv4): the message types seen
+	// (each once, in order, by name, joined by commas), the first client
+	// hardware address and the first server (its Server Identifier, else the
+	// address that sent the first server message).
+	DHCPMessageTypes string `json:"dhcp_message_types,omitempty"`
+	DHCPClientMAC    string `json:"dhcp_client_mac,omitempty"`
+	DHCPServerIP     string `json:"dhcp_server_ip,omitempty"`
 
 	// DHCPv6 details of a flow that carries DHCPv6: the message types seen
 	// (each once, in order, by name, joined by commas) and the first client

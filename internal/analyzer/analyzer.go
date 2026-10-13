@@ -105,6 +105,7 @@ func AnalyzeWithProgress(packets []models.PacketInfo, service string, progress f
 	issues = append(issues, analyzeHTTP(packets)...)
 	issues = append(issues, analyzeTLS(packets)...)
 	issues = append(issues, analyzeSIP(packets)...)
+	issues = append(issues, analyzeDHCP(packets)...)
 	issues = append(issues, analyzeDHCPv6(packets)...)
 	issues = append(issues, analyzeQUIC(packets)...)
 	issues = append(issues, analyzeICMP(packets)...)
@@ -332,6 +333,7 @@ func aggregateFlows(packets []models.PacketInfo) []models.Flow {
 
 		f.PacketCount++
 		noteSIP(f, p)
+		noteDHCP(f, p)
 		noteDHCPv6(f, p)
 		noteQUIC(f, p)
 		if forward {

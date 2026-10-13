@@ -19,6 +19,7 @@ type flowClass struct {
 	app       models.Protocol // DNS, HTTP, TLS or SIP if recognized in the flow, else ""
 	sipPort   bool            // a packet used a well-known SIP port (5060, 5061)
 	dhcpPort  bool            // a UDP packet used a DHCPv6 port (546, 547)
+	dhcp4Port bool            // a UDP packet used a DHCP port (67, 68)
 }
 
 // transportName is the transport protocol as shown to users.
@@ -74,6 +75,8 @@ func classifyFlows(packets []models.PacketInfo) (map[string]*flowClass, []*flowC
 			c.app = models.ProtocolHTTP
 		case (p.SIPMethod != "" || p.SIPStatusCode != 0) && c.app != models.ProtocolDNS:
 			c.app = models.ProtocolSIP
+		case p.DHCP != nil && c.app != models.ProtocolDNS:
+			c.app = models.ProtocolDHCP
 		case p.DHCPv6MsgType != 0 && c.app != models.ProtocolDNS:
 			c.app = models.ProtocolDHCPv6
 		case p.QUICLongHeader && c.app != models.ProtocolDNS:
@@ -85,6 +88,9 @@ func classifyFlows(packets []models.PacketInfo) (map[string]*flowClass, []*flowC
 		if isDHCPv6Port(p) {
 			c.dhcpPort = true
 		}
+		if isDHCPPort(p) {
+			c.dhcp4Port = true
+		}
 	}
 	for _, c := range classes {
 		switch {
@@ -93,6 +99,8 @@ func classifyFlows(packets []models.PacketInfo) (map[string]*flowClass, []*flowC
 			c.app = models.ProtocolSIP
 		case c.dhcpPort:
 			c.app = models.ProtocolDHCPv6
+		case c.dhcp4Port:
+			c.app = models.ProtocolDHCP
 		}
 	}
 	return classes, perPacket
@@ -110,6 +118,12 @@ func isSIPPort(p models.PacketInfo) bool {
 		return false
 	}
 	return p.SrcPort == sipPort || p.DstPort == sipPort || p.SrcPort == sipTLSPort || p.DstPort == sipTLSPort
+}
+
+// isDHCPPort reports whether p is UDP traffic to or from a DHCP (IPv4) port: 67
+// (servers and relay agents) or 68 (clients).
+func isDHCPPort(p models.PacketInfo) bool {
+	return p.Protocol == models.ProtocolUDP && (p.SrcPort == 67 || p.SrcPort == 68 || p.DstPort == 67 || p.DstPort == 68)
 }
 
 // isDHCPv6Port reports whether p is UDP traffic to or from a DHCPv6 port: 546
@@ -265,6 +279,8 @@ func protocolsOf(is *models.Issue, subject string, classes map[string]*flowClass
 		return string(models.ProtocolTLS), []string{string(models.ProtocolTLS), string(models.ProtocolTCP)}
 	case "SIP":
 		return string(models.ProtocolSIP), []string{string(models.ProtocolSIP)}
+	case "DHCP":
+		return string(models.ProtocolDHCP), []string{string(models.ProtocolDHCP), string(models.ProtocolUDP)}
 	case "DHCPv6":
 		return string(models.ProtocolDHCPv6), []string{string(models.ProtocolDHCPv6), string(models.ProtocolUDP)}
 	case "QUIC":

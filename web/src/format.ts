@@ -68,6 +68,9 @@ export function subjectLabel(issue: Issue): string {
       return 'Flow'
     case 'QUIC':
       return 'Flow'
+    case 'DHCP':
+      // the failure rate is per server; the rest are listed by client
+      return issue.title === 'High DHCP Failure Rate' ? 'Server' : 'Client'
     case 'DHCPv6':
       // the failure rate is per server; the rest are listed by client
       return issue.title === 'High DHCPv6 Failure Rate' ? 'Server' : 'Client'
@@ -93,7 +96,7 @@ export function formatValue(o: Occurrence): string {
 }
 
 /** The protocols offered by the protocol filter. */
-export const PROTOCOL_FILTERS = ['All', 'TCP', 'UDP', 'DNS', 'HTTP', 'TLS', 'SIP', 'DHCPv6', 'QUIC', 'ARP', 'ICMP'] as const
+export const PROTOCOL_FILTERS = ['All', 'TCP', 'UDP', 'DNS', 'HTTP', 'TLS', 'SIP', 'DHCP', 'DHCPv6', 'QUIC', 'ARP', 'ICMP'] as const
 export type ProtocolFilter = (typeof PROTOCOL_FILTERS)[number]
 
 /** Whether an issue involves the selected protocol. "All" matches everything. */
@@ -138,6 +141,7 @@ export function protocolColor(protocol: string): { dot: string; bar: string; bad
       return { dot: 'bg-pink-500', bar: 'bg-pink-500', badge: 'bg-pink-50 dark:bg-pink-500/15 text-pink-700 dark:text-pink-400' }
     case 'QUIC':
       return { dot: 'bg-error-500', bar: 'bg-error-500', badge: 'bg-error-50 dark:bg-error-500/15 text-error-700 dark:text-error-400' }
+    case 'DHCP':
     case 'DHCPv6':
       return { dot: 'bg-warning-500', bar: 'bg-warning-500', badge: 'bg-warning-50 dark:bg-warning-500/15 text-warning-700 dark:text-warning-400' }
     case 'SIP':

@@ -119,6 +119,11 @@ export default function FlowTable({ title, flows, emptyMessage, testId, filtered
                         </Button>
                       </div>
                     )}
+                    {f.app_protocol === 'DHCP' && (
+                      <div className="truncate text-theme-xs text-gray-500 dark:text-gray-400" title={[f.dhcp_client_mac, f.dhcp_server_ip].filter(Boolean).join(' · ')} data-testid="dhcp-details">
+                        {[f.dhcp_message_types, f.dhcp_client_mac, f.dhcp_server_ip && `server ${f.dhcp_server_ip}`].filter(Boolean).join(' · ')}
+                      </div>
+                    )}
                     {f.app_protocol === 'DHCPv6' && (
                       <div className="truncate text-theme-xs text-gray-500 dark:text-gray-400" title={f.dhcpv6_client_id} data-testid="dhcpv6-details">
                         {f.dhcpv6_message_types}
