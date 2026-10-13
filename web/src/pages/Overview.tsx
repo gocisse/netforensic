@@ -3,7 +3,7 @@ import { useAnalysisView } from '../analysis/view'
 import ActiveFilters from '../components/ActiveFilters'
 import CaptureAlerts from '../components/analyzer/CaptureAlerts'
 import HealthCard from '../components/analyzer/HealthCard'
-import IssueGroups from '../components/analyzer/IssueGroups'
+import IssuesTable from '../components/analyzer/IssuesTable'
 import FilterPanel from '../components/FilterPanel'
 import FlowDetailsModal from '../components/FlowDetailsModal'
 import FlowTable from '../components/FlowTable'
@@ -101,13 +101,8 @@ export default function Overview() {
 
       <ProtocolDistribution stats={stats} selected={applied.protocol} onSelect={(p) => filters.set({ protocol: p })} filtered={filters.active} />
 
-      <section className="space-y-4" data-testid="bad-traffic-issues">
-        <h2 className="text-lg font-semibold text-gray-800 dark:text-white/90">Issues</h2>
-        <p className="text-theme-sm font-medium text-gray-600 dark:text-gray-400" data-testid="filter-summary">
-          Showing {issues.length.toLocaleString()} of {reportableTotal.toLocaleString()} {reportableTotal === 1 ? 'issue' : 'issues'}
-          {!issuesLoaded && <span className="font-normal text-gray-500 dark:text-gray-400"> (still loading)</span>}
-        </p>
-        <IssueGroups issues={issues} filtered={filters.active} onClearFilters={filters.reset} captureName={captureName} onFilterTo={filterTo} loading={!issuesLoaded} />
+      <section data-testid="bad-traffic-issues">
+        <IssuesTable issues={issues} total={reportableTotal} filtered={filters.active} onClearFilters={filters.reset} captureName={captureName} onFilterTo={filterTo} loading={!issuesLoaded} />
       </section>
 
       {flowsLoaded ? (

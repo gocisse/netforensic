@@ -281,11 +281,22 @@ for it. The master filter drops the packets the issue filters match, which is
 not always whole flows; issue filters that are not well formed are left out of
 it. A capture with issues opens on Bad Traffic, a clean one on Good Traffic.
 
-**Long lists.** The issue lists (Bad Traffic and the protocol pages), the Good
+**Issues table.** Bad Traffic lists the issues as a table like the one of the
+flows with issues: severity, title, number of events (×39), the addresses
+involved (`10.0.0.145:54436 → 186.15.230.24:80`, or the first two and "+37 more"
+for an aggregated issue) and the protocol, the worst first. Click a column to
+sort, type in the search box to find an issue by title, address or description
+("Showing X of Y issues"), and click a row (or press Enter on it) for the
+details in a dialog: what is wrong, the impact, every affected address (click
+one to filter the page to it), the fix, the Wireshark filter, and buttons to
+copy the filter or a tshark command, to copy a command that lists the first N
+matching packets, and to open the events of an aggregated issue.
+
+**Long lists.** The issue table, the issue lists of the protocol pages, the Good
 Traffic table and the events of an issue are virtual: only the rows in view
 (plus a few more on each side) are in the page, so a capture with hundreds of
-thousands of issues scrolls as smoothly as one with a few. Cards may be any
-height, and expanding one pushes the rest down. A button at the corner takes
+thousands of issues scrolls as smoothly as one with a few. Rows and cards may be any
+height. A button at the corner takes
 you back to the top once you have scrolled down. A list longer than 5,000 rows
 shows the first 5,000, the worst first, with a button for 5,000 more (up to 50,000):
 browsers cannot scroll a page taller than about 33 million pixels, and the filters
@@ -481,7 +492,7 @@ Good Traffic filter and `counts` of what follows, without the per-issue diagnosi
 `{"chunk":"overview",...}` (protocol mix, top talkers, slowest flows), `{"chunk":"issues","offset":N,"data":[...]}`
 in batches of 100, worst severity first, `{"chunk":"flows",...}` in batches of 500, and `{"chunk":"done"}`.
 The page shows the health score and root cause as soon as the first chunk is in, the
-tab counts from `counts`, issue cards as batches arrive (a progress bar says "Loading issues: 400 / 1,600"),
+tab counts from `counts`, issue rows as batches arrive (a progress bar says "Loading issues: 400 / 1,600"),
 and skeletons for the flow tables and Good Traffic until all flows are there. Without `chunked=1` both
 endpoints answer as before.
 
