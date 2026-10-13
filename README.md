@@ -527,11 +527,12 @@ what it removes is the half minute that followed, when the page received, parsed
 - **Tunnels.** GRE, IP-in-IP and IPv6-in-IPv4 (6in4) tunnels are decapsulated:
   a tunnelled packet is analyzed by its inner addresses and ports, and a
   "Decapsulated Tunnels" note says how many packets were treated that way
-  (it costs no health points). Flows from different tunnels stay separate; the
-  ID of a tunnelled flow ends with the tunnel, for example
+  (it costs no health points; in JSON output it is an INFO entry in `issues`).
+  Flows from different tunnels stay separate; the ID of a tunnelled flow ends
+  with the tunnel, for example
   `10.0.0.1:1000-10.0.0.2:80@GRE:192.0.2.1~192.0.2.2`, and `--follow` takes the
-  same form. Only the outermost tunnel is recorded for nested tunnels. Tunnels
-  the tool cannot look into stay opaque: encrypted ones (ESP, AH), L2TP, and
+  same form (the `@...` suffix may be left out). Only the outermost tunnel is
+  recorded for nested tunnels. Tunnels the tool cannot look into stay opaque: encrypted ones (ESP, AH), L2TP, and
   UDP-based ones (VXLAN, Teredo, ...) are analyzed as the outer flow they
   appear as. HTTP, TLS and DNS matching still pairs requests and responses by
   addresses and ports alone, so two tunnels carrying an identical inner

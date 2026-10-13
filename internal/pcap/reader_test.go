@@ -692,6 +692,31 @@ func TestReadPacketsDecapsulatesTunnels(t *testing.T) {
 	}
 }
 
+func TestReadPacketsNestedTunnelRecordsOutermost(t *testing.T) {
+	// GRE carrying IP-in-IP carrying TCP: the flow is described by the
+	// innermost addresses and ports, and only the outermost tunnel is kept.
+	innerA, innerB := net.IP{10, 1, 1, 1}, net.IP{10, 2, 2, 2}
+	mid := &layers.IPv4{Version: 4, IHL: 5, TTL: 64, Protocol: layers.IPProtocolIPv4, SrcIP: net.IP{198, 51, 100, 1}, DstIP: net.IP{198, 51, 100, 2}}
+	inner := &layers.IPv4{Version: 4, IHL: 5, TTL: 64, Protocol: layers.IPProtocolTCP, SrcIP: innerA, DstIP: innerB}
+	tcp := &layers.TCP{SrcPort: 40000, DstPort: 443, Seq: 7, ACK: true, PSH: true, Window: 1000}
+	require.NoError(t, tcp.SetNetworkLayerForChecksum(inner))
+	outer := &layers.IPv4{Version: 4, IHL: 5, TTL: 64, Protocol: layers.IPProtocolGRE, SrcIP: net.IP{192, 0, 2, 1}, DstIP: net.IP{192, 0, 2, 2}}
+	eth := &layers.Ethernet{SrcMAC: net.HardwareAddr{0, 1, 2, 3, 4, 5}, DstMAC: net.HardwareAddr{6, 7, 8, 9, 10, 11}, EthernetType: layers.EthernetTypeIPv4}
+	buf := gopacket.NewSerializeBuffer()
+	require.NoError(t, gopacket.SerializeLayers(buf, gopacket.SerializeOptions{FixLengths: true, ComputeChecksums: true},
+		eth, outer, &layers.GRE{Protocol: layers.EthernetTypeIPv4}, mid, inner, tcp, gopacket.Payload(bytes.Repeat([]byte("x"), 100))))
+	path := filepath.Join(t.TempDir(), "nested.pcap")
+	writePCAP(t, path, [][]byte{buf.Bytes()})
+
+	got, err := ReadPackets(path)
+	require.NoError(t, err)
+	require.Len(t, got, 1)
+	assert.Equal(t, "10.1.1.1", got[0].SrcIP)
+	assert.Equal(t, "10.2.2.2", got[0].DstIP)
+	assert.Equal(t, [2]uint16{40000, 443}, [2]uint16{got[0].SrcPort, got[0].DstPort})
+	assert.Equal(t, "192.0.2.1>192.0.2.2/GRE", got[0].Tunnel)
+}
+
 func TestReadPacketsGREWithUndecodedInner(t *testing.T) {
 	// GRE that carries something that is not IP (here a made-up protocol
 	// number): there is no inner packet to describe, so the GRE packet itself

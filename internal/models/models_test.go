@@ -11,8 +11,16 @@ func TestIPProtocolName(t *testing.T) {
 		n    uint8
 		want Protocol
 	}{
+		{2, "IGMP"},
+		{4, "IP-in-IP"},
+		{47, "GRE"},
+		{50, "ESP"},
+		{51, "AH"},
+		{88, "EIGRP"},
 		{89, "OSPF"},
 		{103, "PIM"},
+		{112, "VRRP"},
+		{115, "L2TP"},
 		{132, "SCTP"},
 		{6, ""},   // TCP is decoded, not named here
 		{253, ""}, // unknown
