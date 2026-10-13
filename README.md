@@ -568,9 +568,11 @@ what it removes is the half minute that followed, when the page received, parsed
   frames down by what they carry, for example "2997 non-IP frames: 2373 STP,
   169 Loopback, 455 Other" (the three most common kinds; the rest is counted
   as "Other"). It costs no health points.
-- **Truncated files** are analyzed up to the cut and flagged; a file cut inside
-  its first header cannot be read at all.
+- **Truncated files** are analyzed up to the cut and flagged with a warning
+  (the exit status stays 0); a file cut inside its first header cannot be read
+  at all and ends with an error and exit status 1.
 - **Health score.** It starts at 100 and drops with every issue. It goes below 0
-  for badly troubled captures and stops at -50 (CATASTROPHIC).
+  for badly troubled captures and stops at -50 (CATASTROPHIC). In JSON output
+  it is `diagnosis.health_score`.
 - **Capture durations** over 24 hours are shown as "24h+", since they usually
   mean that interfaces with unsynchronized clocks were merged into one file.

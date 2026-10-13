@@ -117,6 +117,17 @@ func TestAsymmetricCaptureEvidence(t *testing.T) {
 			wantPercent: "42%",
 		},
 		{
+			name:       "one flow short of the minimum: 9 of 9",
+			packets:    concat(oneWayFlows(9), unansweredSYNs(3)),
+			wantTitles: []string{titleUnansweredSYN},
+		},
+		{
+			name:        "exactly the minimum: 10 of 10",
+			packets:     concat(oneWayFlows(10), unansweredSYNs(3)),
+			wantTitles:  []string{titleUnansweredSYN},
+			wantPercent: "100%",
+		},
+		{
 			name:       "too few other flows to say anything: 3 of 3",
 			packets:    concat(oneWayFlows(3), unansweredSYNs(3)),
 			wantTitles: []string{titleUnansweredSYN},

@@ -204,6 +204,25 @@ func TestRootCmdServiceFilterAppliesToTableAndAnalysis(t *testing.T) {
 	})
 }
 
+func TestRootCmdFileTooShortForHeader(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "short.pcap")
+	require.NoError(t, os.WriteFile(path, []byte("not a pcap"), 0o644))
+
+	for _, format := range []string{"text", "json"} {
+		t.Run(format, func(t *testing.T) {
+			var out, errOut bytes.Buffer
+			cmd := newRootCmd()
+			cmd.SetOut(&out)
+			cmd.SetErr(&errOut)
+			cmd.SetArgs([]string{"-o", format, path})
+			err := cmd.Execute()
+			require.Error(t, err, "main exits with status 1 on an error")
+			assert.Contains(t, err.Error(), "file is only 10 bytes, too short to hold a capture file header")
+			assert.Empty(t, out.String(), "no report for an unreadable file")
+		})
+	}
+}
+
 func TestRootCmdNothingToAnalyze(t *testing.T) {
 	const lab3 = "../../testdata/Lab-3-TCP-Retrans.pcapng" // port 80 only
 	run := func(args ...string) (string, string, error) {
