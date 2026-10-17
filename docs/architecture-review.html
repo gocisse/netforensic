@@ -1,0 +1,318 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>netforensic v0.1.0 — Architectural Review</title><style>
+:root{--bg:#fff;--fg:#1c2330;--muted:#5b6575;--line:#e1e5ec;--accent:#2457d6;--code:#f4f6fa}
+@media (prefers-color-scheme:dark){:root{--bg:#10141c;--fg:#e6e9ef;--muted:#98a2b3;--line:#2a3140;--accent:#7aa2ff;--code:#181e2a}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.65 Inter,system-ui,-apple-system,"Segoe UI",sans-serif}
+main{max-width:920px;margin:0 auto;padding:48px 24px 80px}
+h1{font-size:2rem;line-height:1.2;margin:0 0 .5rem}
+h2{font-size:1.4rem;margin:2.6rem 0 .8rem;padding-bottom:.35rem;border-bottom:2px solid var(--line)}
+h3{font-size:1.1rem;margin:1.8rem 0 .5rem;color:var(--accent)}
+p,li{max-width:76ch}
+a{color:var(--accent)}
+hr{border:0;border-top:1px solid var(--line);margin:2rem 0}
+code{font:.88em ui-monospace,SFMono-Regular,Menlo,monospace;background:var(--code);padding:.1em .35em;border-radius:4px}
+pre{background:var(--code);border:1px solid var(--line);border-radius:8px;padding:16px;overflow-x:auto;line-height:1.45}
+pre code{background:none;padding:0;font-size:.82rem}
+table{border-collapse:collapse;width:100%;margin:1rem 0;font-size:.93rem;display:block;overflow-x:auto}
+th,td{border:1px solid var(--line);padding:8px 12px;text-align:left;vertical-align:top}
+th{background:var(--code)}
+@media print{body{font-size:12px}main{padding:0}pre{white-space:pre-wrap}}
+</style></head><body><main>
+<h1>netforensic v0.1.0 — Architectural Review</h1>
+<p><em>Principal-level review of the Go backend and React frontend, with a v0.2.0 roadmap. Figures below were measured from the repository (<code>go test -cover ./...</code>, <code>git ls-files</code>, README benchmark tables), not taken from marketing copy.</em></p>
+<hr />
+<h2>1. Executive Summary</h2>
+<p><strong>netforensic</strong> is a single-binary forensic analyzer for packet captures (<code>.pcap</code> / <code>.pcapng</code>). It answers the question an engineer asks at 3 a.m. — <em>"what is wrong in this capture, and where do I look?"</em> — by turning raw packets into a health score, a ranked list of issues with plain-language causes and fixes, and Wireshark display filters to verify each claim.</p>
+<p>It runs in two modes from the same executable:</p>
+<ul>
+<li><strong>CLI</strong> — <code>netforensic [flags] file.pcap</code>, with text/JSON output, CSV export, filters, triage and TCP stream following.</li>
+<li><strong>Web UI</strong> — <code>netforensic --web :8181</code> serves an embedded React dashboard (JWT-authenticated) with upload, streamed results, a Good/Bad traffic split, per-protocol pages and a network topology diagram.</li>
+</ul>
+<table>
+<thead>
+<tr>
+<th>Dimension</th>
+<th>Snapshot</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Version / maturity</td>
+<td>v0.1.0 — feature-rich, unusually well tested for its age, not yet operationalized (no CI, no packaging beyond zip releases)</td>
+</tr>
+<tr>
+<td>Size</td>
+<td>~13.1k lines Go (non-test), ~14.3k lines Go tests, ~8.9k lines TS/TSX; 74 commits</td>
+</tr>
+<tr>
+<td>Coverage (measured)</td>
+<td>analyzer 97.8%, pcap 96.1%, export 95.1%, cmd 95.0%, filter 97.7%, server 93.7%, models 91.6%, auth 90.5%</td>
+</tr>
+<tr>
+<td>Dependencies</td>
+<td>gopacket (<code>pcapgo</code>, pure Go, no cgo), cobra, testify, golang-jwt, x/crypto; React 19, react-router 7, @tanstack/react-virtual, Tailwind 3, Vite</td>
+</tr>
+<tr>
+<td>Audience</td>
+<td>Network engineers and SREs doing post-incident capture triage; junior on-call staff benefit from the guidance text</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Verdict:</strong> a credible, focused tool whose engineering discipline is ahead of its version number. The main gaps are not correctness but <em>operational</em>: memory per packet, CI, and getting evidence <em>out</em> of the tool (extracting packets back to a pcap).</p>
+<hr />
+<h2>2. Annotated Project Tree</h2>
+<pre><code>netforensic/
+├── cmd/
+│   ├── netforensic/            # CLI entry point (cobra); formatting lives here, not in internal/
+│   │   ├── main.go             #   flags, mode dispatch (CLI vs --web)
+│   │   ├── output.go           #   text/JSON rendering of analysis results
+│   │   ├── export.go           #   CSV export (flows, issues, protocols)
+│   │   ├── filter.go           #   CLI filter flag parsing -&gt; internal/filter
+│   │   ├── follow.go           #   --follow: per-flow packet/stream view
+│   │   └── triage.go           #   quick-triage summary
+│   └── gencap/                 # dev-only synthetic pcap generator (deterministic, seeded)
+│                               #   used for the 1.5M-packet load test; not in the shipped binary
+├── internal/
+│   ├── models/                 # shared types: PacketInfo, Flow, Issue, Analysis result
+│   ├── pcap/                   # reading + decoding layer (pcapgo, pure Go)
+│   │   ├── reader.go           #   pcap/pcapng readers, truncation detection, link types
+│   │   ├── ngtrack.go          #   pcapng interface/metadata tracking
+│   │   ├── handshake.go        #   TCP handshake extraction
+│   │   ├── appproto.go         #   HTTP/TLS/DNS payload decoding
+│   │   └── dhcp.go dhcpv6.go sip.go quic.go   # per-protocol decoders
+│   ├── analyzer/               # PURE analysis: no files, CLI or HTTP
+│   │   ├── analyzer.go         #   orchestrator, AnalyzeWithProgress
+│   │   ├── tcp_issues.go syn_issues.go retransmit.go reassembly.go
+│   │   ├── dns.go http.go tls.go sip.go dhcp.go dhcpv6.go quic.go arp.go icmp.go
+│   │   ├── correlator.go       #   root-cause correlation across findings
+│   │   ├── flowstatus.go flowtimeline.go goodtraffic.go   # Good/Bad split + stream timeline data
+│   │   ├── topology.go         #   node/edge graph for the diagram
+│   │   ├── guidance.go recommendations.go                 # plain-language causes and fixes
+│   │   └── memory_test.go      #   allocation/RSS guard tests
+│   ├── filter/                 # IP / port / protocol / severity filter engine (shared CLI + export)
+│   ├── export/                 # CSV writers
+│   ├── auth/                   # single-user store (bcrypt-hashed password in a small JSON file), JWT issue/verify, forced first-login password change
+│   └── server/                 # HTTP layer
+│       ├── server.go           #   routes, upload limit (512 MiB), graceful shutdown
+│       ├── stream.go           #   chunked (NDJSON-style) progressive result stream
+│       ├── store.go            #   in-memory analysis store (TTL 2h, capped count)
+│       └── auth.go export.go gcgov.go                      # auth endpoints, CSV zip, GC-percent governor for big analyses
+├── web/
+│   ├── embed.go                # //go:embed of web/dist -&gt; single binary
+│   └── src/
+│       ├── App.tsx             # route table (/analysis/:id/{bad,good,tcp,dns,http,tls,sip,dhcpv6,quic,topology})
+│       ├── analysis/           # AnalysisProvider, chunk-stream parser, load progress, cache
+│       ├── auth/               # AuthProvider, session/token holder
+│       ├── filters/            # filter model, IP/port parsers, match engine, useFilters
+│       ├── topology/           # pure graph model + force-directed layout (unit-tested)
+│       ├── components/
+│       │   ├── NetworkTopology.tsx   # custom Canvas renderer: pan/zoom/hover/culling
+│       │   ├── analyzer/IssuesTable.tsx, IssueCard.tsx, UploadCard.tsx, HealthCard.tsx
+│       │   ├── FlowDetailsModal.tsx  # TCP stream timeline modal
+│       │   ├── IssueDetailsModal.tsx, NodeIssuesModal.tsx
+│       │   └── ui/VirtualList.tsx, CappedVirtualList.tsx, Table, Card, Badge ...
+│       ├── pages/              # route-level views (Overview=Bad, GoodTraffic, Topology, protocol/*)
+│       ├── shortcuts/          # command palette + keyboard shortcuts
+│       ├── wireshark.ts        # builds Wireshark display filters for &quot;verify in Wireshark&quot;
+│       └── goodTraffic.ts flowTimeline.ts issueView.ts   # view-model logic with unit tests
+├── testdata/                   # real, minimal .pcap fixtures (mandated by CLAUDE.md)
+├── Makefile                    # build, test (race+cover), lint, release zips with checksums
+└── CLAUDE.md                   # agent/contributor rules: layering, mandatory tests, dependency freeze
+</code></pre>
+<hr />
+<h2>3. Backend Architecture Review (Go)</h2>
+<h3>3.1 Layering and packet parsing</h3>
+<p>The layering rule from <code>CLAUDE.md</code> is actually honoured: <code>internal/analyzer</code> is pure (it consumes <code>[]models.PacketInfo</code>, not files), <code>internal/pcap</code> owns decoding, <code>cmd/</code> owns stdout. That is what makes 97.8% analyzer coverage achievable without fixtures for most cases, and what let the server reuse the analyzer unchanged.</p>
+<p>Notable parsing decisions:</p>
+<ul>
+<li><strong>Pure-Go reading (<code>pcapgo</code>)</strong> — no libpcap/cgo, so cross-compiled single-binary releases are real, not aspirational.</li>
+<li><strong>pcap and pcapng</strong>, including mixed link types and pcapng metadata extraction.</li>
+<li><strong>Truncated files</strong> are analyzed up to the cut and flagged with a warning; a file too short for a header fails with an explanatory error. Honest and user-friendly.</li>
+<li><strong>Unsupported link types / non-IP frames</strong> are counted and named in a "Skipped Frames" note (with EtherType breakdown) rather than silently dropped.</li>
+</ul>
+<h3>3.2 Protocol decoders</h3>
+<table>
+<thead>
+<tr>
+<th>Protocol</th>
+<th>Assessment</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>TCP</td>
+<td>Strongest area: retransmission, SYN/unanswered-SYN, SYN-flood pattern, reassembly, handshake timing, stream numbering that mirrors Wireshark's <code>tcp.stream</code>.</td>
+</tr>
+<tr>
+<td>DNS</td>
+<td>Request/response pairing, NXDOMAIN/SERVFAIL, unanswered queries.</td>
+</tr>
+<tr>
+<td>HTTP</td>
+<td>Request/response matching, 4xx/5xx, latency. Cleartext only.</td>
+</tr>
+<tr>
+<td>TLS</td>
+<td>Handshake-level (hello, alerts, failures); no decryption, appropriately.</td>
+</tr>
+<tr>
+<td>SIP</td>
+<td>Registration/call failures; documented limitation: SIP messages split across segments are not reassembled.</td>
+</tr>
+<tr>
+<td>DHCP / DHCPv6</td>
+<td>NAK, timeouts, address availability, RFC 8415 status codes.</td>
+</tr>
+<tr>
+<td>QUIC</td>
+<td>Version identification and handshake-timeout detection; documented caveat on connection migration (flow = UDP 4-tuple).</td>
+</tr>
+<tr>
+<td>ARP / ICMP</td>
+<td>Present.</td>
+</tr>
+</tbody>
+</table>
+<p>The pattern across decoders is consistent: decode in <code>internal/pcap</code>, judge in <code>internal/analyzer</code>. The cost is that adding a protocol touches two packages plus <code>guidance.go</code> and the frontend protocol page — a candidate for a registry/interface in v0.2.0.</p>
+<h3>3.3 Tunnel decapsulation</h3>
+<p>GRE, IP-in-IP and 6in4 are decapsulated so inner flows are analyzed by inner addresses; the tunnel is recorded in the flow ID (<code>...@GRE:a~b</code>) so separate tunnels do not merge. This fixes real bugs (flow merging, retransmit inflation) and the README states the residual limits precisely: only the outermost tunnel is recorded for nested tunnels; ESP/AH/L2TP/VXLAN/Teredo stay opaque; HTTP/TLS/DNS matching pairs by 4-tuple alone, so two tunnels with an identical inner 4-tuple could cross-pair. VXLAN/GENEVE are the obvious next ones for SRE audiences.</p>
+<h3>3.4 Memory and performance</h3>
+<p>Measured (README, 1.5M packets, 307 MB capture, 115k flows, 171k issues):</p>
+<table>
+<thead>
+<tr>
+<th>Metric</th>
+<th>Before</th>
+<th>After</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Health score on screen</td>
+<td>82 s</td>
+<td>36.7 s</td>
+</tr>
+<tr>
+<td>Longest main-thread block</td>
+<td>11.5 s</td>
+<td>0.6 s</td>
+</tr>
+<tr>
+<td>Analysis in memory</td>
+<td>443 MB</td>
+<td>284 MB</td>
+</tr>
+<tr>
+<td>Server peak RSS</td>
+<td>2.6 GB</td>
+<td>2.25 GB</td>
+</tr>
+</tbody>
+</table>
+<p>What is good: the team <em>measured</em>, built <code>gencap</code> to make the workload reproducible, kept a 1.5M-packet streaming test (<code>NETFORENSIC_PERF_PACKETS</code>), and added allocation guards (<code>testing.AllocsPerRun</code> on hot helpers like <code>hasTCPFlag</code>).</p>
+<p>What is honestly weak: <strong>~1 KB retained per packet (<code>models.PacketInfo</code>) and a 2.25 GB server peak for a 300 MB file.</strong> The README admits streaming "does not shorten" the 30 s of analysis; it only removes the post-analysis parse/render stall. The analyzer is not truly streaming — it holds all packets. Peak RSS of roughly 7× the file size will cap what an SRE can open on a laptop or a small container, and the 512 MiB upload limit sits close to that ceiling.</p>
+<h3>3.5 API design and concurrency</h3>
+<p>Routes (stdlib <code>ServeMux</code>): <code>POST /api/login</code>, <code>/api/logout</code>, <code>/api/change-password</code>, <code>/api/analyze</code>, <code>GET /api/analysis/{id}</code> (with <code>?chunked=1</code>), <code>/api/export-csv</code>, static assets at <code>/</code>.</p>
+<p>Strengths:</p>
+<ul>
+<li>Auth middleware wraps every data route; request bodies bounded with <code>http.MaxBytesReader</code> (JSON bodies and the 512 MiB upload) with typed <code>MaxBytesError</code> handling.</li>
+<li>Graceful shutdown via <code>signal.NotifyContext</code> with a shutdown timeout.</li>
+<li>Analyses live in an in-memory store with a <strong>2-hour TTL</strong> and a <strong>maximum count</strong>, and a GC governor (<code>gcgov.go</code>) that lowers the Go GC percent while big analyses run (about a fifth less peak memory at no cost in speed) and restores it when the last one finishes — bounded, no unbounded growth.</li>
+<li><strong>Progressive delivery:</strong> the chunked endpoint emits <code>summary → overview → issues → flows → done</code>, so the verdict renders before the 170 MB of detail is parsed.</li>
+</ul>
+<p>Concurrency model: deliberately simple — request-per-goroutine, one analysis per upload, a mutex-guarded store. Appropriate for a single-user forensic tool. Risks to note: analyses are CPU- and memory-heavy and there is no admission control, so two concurrent 500 MB uploads can exhaust RAM; the analyzer itself is single-threaded per capture, leaving cores idle (flow-sharded parallel analysis is possible because flows are independent). State is in-process only, so a restart loses results (acceptable for v0.1.0, and arguably a feature for sensitive captures).</p>
+<hr />
+<h2>4. Frontend Architecture Review (React)</h2>
+<h3>4.1 Structure, state and routing</h3>
+<ul>
+<li><strong>Routing</strong> is clean and URL-addressable: <code>/analysis/:id</code> is a layout route with children per view (<code>bad</code>, <code>good</code>, <code>tcp</code>, <code>udp</code>, <code>dns</code>, <code>http</code>, <code>tls</code>, <code>sip</code>, <code>dhcpv6</code>, <code>quic</code>, <code>topology</code>), with safe fallbacks (<code>Navigate</code>). Deep links survive reloads while the server-side analysis is alive.</li>
+<li><strong>State</strong> uses React Context providers (<code>AnalysisProvider</code>, <code>AuthProvider</code>, <code>ToastProvider</code>) and focused hooks (<code>useFilters</code>, <code>useAnalysisCache</code>, <code>useLoadProgress</code>) — no heavyweight store. Sensible at this size; the one pressure point is that a large analysis in a single context re-renders consumers broadly (selector-based access, or splitting context per chunk, would help).</li>
+<li><strong>Logic/UI separation</strong> is good: <code>goodTraffic.ts</code>, <code>flowTimeline.ts</code>, <code>issueView.ts</code>, <code>filters/*</code>, <code>topology/*</code> and <code>wireshark.ts</code> are plain TS modules with unit tests (14 test files), keeping components thin. Frontend test depth is lower than the backend's, and component/E2E tests are not in the repo (see §5).</li>
+<li>Tooling: Vite 8, TypeScript 6, oxlint, a custom spacing-scale check script, Tailwind 3.</li>
+</ul>
+<h3>4.2 UX choices</h3>
+<table>
+<thead>
+<tr>
+<th>Feature</th>
+<th>Assessment</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Good / Bad traffic split</strong></td>
+<td>Strong idea. Showing what is <em>healthy</em> builds trust in the verdict and lets an engineer rule things out quickly.</td>
+</tr>
+<tr>
+<td><strong>Clickable issues table</strong></td>
+<td>Replaced cards with a dense table (IP addresses, severity, count) + details modal — right call for scanning hundreds of issues.</td>
+</tr>
+<tr>
+<td><strong>TCP stream timeline modal</strong></td>
+<td>Shows <em>when</em> a problem started inside a flow; this is the feature that most closely mirrors how engineers reason in Wireshark.</td>
+</tr>
+<tr>
+<td><strong>Advanced filtering</strong></td>
+<td>IP/CIDR, port, protocol, severity, quick-troubleshooting shortcuts, active-filter chips, and filter export. Because filters produce Wireshark display filters (<code>wireshark.ts</code>), the tool is a <em>router into</em> Wireshark rather than a competitor — pragmatic.</td>
+</tr>
+<tr>
+<td><strong>Command palette / shortcuts</strong></td>
+<td>Power-user polish; low cost, high value.</td>
+</tr>
+<tr>
+<td><strong>Dark/light, skeletons, toasts</strong></td>
+<td>Table-stakes polish, done consistently.</td>
+</tr>
+</tbody>
+</table>
+<p>A removed "Junior/Senior" toggle shows healthy product judgment: one mode, well explained, beat two diverging ones.</p>
+<h3>4.3 Network topology (Canvas)</h3>
+<p>A custom Canvas renderer (<code>NetworkTopology.tsx</code>, 390 lines, plus <code>topology/layout.ts</code> and <code>topology/model.ts</code>) instead of a graph library. Reasons this is the right call: zero added dependencies (the project's rules forbid casual additions), and DOM/SVG would collapse at thousands of nodes.</p>
+<ul>
+<li><strong>Force-directed layout</strong> is a separate pure module with its own tests, run incrementally on <code>requestAnimationFrame</code>.</li>
+<li><strong>Viewport culling</strong> (<code>visible</code> / <code>drawn</code> flags per node) avoids drawing off-screen nodes; HiDPI handled via <code>devicePixelRatio</code>.</li>
+<li><strong>Interactivity:</strong> wheel-zoom around the pointer (with a non-passive listener to stop page scroll), drag-pan, hit-testing, hover, filter matching, and node → issues modal. Edges encode direction; nodes encode role (e.g. DNS server), traffic volume and worst severity.</li>
+<li>The API returns <code>total_nodes</code>/<code>truncated</code>, so large graphs degrade explicitly rather than freezing.</li>
+</ul>
+<p>The repulsion step already uses a spatial grid, so a tick costs roughly the number of neighbouring nodes rather than O(n²). Risks: very dense clusters can still degrade a grid, and Canvas is opaque to accessibility — a keyboard/table alternative for the same data is advisable.</p>
+<h3>4.4 Performance optimizations</h3>
+<ul>
+<li><strong>Virtualization</strong> via <code>@tanstack/react-virtual</code> (<code>VirtualList</code>) for issues and flows.</li>
+<li><strong>Capped lists</strong> (<code>CappedVirtualList</code>): first 5,000 rows of very long lists, with the rest reachable via filters — a pragmatic guard.</li>
+<li><strong>Progressive chunked loading:</strong> the summary/overview paints first; <code>useLoadProgress</code> and a progress bar show the remainder arriving.</li>
+<li>Result: blocked main-thread time fell from 32 s (123 blocks) to 1.2 s (4 blocks) in the 1.5M-packet benchmark. Page heap (~381 MB) did not improve — the browser still holds the full dataset, which is the next frontier (server-side pagination).</li>
+</ul>
+<hr />
+<h2>5. Why This Application Is Solid</h2>
+<ol>
+<li><strong>Test rigour that matches the stated policy.</strong> <code>CLAUDE.md</code> makes tests mandatory per protocol, using real minimal pcap fixtures — and the numbers back it: analyzer 97.8%, pcap 96.1%, export 95.1%, cmd 95.0%, filter 97.7%, server 93.7% (all verified by running <code>go test -cover ./...</code>). Test code (~14.3k lines) exceeds production Go code (~13.1k). Tests run with the race detector via <code>make test-go</code>.</li>
+<li><strong>Honest about limits.</strong> The README's "Known limitations" is specific and testable, not defensive hand-waving. The standout is <strong>asymmetric-capture handling</strong>: unanswered SYNs are <em>not</em> declared firewall drops; when more than 40% of other TCP flows (≥10) are one-directional, the report says replies may simply have taken another path — "a hint, not a verdict." A forensic tool that refuses to over-claim is rare and valuable.</li>
+<li><strong>Defensive programming.</strong> Truncated captures analyzed to the cut with a warning; too-short files explained; unknown link types reported by real type number; unsupported frames counted and broken down; durations over 24 h shown as "24h+" (merged unsynchronized clocks); bounded uploads, bounded request bodies, TTL-bounded store, graceful shutdown.</li>
+<li><strong>Architecture enforces itself.</strong> Pure analyzer, thin <code>cmd/</code>, embedded UI → one binary; pure-Go pcap reading → painless cross-compilation; per-platform release zips with checksums.</li>
+<li><strong>Performance work is evidence-based.</strong> Reproducible generator, before/after tables tied to commit hashes, a regression test at 1.5M packets, allocation guards.</li>
+<li><strong>Scope discipline.</strong> Dependencies are few and approved; UI logic is extracted into tested modules; the topology diagram avoids a heavy library; features were removed when they didn't earn their keep.</li>
+<li><strong>Verification is built into the UX.</strong> Every finding links to a Wireshark filter, so users can check the tool rather than trust it.</li>
+</ol>
+<hr />
+<h2>6. Strategic Roadmap for v0.2.0</h2>
+<p>Ordered by impact-to-effort.</p>
+<h3>1. Packet extraction / "export evidence" (highest user value)</h3>
+<p>Let users export a filtered subset as a new <code>.pcap</code>/<code>.pcapng</code> — a single flow, an issue's packets, or everything matching the active filter — from both CLI (<code>--write-filtered out.pcap</code>) and the web UI. Today the tool tells you <em>what</em> is wrong and then you go find the packets elsewhere; closing that loop makes it a complete triage step and an attachable artifact for tickets and vendor cases. Needs packet offsets/indices retained during analysis (a few bytes per packet, far cheaper than the 1 KB of decoded state).</p>
+<h3>2. CI/CD and supply-chain basics</h3>
+<p>The Makefile already defines <code>make check</code> ("everything CI should run") but there is <strong>no <code>.github/</code> workflow</strong>. Add: GitHub Actions running <code>check</code> on Linux + macOS, Go matrix (1.22 and latest), <code>govulncheck</code>, <code>npm audit</code>, frontend build verified against the embedded <code>web/dist</code>, tagged releases that publish the existing zip+checksum artifacts (add SBOM and signing via cosign/goreleaser). Wire the perf test as a scheduled (nightly) job with a regression threshold. This is the cheapest way to protect the quality bar already achieved.</p>
+<h3>3. Cut memory per packet; make analysis truly streaming</h3>
+<p>Retaining ~1 KB <code>PacketInfo</code> per packet drives the 2.25 GB RSS. Options, in order of risk: (a) shrink the struct (interned strings for IPs/flags, <code>netip.Addr</code>, enums for protocol/flags, drop fields not needed after flow aggregation); (b) aggregate into flows incrementally and discard packets, keeping only per-flow state plus offsets for on-demand re-read (which also enables roadmap item 1); (c) shard flows across worker goroutines. Target: ≤ 3× file size at 1.5M packets and multi-core speedup of the 30 s analysis. Add server-side pagination for issues/flows so the browser heap stops mirroring the dataset, and an admission limit (max concurrent analyses / memory budget) on the server.</p>
+<h3>4. More protocol decoders via a registry</h3>
+<p>Add the protocols network engineers actually chase in captures: <strong>BGP</strong> (session flaps, NOTIFICATION codes, hold-timer expiry), <strong>SNMP</strong> (timeouts, auth failures, v1/v2c community exposure), <strong>NTP/DNS-over-TLS</strong>, <strong>VXLAN/GENEVE</strong> decapsulation (cloud and K8s overlays), and <strong>TCP/TLS depth</strong> (TLS 1.3 alert classification, certificate expiry from the handshake). To keep each addition cheap, introduce a small <code>Decoder</code>/<code>Detector</code> interface and registry so a protocol is one package plus a fixture and table test, not edits across <code>pcap</code>, <code>analyzer</code>, <code>guidance</code> and <code>web</code>.</p>
+<h3>5. Alerting and automation integrations</h3>
+<p>SREs want this in pipelines, not just a dashboard: a stable, versioned JSON schema (documented, with a JSON Schema file), exit codes keyed to severity thresholds (<code>--fail-on error</code>), SARIF/JUnit output for CI, and a webhook (Slack / PagerDuty / generic) on a health-score threshold. Pair with a watch mode (<code>--watch dir/</code>) for rotating captures. Lower priority but straightforward once the schema is fixed.</p>
+<h3>Smaller items worth tracking</h3>
+<ul>
+<li>Frontend: add component/E2E tests (Playwright) for the upload → stream → filter → timeline path that was currently verified by hand in the browser; add a keyboard-accessible table alternative to the Canvas topology.</li>
+<li>Security hardening for web mode: configurable bind address default of loopback, rate limiting on <code>/api/login</code>, optional TLS flags, and documenting the auth model in the README.</li>
+<li>Persistence option (SQLite or on-disk spill) for analyses, off by default given the sensitivity of captures.</li>
+</ul>
+<hr />
+<p><em>Method note: all counts and coverage figures come from running <code>go test -cover ./...</code> and inspecting the repo at commit <code>6f64c78</code>; performance numbers are quoted from the project README and were not re-run for this review. Items under "weak" and "risks" are my assessment from reading the code and docs, not observed failures.</em></p>
+</main></body></html>
