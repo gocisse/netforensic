@@ -36,9 +36,14 @@ type connState struct {
 	sawAck     bool // client ACK after the SYN-ACK: the handshake completed
 	data       bool // payload seen in either direction
 	fin        [2]bool
+	// next is the end of the highest segment each side has sent (0 client,
+	// 1 server) and haveNext that it is known; they tell keep-alive probes
+	// from data. Only segments that occupy sequence space advance it.
+	next       [2]uint32
+	haveNext   [2]bool
 	packets    int
 	dataBytes  int
-	lastData   time.Time
+	lastData   time.Time // the last payload that is not a keep-alive probe
 	rsts       int
 	firstRST   models.PacketInfo
 	rstFromCli bool
@@ -196,10 +201,21 @@ func (c *connState) observe(p models.PacketInfo) {
 			c.zeroReopened = p.Timestamp
 		}
 	}
+	side := 1
+	if fromClient {
+		side = 0
+	}
 	if p.PayloadSize > 0 {
 		c.data = true
 		c.dataBytes += p.PayloadSize
-		c.lastData = p.Timestamp
+		if !isKeepAlive(p, c.next[side], c.haveNext[side]) {
+			c.lastData = p.Timestamp
+		}
+	}
+	if consumesSeq(p) && !isKeepAlive(p, c.next[side], c.haveNext[side]) {
+		if end := p.TCPSeq + seqLen(p); !c.haveNext[side] || int32(end-c.next[side]) > 0 {
+			c.next[side], c.haveNext[side] = end, true
+		}
 	}
 
 	if !fromClient && c.sawSyn && !c.firstReply && !c.sawSynAck {

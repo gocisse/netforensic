@@ -1086,3 +1086,145 @@ func TestDataRetransmissionsAreKeptWhereSYNRetriesAreUnanswered(t *testing.T) {
 		assert.Equal(t, "10.0.0.1:5003-10.0.0.2:443", got[0].FlowID)
 	})
 }
+
+// Keep-alive probes are not data: they must not restart the idle timer of a
+// connection, so a reset that follows a long idle is an idle timeout even if
+// probes went by every few seconds.
+
+// kaOpen opens a connection (client 10.0.0.1:5000, sequence 1000; server
+// sequence 9000), has the client send 100 bytes (next client byte 1101) and the
+// server 200 bytes (next server byte 9201), all within 4 ms.
+func kaOpen() []models.PacketInfo {
+	return []models.PacketInfo{
+		tx(0, false, "SYN", 1000, 0, 0, 65535), tx(1, true, "SYN,ACK", 9000, 1001, 0, 65535), tx(2, false, "ACK", 1001, 9001, 0, 65535),
+		tx(3, false, "PSH,ACK", 1001, 9001, 100, 65535), tx(4, true, "PSH,ACK", 9001, 1101, 200, 65535),
+	}
+}
+
+// kaProbe is a client keep-alive probe at ms (one byte of the last client byte)
+// and the server's pure ACK in answer.
+func kaProbe(ms int) []models.PacketInfo {
+	return []models.PacketInfo{tx(ms, false, "ACK", 1100, 9201, 1, 65535), tx(ms+1, true, "ACK", 9201, 1101, 0, 65535)}
+}
+
+func kaReset(ms int) models.PacketInfo { return tx(ms, true, "RST,ACK", 9201, 1101, 0, 0) }
+
+// kaResult returns the single Connection issue of the packets.
+func kaResult(t *testing.T, packets []models.PacketInfo) (models.Issue, *models.AnalysisResult) {
+	t.Helper()
+	res := Analyze(packets, "all")
+	got := connectionIssues(res)
+	require.Len(t, got, 1)
+	return got[0], res
+}
+
+func TestKeepAliveProbesDoNotRestartTheIdleTimer(t *testing.T) {
+	t.Run("probes less than 10s apart: the reset is an idle timeout", func(t *testing.T) {
+		pk := kaOpen()
+		for _, ms := range []int{5003, 10003, 15003} {
+			pk = append(pk, kaProbe(ms)...)
+		}
+		is, res := kaResult(t, append(pk, kaReset(20004)))
+		assert.Equal(t, titleIdle, is.Title)
+		assert.Equal(t, models.SeverityInfo, is.Severity)
+		assert.Contains(t, is.Description, "20s after the last data")
+		assert.Zero(t, res.Flows[0].Retransmits)
+	})
+
+	t.Run("a genuine one-byte write is data", func(t *testing.T) {
+		pk := kaOpen()
+		for _, ms := range []int{5003, 10003, 15003} {
+			pk = append(pk, kaProbe(ms)...)
+		}
+		pk = append(pk, tx(19000, false, "PSH,ACK", 1101, 9201, 1, 65535), kaReset(20000)) // seq == next: new data
+		is, _ := kaResult(t, pk)
+		assert.Equal(t, titleAborted, is.Title)
+		assert.Equal(t, models.SeverityError, is.Severity)
+		assert.Contains(t, is.Description, "the last data was 1s earlier")
+		assert.Contains(t, is.Description, "304 payload bytes", "100 + 200 + 3 probes + 1 byte: the probes still count as payload")
+	})
+
+	t.Run("zero-length probes and pure ACKs do not change the timer", func(t *testing.T) {
+		pk := append(kaOpen(),
+			tx(5003, false, "ACK", 1100, 9201, 0, 65535), tx(5004, true, "ACK", 9201, 1101, 0, 65535),
+			tx(10003, false, "ACK", 1100, 9201, 0, 65535), tx(10004, true, "ACK", 9201, 1101, 0, 65535))
+		is, _ := kaResult(t, append(pk, kaReset(15004)))
+		assert.Equal(t, titleIdle, is.Title)
+		assert.Contains(t, is.Description, "15s after the last data")
+	})
+
+	t.Run("sequence wraparound", func(t *testing.T) {
+		isn := uint32(4294967200)
+		pk := []models.PacketInfo{
+			tx(0, false, "SYN", isn, 0, 0, 65535), tx(1, true, "SYN,ACK", 9000, isn+1, 0, 65535), tx(2, false, "ACK", isn+1, 9001, 0, 65535),
+			tx(3, false, "PSH,ACK", isn+1, 9001, 100, 65535), // ends at 5 after wrapping: the next byte is 5
+			tx(4, true, "PSH,ACK", 9001, isn+101, 200, 65535),
+			tx(15003, false, "ACK", 4, 9201, 1, 65535), tx(15004, true, "ACK", 9201, 5, 0, 65535), // one probe, 5s before the reset
+			tx(20004, true, "RST,ACK", 9201, 5, 0, 0)}
+		is, _ := kaResult(t, pk)
+		assert.Equal(t, titleIdle, is.Title)
+	})
+
+	t.Run("a late segment does not lower the tracked sequence", func(t *testing.T) {
+		pk := []models.PacketInfo{
+			tx(0, false, "SYN", 1000, 0, 0, 65535), tx(1, true, "SYN,ACK", 9000, 1001, 0, 65535), tx(2, false, "ACK", 1001, 9001, 0, 65535),
+			tx(3, false, "PSH,ACK", 1001, 9001, 100, 65535),
+			tx(4, false, "PSH,ACK", 1201, 9001, 100, 65535),                                             // a hole at 1101..1200
+			tx(5, false, "PSH,ACK", 1101, 9001, 100, 65535),                                             // and the missing segment arrives late; the next byte is still 1301
+			tx(15003, false, "ACK", 1300, 9001, 1, 65535), tx(15004, true, "ACK", 9001, 1301, 0, 65535), // one probe, 5s before the reset
+			tx(20004, true, "RST,ACK", 9001, 1301, 0, 0)}
+		is, _ := kaResult(t, pk)
+		assert.Equal(t, titleIdle, is.Title)
+		assert.Contains(t, is.Description, "after the last data")
+	})
+
+	t.Run("the client's and the server's sequence state are independent", func(t *testing.T) {
+		// A server probe is judged by the server's next byte (9201) ...
+		pk := append(kaOpen(), tx(15003, true, "ACK", 9200, 1101, 1, 65535), tx(15004, false, "ACK", 1101, 9201, 0, 65535))
+		is, _ := kaResult(t, append(pk, kaReset(20004)))
+		assert.Equal(t, titleIdle, is.Title)
+		// ... and a client segment that has the server's probe number is data.
+		pk = append(kaOpen(), tx(18000, false, "PSH,ACK", 9200, 9201, 1, 65535))
+		is, _ = kaResult(t, append(pk, kaReset(20004)))
+		assert.Equal(t, titleAborted, is.Title)
+		assert.Contains(t, is.Description, "the last data was 2.004s earlier")
+	})
+
+	t.Run("a connection whose only payload is probes is an abrupt close", func(t *testing.T) {
+		pk := []models.PacketInfo{
+			tx(0, false, "SYN", 1000, 0, 0, 65535), tx(1, true, "SYN,ACK", 9000, 1001, 0, 65535), tx(2, false, "ACK", 1001, 9001, 0, 65535)}
+		for _, ms := range []int{3000, 6000, 9000} {
+			pk = append(pk, tx(ms, false, "ACK", 1000, 9001, 1, 65535), tx(ms+1, true, "ACK", 9001, 1001, 0, 65535))
+		}
+		is, _ := kaResult(t, append(pk, tx(20000, true, "RST,ACK", 9001, 1001, 0, 0)))
+		assert.Equal(t, titleAborted, is.Title)
+		assert.Equal(t, models.SeverityError, is.Severity)
+		assert.NotContains(t, is.Description, "the last data")
+		assert.Contains(t, is.Description, "3 payload bytes", "the probes still count as payload bytes")
+	})
+
+	t.Run("a capture that starts with a probe has no sequence state: it counts as data, as before", func(t *testing.T) {
+		pk := []models.PacketInfo{tx(0, false, "ACK", 500, 1, 1, 65535), tx(1, true, "ACK", 1, 501, 0, 65535), tx(20000, true, "RST,ACK", 1, 501, 0, 0)}
+		is, _ := kaResult(t, pk)
+		assert.Equal(t, titleIdle, is.Title)
+		assert.Contains(t, is.Description, "20s after the last data")
+	})
+}
+
+// Lab-5: the client sent keep-alive probes at 45 s, 90 s, 238 s and 283 s; the
+// last real data was at 193.6 s and the server reset the connection at 324.7 s.
+func TestLab5IdleTimeIgnoresKeepAliveProbes(t *testing.T) {
+	res := Analyze(readReal(t, "Lab-5-AnotherSlowApp.pcapng"), "all")
+	var idle []models.Issue
+	for _, is := range res.Issues {
+		if is.Title == titleIdle {
+			idle = append(idle, is)
+		}
+	}
+	require.Len(t, idle, 1)
+	assert.Equal(t, models.SeverityInfo, idle[0].Severity)
+	assert.Contains(t, idle[0].Description, "2m11.065s after the last data", "131.065s, as a Go duration")
+	assert.Equal(t, "Slow Server Response", res.Diagnosis.PrimaryCause)
+	assert.Equal(t, 88, res.Diagnosis.HealthScore)
+	assert.Zero(t, res.Flows[0].Retransmits)
+}

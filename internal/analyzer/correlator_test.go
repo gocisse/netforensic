@@ -369,8 +369,9 @@ func TestPerformanceRealLab5SlowApplication(t *testing.T) {
 	assert.Zero(t, flow.Retransmits, "keep-alive probes are not retransmissions")
 	assert.NotContains(t, issueTitles(res), "TCP Retransmissions detected")
 	// The capture ends with the server resetting the connection (frame 84),
-	// 41s after the last data: an idle-timeout cleanup, reported as Info
-	// so it cannot take over from the slow response.
+	// 131s after the last data (the keep-alive probes in between are not
+	// data): an idle-timeout cleanup, reported as Info so it cannot take over
+	// from the slow response.
 	assert.Contains(t, issueTitles(res), titleIdle)
 	assert.NotContains(t, issueTitles(res), titleAborted)
 	assert.Equal(t, "Slow Server Response", res.Diagnosis.PrimaryCause)
