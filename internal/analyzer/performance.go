@@ -100,14 +100,17 @@ func ms(d time.Duration) float64 { return math.Round(float64(d)/float64(time.Mil
 func handshakeMetrics(pkts []models.PacketInfo) (setupMs, ttfbMs float64) {
 	var syn, ack, data time.Time
 	for _, p := range pkts {
+		if p.Handshake == nil {
+			continue
+		}
 		if syn.IsZero() {
-			syn = p.TCPSynTime
+			syn = p.Handshake.TCPSynTime
 		}
 		if ack.IsZero() {
-			ack = p.TCPAckTime
+			ack = p.Handshake.TCPAckTime
 		}
 		if data.IsZero() {
-			data = p.FirstDataTime
+			data = p.Handshake.FirstDataTime
 		}
 	}
 	if !syn.IsZero() && !ack.IsZero() && !ack.Before(syn) {

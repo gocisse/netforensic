@@ -5,6 +5,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -171,4 +172,202 @@ func TestPacketInfoUnmarshalMergesSIPMembersIntoTheExistingGroup(t *testing.T) {
 		require.NoError(t, json.Unmarshal([]byte(`{"dst_ip":"x"}`), &q))
 		assert.Nil(t, q.SIPInfo)
 	})
+}
+
+// Golden encodings of packets with handshake times, produced by the code from
+// before the times moved into Handshake, when they were four fields of PacketInfo.
+var (
+	hsT0 = time.Date(2024, 1, 2, 3, 4, 5, 123456789, time.UTC)
+
+	goldenHandshakeAll     = `{"timestamp":"0001-01-01T00:00:00Z","src_ip":"10.0.0.1","dst_ip":"10.0.0.2","src_port":40000,"dst_port":443,"protocol":"TCP","size":60,"payload_size":0,"tcp_flags":"SYN","tcp_syn_time":"2024-01-02T03:04:05.123456789Z","tcp_syn_ack_time":"2024-01-02T03:04:05.143456789Z","tcp_ack_time":"2024-01-02T03:04:05.163456789Z","first_data_time":"2024-01-02T03:04:05.213456789Z","tls_version":"TLS 1.2"}`
+	goldenHandshakePartial = `{"timestamp":"0001-01-01T00:00:00Z","src_ip":"10.0.0.1","dst_ip":"","src_port":0,"dst_port":0,"protocol":"TCP","size":0,"payload_size":0,"tcp_syn_time":"2024-01-02T03:04:05.123456789Z","tcp_syn_ack_time":"2024-01-02T03:04:05.143456789Z","tcp_ack_time":"0001-01-01T00:00:00Z","first_data_time":"0001-01-01T00:00:00Z","http_method":"GET"}`
+	goldenHandshakeWithSIP = `{"timestamp":"0001-01-01T00:00:00Z","src_ip":"","dst_ip":"","src_port":0,"dst_port":0,"protocol":"UDP","size":0,"payload_size":0,"tcp_syn_time":"0001-01-01T00:00:00Z","tcp_syn_ack_time":"0001-01-01T00:00:00Z","tcp_ack_time":"2024-01-02T04:04:05.123456789+01:00","first_data_time":"0001-01-01T00:00:00Z","sip_method":"INVITE"}`
+)
+
+func hsAllPacket() PacketInfo {
+	return PacketInfo{SrcIP: "10.0.0.1", DstIP: "10.0.0.2", SrcPort: 40000, DstPort: 443, Protocol: ProtocolTCP, Size: 60, TCPFlags: "SYN", TLSVersion: "TLS 1.2",
+		Handshake: &HandshakeTimes{TCPSynTime: hsT0, TCPSynAckTime: hsT0.Add(20 * time.Millisecond), TCPAckTime: hsT0.Add(40 * time.Millisecond), FirstDataTime: hsT0.Add(90 * time.Millisecond)}}
+}
+
+func TestPacketInfoJSONHandshakeIsFlatAndMatchesTheOldEncoding(t *testing.T) {
+	partial := PacketInfo{SrcIP: "10.0.0.1", Protocol: ProtocolTCP, HTTPMethod: "GET",
+		Handshake: &HandshakeTimes{TCPSynTime: hsT0, TCPSynAckTime: hsT0.Add(20 * time.Millisecond)}}
+	withSIP := PacketInfo{Protocol: ProtocolUDP, SIPInfo: &SIPInfo{SIPMethod: "INVITE"},
+		Handshake: &HandshakeTimes{TCPAckTime: hsT0.In(time.FixedZone("x", 3600))}}
+	for name, c := range map[string]struct {
+		p    PacketInfo
+		want string
+	}{"all": {hsAllPacket(), goldenHandshakeAll}, "partial": {partial, goldenHandshakePartial}, "with_sip": {withSIP, goldenHandshakeWithSIP}} {
+		t.Run(name, func(t *testing.T) {
+			got, err := json.Marshal(c.p)
+			require.NoError(t, err)
+			assert.Equal(t, c.want, string(got))
+			assert.NotContains(t, string(got), "handshake")
+		})
+	}
+}
+
+func TestPacketInfoJSONZeroHandshakeTimesAreStillWritten(t *testing.T) {
+	zero := "0001-01-01T00:00:00Z"
+	for name, p := range map[string]PacketInfo{
+		"nil handshake":   {SrcIP: "a"},
+		"empty handshake": {SrcIP: "a", Handshake: &HandshakeTimes{}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			b, err := json.Marshal(p)
+			require.NoError(t, err)
+			var m map[string]any
+			require.NoError(t, json.Unmarshal(b, &m))
+			for _, k := range []string{"tcp_syn_time", "tcp_syn_ack_time", "tcp_ack_time", "first_data_time"} {
+				assert.Equal(t, zero, m[k], k)
+			}
+			s := string(b)
+			order := []string{`"payload_size"`, `"tcp_syn_time"`, `"tcp_syn_ack_time"`, `"tcp_ack_time"`, `"first_data_time"`}
+			for i := 1; i < len(order); i++ {
+				assert.Less(t, strings.Index(s, order[i-1]), strings.Index(s, order[i]), "%s before %s", order[i-1], order[i])
+			}
+		})
+	}
+	// With only zero times set after the ICMP-free fields, the next field follows directly.
+	b, err := json.Marshal(PacketInfo{ICMPType: 3})
+	require.NoError(t, err)
+	assert.Contains(t, string(b), `"first_data_time":"0001-01-01T00:00:00Z","icmp_type":3`)
+}
+
+func TestPacketInfoJSONHandshakeInASlice(t *testing.T) {
+	got, err := json.Marshal([]PacketInfo{hsAllPacket(), {}, hsAllPacket()})
+	require.NoError(t, err)
+	want := "[" + goldenHandshakeAll + "," + goldenJSON["zero"] + "," + goldenHandshakeAll + "]"
+	assert.Equal(t, want, string(got))
+
+	var back []PacketInfo
+	require.NoError(t, json.Unmarshal(got, &back))
+	require.Len(t, back, 3)
+	assert.Nil(t, back[1].Handshake, "four zero times are no handshake")
+	assert.True(t, hsT0.Equal(back[2].Handshake.TCPSynTime))
+	assert.NotSame(t, back[0].Handshake, back[2].Handshake, "decoded packets do not share a group")
+}
+
+func TestPacketInfoJSONHandshakeRoundTripAndLegacy(t *testing.T) {
+	p := hsAllPacket()
+	b, err := json.Marshal(p)
+	require.NoError(t, err)
+	var again PacketInfo
+	require.NoError(t, json.Unmarshal(b, &again))
+	assert.Equal(t, p, again)
+
+	var legacy PacketInfo // the flat encoding from before the change
+	require.NoError(t, json.Unmarshal([]byte(goldenHandshakeAll), &legacy))
+	assert.Equal(t, p, legacy)
+
+	var partial PacketInfo
+	require.NoError(t, json.Unmarshal([]byte(goldenHandshakePartial), &partial))
+	require.NotNil(t, partial.Handshake)
+	assert.True(t, hsT0.Equal(partial.Handshake.TCPSynTime))
+	assert.True(t, hsT0.Add(20*time.Millisecond).Equal(partial.Handshake.TCPSynAckTime))
+	assert.True(t, partial.Handshake.TCPAckTime.IsZero())
+	assert.True(t, partial.Handshake.FirstDataTime.IsZero())
+}
+
+func TestPacketInfoUnmarshalMergesHandshakeTimes(t *testing.T) {
+	existing := HandshakeTimes{TCPSynTime: hsT0, TCPSynAckTime: hsT0.Add(time.Second), TCPAckTime: hsT0.Add(2 * time.Second), FirstDataTime: hsT0.Add(3 * time.Second)}
+	zero := `"0001-01-01T00:00:00Z"`
+	t.Run("omitted keys keep the existing times", func(t *testing.T) {
+		h := existing
+		p := PacketInfo{SrcIP: "a", Handshake: &h}
+		require.NoError(t, json.Unmarshal([]byte(`{"dst_ip":"b"}`), &p))
+		assert.Same(t, &h, p.Handshake, "no new object when nothing is mentioned")
+		assert.Equal(t, existing, *p.Handshake)
+	})
+	t.Run("a mentioned time replaces just that time", func(t *testing.T) {
+		h := existing
+		p := PacketInfo{Handshake: &h}
+		require.NoError(t, json.Unmarshal([]byte(`{"tcp_ack_time":"2030-05-06T07:08:09Z"}`), &p))
+		want := existing
+		want.TCPAckTime = time.Date(2030, 5, 6, 7, 8, 9, 0, time.UTC)
+		assert.Equal(t, want, *p.Handshake)
+	})
+	t.Run("an explicit zero time clears that time", func(t *testing.T) {
+		h := existing
+		p := PacketInfo{Handshake: &h}
+		require.NoError(t, json.Unmarshal([]byte(`{"first_data_time":`+zero+`}`), &p))
+		want := existing
+		want.FirstDataTime = time.Time{}
+		assert.Equal(t, want, *p.Handshake)
+	})
+	t.Run("clearing every time leaves no handshake", func(t *testing.T) {
+		h := existing
+		p := PacketInfo{Handshake: &h}
+		in := `{"tcp_syn_time":` + zero + `,"tcp_syn_ack_time":` + zero + `,"tcp_ack_time":` + zero + `,"first_data_time":` + zero + `}`
+		require.NoError(t, json.Unmarshal([]byte(in), &p))
+		assert.Nil(t, p.Handshake)
+	})
+	t.Run("explicit zero times make no handshake", func(t *testing.T) {
+		var p PacketInfo
+		require.NoError(t, json.Unmarshal([]byte(goldenJSON["zero"]), &p))
+		assert.Nil(t, p.Handshake)
+	})
+	t.Run("a null time is no change", func(t *testing.T) {
+		h := existing
+		p := PacketInfo{Handshake: &h}
+		require.NoError(t, json.Unmarshal([]byte(`{"tcp_syn_time":null}`), &p))
+		assert.Same(t, &h, p.Handshake)
+		assert.Equal(t, existing, *p.Handshake)
+	})
+	t.Run("null leaves the packet and its handshake unchanged", func(t *testing.T) {
+		h := existing
+		p := PacketInfo{SrcIP: "a", Handshake: &h}
+		require.NoError(t, json.Unmarshal([]byte(`null`), &p))
+		assert.Equal(t, PacketInfo{SrcIP: "a", Handshake: &existing}, p)
+		assert.Same(t, &h, p.Handshake)
+	})
+	t.Run("ordinary and SIP fields survive a handshake-only input", func(t *testing.T) {
+		p := PacketInfo{SrcIP: "a", HTTPMethod: "GET", SIPInfo: &SIPInfo{SIPMethod: "BYE"}}
+		require.NoError(t, json.Unmarshal([]byte(`{"tcp_syn_time":"2030-05-06T07:08:09Z"}`), &p))
+		assert.Equal(t, "a", p.SrcIP)
+		assert.Equal(t, "GET", p.HTTPMethod)
+		assert.Equal(t, &SIPInfo{SIPMethod: "BYE"}, p.SIPInfo)
+		require.NotNil(t, p.Handshake)
+		assert.Equal(t, time.Date(2030, 5, 6, 7, 8, 9, 0, time.UTC), p.Handshake.TCPSynTime)
+	})
+	t.Run("a bad time is an error", func(t *testing.T) {
+		assert.Error(t, json.Unmarshal([]byte(`{"tcp_syn_time":"yesterday"}`), new(PacketInfo)))
+		p := PacketInfo{Handshake: &HandshakeTimes{TCPSynTime: hsT0}}
+		assert.Error(t, json.Unmarshal([]byte(`{"tcp_ack_time":5}`), &p))
+		require.NotNil(t, p.Handshake)
+		assert.Equal(t, hsT0, p.Handshake.TCPSynTime, "the existing group survives a failed decode")
+	})
+}
+
+func TestPacketInfoUnmarshalDoesNotModifyASharedHandshake(t *testing.T) {
+	shared := &HandshakeTimes{TCPSynTime: hsT0, TCPAckTime: hsT0.Add(time.Second)}
+	before := *shared
+	a := PacketInfo{SrcIP: "a", Handshake: shared}
+	b := a // a copy shares the group, as the packets of one connection do
+
+	require.NoError(t, json.Unmarshal([]byte(`{"tcp_ack_time":"2030-05-06T07:08:09Z","first_data_time":"2030-05-06T07:08:10Z"}`), &a))
+	assert.Equal(t, before, *shared, "the shared group is not modified")
+	assert.Same(t, shared, b.Handshake)
+	assert.NotSame(t, shared, a.Handshake)
+	assert.Equal(t, hsT0, a.Handshake.TCPSynTime, "unmentioned times are copied over")
+
+	// The reserved key is not input: it neither fills nor changes a group.
+	c := PacketInfo{Handshake: shared}
+	require.NoError(t, json.Unmarshal([]byte(`{"`+handshakeInlineKey+`":{"tcp_syn_time":"2030-01-01T00:00:00Z"}}`), &c))
+	assert.Equal(t, before, *shared)
+	assert.Same(t, shared, c.Handshake)
+	var d PacketInfo
+	require.NoError(t, json.Unmarshal([]byte(`{"`+handshakeInlineKey+`":{"tcp_syn_time":"2030-01-01T00:00:00Z"}}`), &d))
+	assert.Nil(t, d.Handshake)
+}
+
+func TestPacketInfoJSONReservedHandshakeKeyIsNeverWritten(t *testing.T) {
+	for _, p := range []PacketInfo{{}, hsAllPacket()} {
+		b, err := json.Marshal(p)
+		require.NoError(t, err)
+		assert.NotContains(t, string(b), handshakeInlineKey)
+	}
+	f, ok := reflect.TypeOf(PacketInfo{}).FieldByName("Handshake")
+	require.True(t, ok)
+	assert.Equal(t, handshakeInlineKey, f.Tag.Get("json"))
 }

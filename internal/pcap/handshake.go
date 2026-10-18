@@ -94,18 +94,18 @@ func annotateHandshakes(packets []models.PacketInfo) {
 			}
 		}
 
+		hs := &models.HandshakeTimes{TCPSynTime: packets[syn].Timestamp}
+		if synAck >= 0 {
+			hs.TCPSynAckTime = packets[synAck].Timestamp
+		}
+		if ack >= 0 {
+			hs.TCPAckTime = packets[ack].Timestamp
+		}
+		if data >= 0 {
+			hs.FirstDataTime = packets[data].Timestamp
+		}
 		for _, i := range idx {
-			p := &packets[i]
-			p.TCPSynTime = packets[syn].Timestamp
-			if synAck >= 0 {
-				p.TCPSynAckTime = packets[synAck].Timestamp
-			}
-			if ack >= 0 {
-				p.TCPAckTime = packets[ack].Timestamp
-			}
-			if data >= 0 {
-				p.FirstDataTime = packets[data].Timestamp
-			}
+			packets[i].Handshake = hs // one object per connection instance
 		}
 	}
 }

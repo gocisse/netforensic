@@ -332,7 +332,7 @@ func TestReadPacketsTruncatedPcapng(t *testing.T) {
 	assert.Greater(t, len(got), 30, "most of the capture survives")
 	assert.Less(t, len(got), 84)
 	assert.Equal(t, "SYN", got[0].TCPFlags)
-	assert.False(t, got[0].TCPSynAckTime.IsZero(), "handshake annotation still runs on the partial capture")
+	assert.False(t, hsOf(got[0]).TCPSynAckTime.IsZero(), "handshake annotation still runs on the partial capture")
 }
 
 func TestReadPacketsWithOptionsFullPayload(t *testing.T) {
@@ -389,13 +389,13 @@ func TestAnnotateHandshakesPerConnection(t *testing.T) {
 	}
 	annotateHandshakes(packets)
 
-	assert.Equal(t, t0, packets[0].TCPSynTime)
-	assert.True(t, packets[0].TCPSynAckTime.IsZero(), "the refused attempt never got a SYN-ACK")
-	assert.True(t, packets[1].TCPAckTime.IsZero())
+	assert.Equal(t, t0, hsOf(packets[0]).TCPSynTime)
+	assert.True(t, hsOf(packets[0]).TCPSynAckTime.IsZero(), "the refused attempt never got a SYN-ACK")
+	assert.True(t, hsOf(packets[1]).TCPAckTime.IsZero())
 	for _, p := range packets[2:] {
-		assert.Equal(t, t0.Add(time.Second), p.TCPSynTime)
-		assert.Equal(t, t0.Add(1020*time.Millisecond), p.TCPSynAckTime)
-		assert.Equal(t, t0.Add(1040*time.Millisecond), p.TCPAckTime)
+		assert.Equal(t, t0.Add(time.Second), hsOf(p).TCPSynTime)
+		assert.Equal(t, t0.Add(1020*time.Millisecond), hsOf(p).TCPSynAckTime)
+		assert.Equal(t, t0.Add(1040*time.Millisecond), hsOf(p).TCPAckTime)
 	}
 }
 

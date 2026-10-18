@@ -68,6 +68,16 @@ type SIPInfo struct {
 	SIPCSeqMethod string `json:"sip_cseq_method,omitempty"`
 }
 
+// HandshakeTimes is the TCP handshake timeline of one connection. A zero time
+// means the event was not observed (for example a capture that started
+// mid-connection).
+type HandshakeTimes struct {
+	TCPSynTime    time.Time `json:"tcp_syn_time"`     // first SYN from the client
+	TCPSynAckTime time.Time `json:"tcp_syn_ack_time"` // server's SYN-ACK
+	TCPAckTime    time.Time `json:"tcp_ack_time"`     // client's final handshake ACK
+	FirstDataTime time.Time `json:"first_data_time"`  // first payload from the server after the handshake
+}
+
 // DHCPInfo is what is read from one DHCP (IPv4) message: the BOOTP header
 // fields and the options the tool uses.
 type DHCPInfo struct {
@@ -178,14 +188,13 @@ type PacketInfo struct {
 	Conn      int  `json:"-"`
 	ConnKnown bool `json:"-"`
 
-	// TCP handshake timeline of the flow this packet belongs to. The reader
-	// fills these on every packet of a flow once the whole capture has been
-	// read; a zero time means the event was not observed (for example a
-	// capture that started mid-connection).
-	TCPSynTime    time.Time `json:"tcp_syn_time,omitempty"`     // first SYN from the client
-	TCPSynAckTime time.Time `json:"tcp_syn_ack_time,omitempty"` // server's SYN-ACK
-	TCPAckTime    time.Time `json:"tcp_ack_time,omitempty"`     // client's final handshake ACK
-	FirstDataTime time.Time `json:"first_data_time,omitempty"`  // first payload from the server after the handshake
+	// Handshake is the TCP handshake timeline of the connection this packet
+	// belongs to, shared by all its packets and never modified once the reader
+	// has set it; nil if no SYN of the connection was captured. In JSON its
+	// four times are flat keys of the packet (tcp_syn_time, ...) at this
+	// position, always present, zero when not observed; see MarshalJSON. The
+	// tag only reserves that position.
+	Handshake *HandshakeTimes `json:"handshake_inline__"`
 
 	// ICMP fields are set on ICMPv4 packets (Protocol ICMP).
 	ICMPType    uint8  `json:"icmp_type,omitempty"`
@@ -575,33 +584,55 @@ func QUICVersionName(v uint32) string {
 	return fmt.Sprintf("unknown (0x%08x)", v)
 }
 
-// sipInlineKey is the JSON key reserved by the SIPInfo tag of PacketInfo.
-// MarshalJSON replaces it with the members of the group.
-const sipInlineKey = "sip_info_inline__"
+// sipInlineKey and handshakeInlineKey are the JSON keys reserved by the
+// SIPInfo and Handshake tags of PacketInfo. MarshalJSON replaces each with the
+// members of its group.
+const (
+	sipInlineKey       = "sip_info_inline__"
+	handshakeInlineKey = "handshake_inline__"
+)
 
 // packetInfoPlain has the fields of PacketInfo and none of its methods, so
 // that MarshalJSON and UnmarshalJSON can use the default encoding.
 type packetInfoPlain PacketInfo
 
-// MarshalJSON encodes p as before the SIP fields moved into SIPInfo: their
-// keys are members of the packet, at the position of the SIPInfo field, and
-// are left out when empty.
+// MarshalJSON encodes p as before the SIP and handshake fields moved into
+// groups: their keys are members of the packet, at the position of the group's
+// field. The SIP members are left out when empty; the four handshake times are
+// always written, as zero times when there is no handshake.
 func (p PacketInfo) MarshalJSON() ([]byte, error) {
+	var hs HandshakeTimes
+	if p.Handshake != nil {
+		hs = *p.Handshake
+	}
+	p.Handshake = &hs // p is a copy: the placeholder always carries a group
 	b, err := json.Marshal(packetInfoPlain(p))
-	if err != nil || p.SIPInfo == nil {
-		return b, err
-	}
-	group, err := json.Marshal(p.SIPInfo)
 	if err != nil {
-		return nil, fmt.Errorf("marshal SIP info: %w", err)
+		return nil, err
 	}
-	key := []byte(`"` + sipInlineKey + `":`)
-	i := bytes.Index(b, key)
+	if b, err = spliceMembers(b, handshakeInlineKey, hs); err != nil {
+		return nil, err
+	}
+	if p.SIPInfo == nil {
+		return b, nil
+	}
+	return spliceMembers(b, sipInlineKey, p.SIPInfo)
+}
+
+// spliceMembers replaces the member `"key":{...}` of the object b by the
+// members of group, which is encoded as an object.
+func spliceMembers(b []byte, key string, group any) ([]byte, error) {
+	g, err := json.Marshal(group)
+	if err != nil {
+		return nil, fmt.Errorf("marshal %s: %w", key, err)
+	}
+	k := []byte(`"` + key + `":`)
+	i := bytes.Index(b, k)
 	if i < 0 {
-		return nil, fmt.Errorf("marshal packet: key %q not found", sipInlineKey)
+		return nil, fmt.Errorf("marshal packet: key %q not found", key)
 	}
-	end := i + len(key) + len(group)
-	members := group[1 : len(group)-1]
+	end := i + len(k) + len(g)
+	members := g[1 : len(g)-1]
 	out := append([]byte(nil), b[:i]...)
 	switch {
 	case len(members) > 0:
@@ -616,14 +647,26 @@ func (p PacketInfo) MarshalJSON() ([]byte, error) {
 
 // UnmarshalJSON decodes the flat form written by MarshalJSON. Like decoding
 // into a plain struct, it keeps the fields the input does not mention, and
-// null leaves p unchanged. The SIP members are merged into a copy of the
-// existing group, which other copies of the packet may share; SIPInfo stays nil
-// unless the result has a non-empty SIP member.
+// null leaves p unchanged. The SIP members and the handshake times are merged
+// into copies of the existing groups, which other copies of the packet may
+// share, so a group is never modified in place. SIPInfo stays nil unless the
+// result has a non-empty SIP member; Handshake stays nil unless a time is not
+// zero. A handshake time the input mentions replaces the existing one, a zero
+// time included; a time it omits, or gives as null, is kept.
 func (p *PacketInfo) UnmarshalJSON(b []byte) error {
 	if string(bytes.TrimSpace(b)) == "null" {
 		return nil
 	}
+	// The plain decoder would fill a group through the reserved key, and into
+	// the existing one in place; take the group out of its way.
+	hs := p.Handshake
+	p.Handshake = nil
 	if err := json.Unmarshal(b, (*packetInfoPlain)(p)); err != nil {
+		p.Handshake = hs
+		return err
+	}
+	p.Handshake = hs
+	if err := p.mergeHandshake(b); err != nil {
 		return err
 	}
 	var cur SIPInfo
@@ -641,5 +684,39 @@ func (p *PacketInfo) UnmarshalJSON(b []byte) error {
 	default:
 		p.SIPInfo = &merged
 	}
+	return nil
+}
+
+// mergeHandshake applies the handshake times that the JSON object b mentions.
+func (p *PacketInfo) mergeHandshake(b []byte) error {
+	var raw struct {
+		Syn    *time.Time `json:"tcp_syn_time"`
+		SynAck *time.Time `json:"tcp_syn_ack_time"`
+		Ack    *time.Time `json:"tcp_ack_time"`
+		Data   *time.Time `json:"first_data_time"`
+	}
+	if err := json.Unmarshal(b, &raw); err != nil {
+		return err
+	}
+	if raw.Syn == nil && raw.SynAck == nil && raw.Ack == nil && raw.Data == nil {
+		return nil
+	}
+	var merged HandshakeTimes
+	if p.Handshake != nil {
+		merged = *p.Handshake
+	}
+	for _, m := range []struct {
+		in  *time.Time
+		out *time.Time
+	}{{raw.Syn, &merged.TCPSynTime}, {raw.SynAck, &merged.TCPSynAckTime}, {raw.Ack, &merged.TCPAckTime}, {raw.Data, &merged.FirstDataTime}} {
+		if m.in != nil {
+			*m.out = *m.in
+		}
+	}
+	if merged.TCPSynTime.IsZero() && merged.TCPSynAckTime.IsZero() && merged.TCPAckTime.IsZero() && merged.FirstDataTime.IsZero() {
+		p.Handshake = nil
+		return nil
+	}
+	p.Handshake = &merged
 	return nil
 }

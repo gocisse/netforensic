@@ -247,9 +247,8 @@ func TestPortReuseAfterRefusal(t *testing.T) {
 		insts := models.ConnectionInstances(packets)
 		for i := range packets {
 			if insts[i] == 1 {
-				packets[i].TCPSynTime = t0.Add(1000 * time.Millisecond)
-				packets[i].TCPSynAckTime = t0.Add(1020 * time.Millisecond)
-				packets[i].TCPAckTime = t0.Add(1040 * time.Millisecond)
+				packets[i].Handshake = &models.HandshakeTimes{TCPSynTime: t0.Add(1000 * time.Millisecond),
+					TCPSynAckTime: t0.Add(1020 * time.Millisecond), TCPAckTime: t0.Add(1040 * time.Millisecond)}
 			}
 		}
 		res := Analyze(packets, "all")

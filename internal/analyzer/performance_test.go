@@ -34,7 +34,7 @@ func withHandshake(pkts []models.PacketInfo, syn, synAck, ack, data float64) []m
 		return at(s)
 	}
 	for i := range pkts {
-		pkts[i].TCPSynTime, pkts[i].TCPSynAckTime, pkts[i].TCPAckTime, pkts[i].FirstDataTime = t(syn), t(synAck), t(ack), t(data)
+		pkts[i].Handshake = &models.HandshakeTimes{TCPSynTime: t(syn), TCPSynAckTime: t(synAck), TCPAckTime: t(ack), FirstDataTime: t(data)}
 	}
 	return pkts
 }
@@ -210,11 +210,12 @@ func TestPerformanceRealLab5Handshake(t *testing.T) {
 	require.NoError(t, err)
 
 	first := packets[0]
-	assert.False(t, first.TCPSynTime.IsZero())
-	assert.False(t, first.TCPSynAckTime.IsZero())
-	assert.False(t, first.TCPAckTime.IsZero())
-	assert.False(t, first.FirstDataTime.IsZero())
-	assert.InDelta(t, 97, ms(first.TCPSynAckTime.Sub(first.TCPSynTime)), 2, "SYN to SYN-ACK")
+	require.NotNil(t, first.Handshake)
+	assert.False(t, first.Handshake.TCPSynTime.IsZero())
+	assert.False(t, first.Handshake.TCPSynAckTime.IsZero())
+	assert.False(t, first.Handshake.TCPAckTime.IsZero())
+	assert.False(t, first.Handshake.FirstDataTime.IsZero())
+	assert.InDelta(t, 97, ms(first.Handshake.TCPSynAckTime.Sub(first.Handshake.TCPSynTime)), 2, "SYN to SYN-ACK")
 
 	flows, issues := applyPerformanceMetrics(packets, aggregateFlows(packets))
 	require.Len(t, flows, 1)
@@ -366,4 +367,11 @@ func TestAggregatedPerformanceSerializesEveryFlow(t *testing.T) {
 
 	jit := by["High Jitter"][0]
 	assert.InDelta(t, 649, jit.Occurrences[0].Value, 0.001, "jitter lists the max RTT, not the average")
+}
+
+func TestHandshakeMetricsWithoutHandshakeObject(t *testing.T) {
+	pkts := []models.PacketInfo{tcpPkt(0, true, "ACK", 1, 1, 0), tcpPkt(1, false, "PSH,ACK", 1, 1, 10)}
+	setup, ttfb := handshakeMetrics(pkts)
+	assert.Zero(t, setup)
+	assert.Zero(t, ttfb)
 }

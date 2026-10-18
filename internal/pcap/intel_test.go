@@ -147,10 +147,10 @@ func TestAnnotateHandshakes(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			annotateHandshakes(tt.pkts)
 			for i, p := range tt.pkts {
-				assert.True(t, tt.wantSyn.Equal(p.TCPSynTime), "packet %d syn", i)
-				assert.True(t, tt.wantSA.Equal(p.TCPSynAckTime), "packet %d syn-ack", i)
-				assert.True(t, tt.wantAck.Equal(p.TCPAckTime), "packet %d ack", i)
-				assert.True(t, tt.wD.Equal(p.FirstDataTime), "packet %d first data", i)
+				assert.True(t, tt.wantSyn.Equal(hsOf(p).TCPSynTime), "packet %d syn", i)
+				assert.True(t, tt.wantSA.Equal(hsOf(p).TCPSynAckTime), "packet %d syn-ack", i)
+				assert.True(t, tt.wantAck.Equal(hsOf(p).TCPAckTime), "packet %d ack", i)
+				assert.True(t, tt.wD.Equal(hsOf(p).FirstDataTime), "packet %d first data", i)
 			}
 		})
 	}
@@ -162,10 +162,10 @@ func TestAnnotateHandshakesSeparatesFlowsAndSkipsNonTCP(t *testing.T) {
 	udp := models.PacketInfo{Timestamp: time.Unix(1700000000, 0), Protocol: models.ProtocolUDP, SrcIP: "10.0.0.1", SrcPort: 40000, DstIP: "10.0.0.2", DstPort: 80}
 	pkts := []models.PacketInfo{tcpInfo(0, true, "SYN", 0), other, udp}
 	annotateHandshakes(pkts)
-	assert.Equal(t, pkts[0].Timestamp, pkts[0].TCPSynTime)
-	assert.Equal(t, pkts[1].Timestamp, pkts[1].TCPSynTime, "second flow has its own SYN")
-	assert.NotEqual(t, pkts[0].TCPSynTime, pkts[1].TCPSynTime)
-	assert.True(t, pkts[2].TCPSynTime.IsZero(), "UDP untouched")
+	assert.Equal(t, pkts[0].Timestamp, hsOf(pkts[0]).TCPSynTime)
+	assert.Equal(t, pkts[1].Timestamp, hsOf(pkts[1]).TCPSynTime, "second flow has its own SYN")
+	assert.NotEqual(t, hsOf(pkts[0]).TCPSynTime, hsOf(pkts[1]).TCPSynTime)
+	assert.Nil(t, pkts[2].Handshake, "UDP untouched")
 }
 
 func TestReadPacketsHandshakeEndToEnd(t *testing.T) {
@@ -192,10 +192,10 @@ func TestReadPacketsHandshakeEndToEnd(t *testing.T) {
 
 	base := time.Unix(1700000000, 0)
 	for i, p := range got {
-		assert.True(t, base.Equal(p.TCPSynTime), "packet %d", i)
-		assert.True(t, base.Add(1*time.Second).Equal(p.TCPSynAckTime), "packet %d", i)
-		assert.True(t, base.Add(2*time.Second).Equal(p.TCPAckTime), "packet %d", i)
-		assert.True(t, base.Add(4*time.Second).Equal(p.FirstDataTime), "packet %d", i)
+		assert.True(t, base.Equal(hsOf(p).TCPSynTime), "packet %d", i)
+		assert.True(t, base.Add(1*time.Second).Equal(hsOf(p).TCPSynAckTime), "packet %d", i)
+		assert.True(t, base.Add(2*time.Second).Equal(hsOf(p).TCPAckTime), "packet %d", i)
+		assert.True(t, base.Add(4*time.Second).Equal(hsOf(p).FirstDataTime), "packet %d", i)
 	}
 	assert.Equal(t, uint32(501), got[2].TCPAck)
 	assert.Equal(t, "Example.COM", got[3].HTTPHost)
