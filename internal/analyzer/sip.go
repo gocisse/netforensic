@@ -35,7 +35,7 @@ type sipTxn struct {
 	final  *models.PacketInfo
 }
 
-func (t *sipTxn) code() int { return t.final.SIPStatusCode }
+func (t *sipTxn) code() int { return t.final.SIPInfo.SIPStatusCode }
 
 // sipKey identifies a transaction. The flow is part of it: a proxy forwards a
 // request with the same Call-ID and CSeq, and a capture that sees both legs
@@ -82,30 +82,33 @@ func analyzeSIP(packets []models.PacketInfo) []models.Issue {
 	cancelled := make(map[string]bool)
 
 	for i, p := range packets {
+		if p.SIPInfo == nil { // not SIP; the requests and responses kept below always have the group
+			continue
+		}
 		fk, _ := canonicalKey(p)
 		flow := instKey{fk, insts[i]}.id()
 		switch {
-		case p.SIPMethod != "":
-			if p.SIPCallID == "" {
+		case p.SIPInfo.SIPMethod != "":
+			if p.SIPInfo.SIPCallID == "" {
 				continue
 			}
-			if p.SIPMethod == "CANCEL" {
-				cancelled[p.SIPCallID] = true
+			if p.SIPInfo.SIPMethod == "CANCEL" {
+				cancelled[p.SIPInfo.SIPCallID] = true
 			}
-			if p.SIPMethod == "ACK" {
+			if p.SIPInfo.SIPMethod == "ACK" {
 				continue
 			}
-			cseq := p.SIPCSeq
-			k := sipKey(flow, p.SIPCallID, cseq, p.SIPMethod)
+			cseq := p.SIPInfo.SIPCSeq
+			k := sipKey(flow, p.SIPInfo.SIPCallID, cseq, p.SIPInfo.SIPMethod)
 			if _, seen := txns[k]; seen {
 				continue // a retransmission
 			}
-			t := &sipTxn{callID: p.SIPCallID, method: p.SIPMethod, req: p,
+			t := &sipTxn{callID: p.SIPInfo.SIPCallID, method: p.SIPInfo.SIPMethod, req: p,
 				flow: flow, client: p.SrcIP, server: endpoint{p.DstIP, p.DstPort}.String()}
 			txns[k] = t
 			order = append(order, t)
-		case p.SIPStatusCode >= 200:
-			if t := txns[sipKey(flow, p.SIPCallID, p.SIPCSeq, p.SIPCSeqMethod)]; t != nil && t.final == nil {
+		case p.SIPInfo.SIPStatusCode >= 200:
+			if t := txns[sipKey(flow, p.SIPInfo.SIPCallID, p.SIPInfo.SIPCSeq, p.SIPInfo.SIPCSeqMethod)]; t != nil && t.final == nil {
 				resp := p
 				t.final = &resp
 			}
@@ -164,7 +167,7 @@ func sipCodes(txns []*sipTxn) string {
 		c := t.code()
 		count[c]++
 		if _, ok := reason[c]; !ok {
-			reason[c] = t.final.SIPReason
+			reason[c] = t.final.SIPInfo.SIPReason
 		}
 	}
 	codes := make([]int, 0, len(count))
@@ -236,7 +239,7 @@ func sipRegistrationIssues(txns []*sipTxn) []models.Issue {
 	groups := make(map[string][]*sipTxn)
 	var order []string
 	for _, t := range txns {
-		who := t.req.SIPUserAgent
+		who := t.req.SIPInfo.SIPUserAgent
 		if who == "" {
 			who = "client " + t.client
 		}

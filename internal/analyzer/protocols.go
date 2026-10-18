@@ -73,7 +73,7 @@ func classifyFlows(packets []models.PacketInfo) (map[string]*flowClass, []*flowC
 			c.app = models.ProtocolTLS
 		case (p.HTTPMethod != "" || p.HTTPStatusCode != 0) && c.app == "":
 			c.app = models.ProtocolHTTP
-		case (p.SIPMethod != "" || p.SIPStatusCode != 0) && c.app != models.ProtocolDNS:
+		case p.SIPInfo != nil && (p.SIPInfo.SIPMethod != "" || p.SIPInfo.SIPStatusCode != 0) && c.app != models.ProtocolDNS:
 			c.app = models.ProtocolSIP
 		case p.DHCP != nil && c.app != models.ProtocolDNS:
 			c.app = models.ProtocolDHCP

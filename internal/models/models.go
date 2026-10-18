@@ -2,6 +2,8 @@
 package models
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -47,6 +49,24 @@ var ipProtocolNames = map[uint8]Protocol{
 // the well-known protocols the tool recognizes but does not analyze, or ""
 // otherwise.
 func IPProtocolName(n uint8) Protocol { return ipProtocolNames[n] }
+
+// SIPInfo is what is read from one SIP message: the request or status line
+// and the headers the analysis uses. A request has SIPMethod and SIPURI; a
+// response has SIPStatusCode and SIPReason.
+type SIPInfo struct {
+	SIPVersion    string `json:"sip_version,omitempty"`     // "SIP/2.0"
+	SIPMethod     string `json:"sip_method,omitempty"`      // INVITE, REGISTER, ...; requests only
+	SIPURI        string `json:"sip_uri,omitempty"`         // request URI; requests only
+	SIPStatusCode int    `json:"sip_status_code,omitempty"` // 100-699; responses only
+	SIPReason     string `json:"sip_reason,omitempty"`      // reason phrase; responses only
+	SIPCallID     string `json:"sip_call_id,omitempty"`
+	SIPFrom       string `json:"sip_from,omitempty"`
+	SIPTo         string `json:"sip_to,omitempty"`
+	SIPContact    string `json:"sip_contact,omitempty"`
+	SIPUserAgent  string `json:"sip_user_agent,omitempty"` // User-Agent, or Server in a response without one
+	SIPCSeq       int    `json:"sip_cseq,omitempty"`       // the CSeq number
+	SIPCSeqMethod string `json:"sip_cseq_method,omitempty"`
+}
 
 // DHCPInfo is what is read from one DHCP (IPv4) message: the BOOTP header
 // fields and the options the tool uses.
@@ -219,22 +239,14 @@ type PacketInfo struct {
 	TLSAlertLevel       string `json:"tls_alert_level,omitempty"`       // "warning" or "fatal"
 	TLSAlertDescription string `json:"tls_alert_description,omitempty"` // e.g. "handshake_failure"
 
-	// SIP fields are set on TCP and UDP packets whose payload starts with a
-	// SIP request line or status line. A request has SIPMethod and SIPURI; a
-	// response has SIPStatusCode and SIPReason. SIPMethod != "" ||
-	// SIPStatusCode != 0 identifies SIP packets.
-	SIPVersion    string `json:"sip_version,omitempty"`     // "SIP/2.0"
-	SIPMethod     string `json:"sip_method,omitempty"`      // INVITE, REGISTER, ...; requests only
-	SIPURI        string `json:"sip_uri,omitempty"`         // request URI; requests only
-	SIPStatusCode int    `json:"sip_status_code,omitempty"` // 100-699; responses only
-	SIPReason     string `json:"sip_reason,omitempty"`      // reason phrase; responses only
-	SIPCallID     string `json:"sip_call_id,omitempty"`
-	SIPFrom       string `json:"sip_from,omitempty"`
-	SIPTo         string `json:"sip_to,omitempty"`
-	SIPContact    string `json:"sip_contact,omitempty"`
-	SIPUserAgent  string `json:"sip_user_agent,omitempty"` // User-Agent, or Server in a response without one
-	SIPCSeq       int    `json:"sip_cseq,omitempty"`       // the CSeq number
-	SIPCSeqMethod string `json:"sip_cseq_method,omitempty"`
+	// SIPInfo holds the SIP details of TCP and UDP packets whose payload starts
+	// with a SIP request line or status line. It is a pointer so that the other
+	// packets of a capture do not pay for it, and it is nil for them: check it
+	// before reading a SIP field. SIPMethod != "" || SIPStatusCode != 0
+	// identifies SIP packets. In JSON the fields are flat keys of the packet
+	// (sip_method, ...) at this position; see MarshalJSON. The tag only
+	// reserves that position.
+	SIPInfo *SIPInfo `json:"sip_info_inline__,omitempty"`
 
 	// DHCP is set on UDP packets that carry a DHCP (IPv4) message. It is a
 	// pointer so that the other packets of a capture do not pay for it.
@@ -561,4 +573,73 @@ func QUICVersionName(v uint32) string {
 		return fmt.Sprintf("reserved (0x%08x)", v)
 	}
 	return fmt.Sprintf("unknown (0x%08x)", v)
+}
+
+// sipInlineKey is the JSON key reserved by the SIPInfo tag of PacketInfo.
+// MarshalJSON replaces it with the members of the group.
+const sipInlineKey = "sip_info_inline__"
+
+// packetInfoPlain has the fields of PacketInfo and none of its methods, so
+// that MarshalJSON and UnmarshalJSON can use the default encoding.
+type packetInfoPlain PacketInfo
+
+// MarshalJSON encodes p as before the SIP fields moved into SIPInfo: their
+// keys are members of the packet, at the position of the SIPInfo field, and
+// are left out when empty.
+func (p PacketInfo) MarshalJSON() ([]byte, error) {
+	b, err := json.Marshal(packetInfoPlain(p))
+	if err != nil || p.SIPInfo == nil {
+		return b, err
+	}
+	group, err := json.Marshal(p.SIPInfo)
+	if err != nil {
+		return nil, fmt.Errorf("marshal SIP info: %w", err)
+	}
+	key := []byte(`"` + sipInlineKey + `":`)
+	i := bytes.Index(b, key)
+	if i < 0 {
+		return nil, fmt.Errorf("marshal packet: key %q not found", sipInlineKey)
+	}
+	end := i + len(key) + len(group)
+	members := group[1 : len(group)-1]
+	out := append([]byte(nil), b[:i]...)
+	switch {
+	case len(members) > 0:
+		out = append(out, members...)
+	case end < len(b) && b[end] == ',':
+		end++ // no member left: drop the comma that followed it
+	case out[len(out)-1] == ',':
+		out = out[:len(out)-1]
+	}
+	return append(out, b[end:]...), nil
+}
+
+// UnmarshalJSON decodes the flat form written by MarshalJSON. Like decoding
+// into a plain struct, it keeps the fields the input does not mention, and
+// null leaves p unchanged. The SIP members are merged into a copy of the
+// existing group, which other copies of the packet may share; SIPInfo stays nil
+// unless the result has a non-empty SIP member.
+func (p *PacketInfo) UnmarshalJSON(b []byte) error {
+	if string(bytes.TrimSpace(b)) == "null" {
+		return nil
+	}
+	if err := json.Unmarshal(b, (*packetInfoPlain)(p)); err != nil {
+		return err
+	}
+	var cur SIPInfo
+	if p.SIPInfo != nil {
+		cur = *p.SIPInfo
+	}
+	merged := cur
+	if err := json.Unmarshal(b, &merged); err != nil {
+		return err
+	}
+	switch {
+	case merged == cur:
+	case merged == (SIPInfo{}):
+		p.SIPInfo = nil
+	default:
+		p.SIPInfo = &merged
+	}
+	return nil
 }

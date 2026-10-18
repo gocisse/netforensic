@@ -431,19 +431,19 @@ func topByBytes(flows []models.Flow, idx []int, n int) []models.Flow {
 // noteSIP adds the SIP details of p, if it carries any, to flow f: each
 // request method once, and the first Call-ID and User-Agent.
 func noteSIP(f *models.Flow, p models.PacketInfo) {
-	if p.SIPMethod == "" && p.SIPStatusCode == 0 {
+	if p.SIPInfo == nil || (p.SIPInfo.SIPMethod == "" && p.SIPInfo.SIPStatusCode == 0) {
 		return
 	}
-	if m := p.SIPMethod; m != "" && !strings.Contains(","+f.SIPMethod+",", ","+m+",") {
+	if m := p.SIPInfo.SIPMethod; m != "" && !strings.Contains(","+f.SIPMethod+",", ","+m+",") {
 		if f.SIPMethod != "" {
 			f.SIPMethod += ","
 		}
 		f.SIPMethod += m
 	}
 	if f.SIPCallID == "" {
-		f.SIPCallID = p.SIPCallID
+		f.SIPCallID = p.SIPInfo.SIPCallID
 	}
 	if f.SIPUserAgent == "" {
-		f.SIPUserAgent = p.SIPUserAgent
+		f.SIPUserAgent = p.SIPInfo.SIPUserAgent
 	}
 }

@@ -30,8 +30,19 @@ var sipCompact = map[string]string{"i": "call-id", "f": "from", "t": "to", "m": 
 // payload is read. Text from the capture is cleaned of control characters
 // and cut to a sane length, since it is shown on terminals.
 func fillSIP(info *models.PacketInfo, payload []byte) {
-	if len(payload) < len(sipVersion)+4 {
+	var sip models.SIPInfo // stays on the stack: only the copy below escapes
+	if !parseSIP(&sip, payload) {
 		return
+	}
+	found := sip
+	info.SIPInfo = &found
+}
+
+// parseSIP reads the first SIP message of payload into info and reports
+// whether payload holds one.
+func parseSIP(info *models.SIPInfo, payload []byte) bool {
+	if len(payload) < len(sipVersion)+4 {
+		return false
 	}
 	if len(payload) > sipMaxHeader {
 		payload = payload[:sipMaxHeader]
@@ -51,13 +62,13 @@ func fillSIP(info *models.PacketInfo, payload []byte) {
 		codeStr, reason, _ := strings.Cut(rest, " ")
 		code, err := strconv.Atoi(codeStr)
 		if err != nil || len(codeStr) != 3 || code < 100 || code > 699 {
-			return
+			return false
 		}
 		info.SIPStatusCode, info.SIPReason = code, cleanMeta(strings.TrimSpace(reason))
 	default: // request line: INVITE sip:bob@example.com SIP/2.0
 		parts := strings.Fields(first)
 		if len(parts) != 3 || parts[2] != sipVersion || !sipMethods[parts[0]] {
-			return
+			return false
 		}
 		info.SIPMethod, info.SIPURI = parts[0], cleanMeta(parts[1])
 	}
@@ -115,4 +126,5 @@ func fillSIP(info *models.PacketInfo, payload []byte) {
 	if info.SIPUserAgent == "" {
 		info.SIPUserAgent = server
 	}
+	return true
 }
