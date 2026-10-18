@@ -20,11 +20,14 @@ func AssignConnections(packets []PacketInfo) {
 //
 // A connection is closed once a FIN or RST has been seen on it. The next
 // packet on that 4-tuple that carries SYN without ACK starts a new
-// connection. Packets must be in capture order. Late packets of a closed
-// connection (the final ACK of a FIN exchange, say) stay with it, and a SYN
-// that arrives before any FIN or RST is an ordinary retransmission of the
-// connection's SYN. Packets already stamped by AssignConnections keep their
-// stamp.
+// connection. So does a SYN without ACK that cannot belong to the connection
+// even though nothing closed it, because the ports are being reused: its
+// sequence number differs from that of the connection's own SYN, or, if the
+// capture holds no SYN of the connection from that side, earlier traffic from
+// that side does not begin at the byte after the SYN. A retransmitted SYN has
+// the same sequence number and stays. Packets must be in capture order. Late
+// packets of a closed connection (the final ACK of a FIN exchange, say) stay
+// with it. Packets already stamped by AssignConnections keep their stamp.
 func ConnectionInstances(packets []PacketInfo) []int {
 	type endpoint struct {
 		ip   string
@@ -37,6 +40,10 @@ func ConnectionInstances(packets []PacketInfo) []int {
 	type state struct {
 		n      int
 		closed bool
+		isn    [2]uint32 // the sequence number of the first SYN without ACK in each direction
+		hasISN [2]bool
+		first  [2]uint32 // the first sequence number seen in each direction, from any packet
+		seen   [2]bool
 	}
 
 	out := make([]int, len(packets))
@@ -69,9 +76,21 @@ func ConnectionInstances(packets []PacketInfo) []int {
 			}
 			return false
 		}
-		if s.closed && has("SYN") && !has("ACK") {
-			s.n++
-			s.closed = false
+		dir := 0 // the direction of p: 0 from the first endpoint, 1 from the second
+		if p.SrcIP != src.ip || p.SrcPort != src.port {
+			dir = 1
+		}
+		syn := has("SYN") && !has("ACK")
+		if syn && (s.closed ||
+			s.hasISN[dir] && p.TCPSeq != s.isn[dir] ||
+			!s.hasISN[dir] && s.seen[dir] && s.first[dir] != p.TCPSeq+1) {
+			*s = state{n: s.n + 1}
+		}
+		if !s.seen[dir] {
+			s.first[dir], s.seen[dir] = p.TCPSeq, true
+		}
+		if syn && !s.hasISN[dir] {
+			s.isn[dir], s.hasISN[dir] = p.TCPSeq, true
 		}
 		out[i] = s.n
 		if has("FIN") || has("RST") {

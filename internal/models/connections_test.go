@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func connPkt(fromClient bool, flags string) PacketInfo {
@@ -182,4 +183,89 @@ func TestAssignStreams(t *testing.T) {
 			}
 		})
 	}
+}
+
+// connSeq is connPkt with a sequence number.
+func connSeq(fromClient bool, flags string, seq uint32) PacketInfo {
+	p := connPkt(fromClient, flags)
+	p.TCPSeq = seq
+	return p
+}
+
+// A SYN without ACK that has another ISN than the connection's own is a new
+// connection even if no FIN or RST closed the old one; a retransmitted SYN
+// (same ISN), and anything with ACK, is not.
+func TestConnectionInstancesSplitOnANewISN(t *testing.T) {
+	data := func(fromClient bool, seq uint32) PacketInfo { return connSeq(fromClient, "PSH,ACK", seq) }
+	tests := []struct {
+		name  string
+		steps []PacketInfo
+		want  []int
+	}{
+		{"R1 reuse with a new ISN, no FIN or RST",
+			[]PacketInfo{connSeq(true, "SYN", 1000), connSeq(false, "SYN,ACK", 5000), connSeq(true, "ACK", 1001), data(true, 1001), data(false, 5001),
+				connSeq(true, "SYN", 9000), connSeq(false, "SYN,ACK", 7000), connSeq(true, "ACK", 9001)},
+			[]int{0, 0, 0, 0, 0, 1, 1, 1}},
+		{"R2 a retransmitted SYN has the same ISN",
+			[]PacketInfo{connSeq(true, "SYN", 1000), connSeq(true, "SYN", 1000), connSeq(false, "SYN,ACK", 5000), connSeq(true, "ACK", 1001)},
+			[]int{0, 0, 0, 0}},
+		{"R3 a new ISN after the SYN-ACK of an established connection",
+			[]PacketInfo{connSeq(true, "SYN", 1000), connSeq(false, "SYN,ACK", 5000), connSeq(true, "ACK", 1001), connSeq(true, "SYN", 9000), connSeq(false, "SYN,ACK", 7000)},
+			[]int{0, 0, 0, 1, 1}},
+		{"R4 a SYN-ACK never starts a connection, whatever its ISN",
+			[]PacketInfo{connSeq(true, "SYN", 1000), connSeq(false, "SYN,ACK", 5000), connSeq(false, "SYN,ACK", 6000)},
+			[]int{0, 0, 0}},
+		{"SYNs with changing ISNs and no answer are separate attempts",
+			[]PacketInfo{connSeq(true, "SYN", 1000), connSeq(true, "SYN", 2000), connSeq(true, "SYN", 3000), connSeq(true, "ACK", 3001)},
+			[]int{0, 1, 2, 2}},
+		{"the SYN-ACK answers the second ISN",
+			[]PacketInfo{connSeq(true, "SYN", 1000), connSeq(true, "SYN", 2000), connSeq(false, "SYN,ACK", 5000), connSeq(true, "ACK", 2001)},
+			[]int{0, 1, 1, 1}},
+		{"R5 after a FIN, a new ISN splits (as always); late packets stay",
+			[]PacketInfo{connSeq(true, "SYN", 1000), connSeq(true, "FIN,ACK", 1001), connSeq(false, "ACK", 5000), connSeq(true, "SYN", 9000)},
+			[]int{0, 0, 0, 1}},
+		{"R5 after a RST, the same ISN splits too (as always)",
+			[]PacketInfo{connSeq(true, "SYN", 1000), connSeq(false, "RST,ACK", 0), connSeq(true, "SYN", 1000)},
+			[]int{0, 0, 1}},
+		{"R7 the capture starts mid-session: a SYN with an unrelated ISN is a new connection",
+			[]PacketInfo{data(true, 5000), data(false, 100), connSeq(true, "SYN", 9000), connSeq(false, "SYN,ACK", 7000)},
+			[]int{0, 0, 1, 1}},
+		{"R8 data recorded before its own SYN is the same connection",
+			[]PacketInfo{data(true, 1001), connSeq(true, "SYN", 1000), connSeq(false, "SYN,ACK", 5000), connSeq(true, "ACK", 1001), connSeq(true, "SYN", 1000)},
+			[]int{0, 0, 0, 0, 0}},
+		{"R9 the ISN+1 comparison wraps around",
+			[]PacketInfo{data(true, 0), connSeq(true, "SYN", 0xFFFFFFFF)},
+			[]int{0, 0}},
+		{"R9 and so does the retransmission of a wrapped SYN",
+			[]PacketInfo{connSeq(true, "SYN", 0xFFFFFFFF), connSeq(true, "SYN", 0xFFFFFFFF), connSeq(true, "ACK", 0)},
+			[]int{0, 0, 0}},
+		{"a SYN from the other side has its own history",
+			[]PacketInfo{connSeq(true, "SYN", 1000), connSeq(false, "SYN", 4000), connSeq(true, "SYN", 1000), connSeq(false, "SYN", 4000)},
+			[]int{0, 0, 0, 0}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, ConnectionInstances(tt.steps))
+		})
+	}
+
+	t.Run("R6 the same ports in two tunnels are independent", func(t *testing.T) {
+		a, b := connSeq(true, "SYN", 1000), connSeq(true, "SYN", 2000)
+		a.Tunnel, b.Tunnel = "192.0.2.1>192.0.2.2/GRE", "198.51.100.1>198.51.100.2/GRE"
+		assert.Equal(t, []int{0, 0}, ConnectionInstances([]PacketInfo{a, b}))
+		b.Tunnel = a.Tunnel
+		assert.Equal(t, []int{0, 1}, ConnectionInstances([]PacketInfo{a, b}), "the same tunnel: another ISN, another connection")
+	})
+	t.Run("R10 stamped packets keep their stamp", func(t *testing.T) {
+		a, b := connSeq(true, "SYN", 1000), connSeq(true, "SYN", 2000)
+		a.Conn, a.ConnKnown, b.Conn, b.ConnKnown = 3, true, 3, true
+		assert.Equal(t, []int{3, 3}, ConnectionInstances([]PacketInfo{a, b}))
+	})
+	t.Run("R11 the numbering survives filtering", func(t *testing.T) {
+		all := []PacketInfo{connSeq(true, "SYN", 1000), connSeq(false, "SYN,ACK", 5000), connSeq(true, "SYN", 9000), connSeq(false, "SYN,ACK", 7000), connSeq(true, "ACK", 9001)}
+		AssignConnections(all)
+		require.Equal(t, []int{0, 0, 1, 1, 1}, []int{all[0].Conn, all[1].Conn, all[2].Conn, all[3].Conn, all[4].Conn})
+		second := all[2:] // the capture filtered to the second connection
+		assert.Equal(t, []int{1, 1, 1}, ConnectionInstances(second), "unstamped recomputation would call it connection 0")
+	})
 }

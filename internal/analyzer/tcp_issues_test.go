@@ -754,6 +754,15 @@ func TestSYNFloodIsPerDestinationAndRestIsFolded(t *testing.T) {
 	}
 }
 
+// synEv is a client SYN from tcpEv's connection that keeps one initial
+// sequence number: a retried SYN repeats it, whereas tcpEv numbers every packet
+// by its time, which would make each retry a new connection attempt.
+func synEv(ms int, port uint16) models.PacketInfo {
+	p := tcpEv(ms, port, true, "SYN", 0)
+	p.TCPSeq = 1
+	return p
+}
+
 func TestSYNHandshakeCases(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -773,11 +782,11 @@ func TestSYNHandshakeCases(t *testing.T) {
 		{"a lone SYN with nothing else in the capture", []models.PacketInfo{
 			tcpEv(0, 5000, true, "SYN", 0)}, nil},
 		{"SYN retried until the end, never answered", []models.PacketInfo{
-			tcpEv(0, 5000, true, "SYN", 0), tcpEv(1000, 5000, true, "SYN", 0), tcpEv(3000, 5000, true, "SYN", 0), tail(9000)}, []string{titleUnansweredSYN}},
+			synEv(0, 5000), synEv(1000, 5000), synEv(3000, 5000), tail(9000)}, []string{titleUnansweredSYN}},
 		{"first SYN lost, retry answered", []models.PacketInfo{
-			tcpEv(0, 5000, true, "SYN", 0), tcpEv(1000, 5000, true, "SYN", 0), tcpEv(1030, 5000, false, "SYN,ACK", 0), tcpEv(1031, 5000, true, "ACK", 0)}, []string{titleSYNRetried}},
+			synEv(0, 5000), synEv(1000, 5000), tcpEv(1030, 5000, false, "SYN,ACK", 0), tcpEv(1031, 5000, true, "ACK", 0)}, []string{titleSYNRetried}},
 		{"a SYN after the SYN-ACK is not a retry", []models.PacketInfo{
-			tcpEv(0, 5000, true, "SYN", 0), tcpEv(10, 5000, false, "SYN,ACK", 0), tcpEv(20, 5000, true, "SYN", 0), tail(5000)}, nil},
+			synEv(0, 5000), tcpEv(10, 5000, false, "SYN,ACK", 0), synEv(20, 5000), tail(5000)}, nil},
 		{"client gives up with an RST after a second", []models.PacketInfo{
 			tcpEv(0, 5000, true, "SYN", 0), tcpEv(1500, 5000, true, "RST", 0)}, []string{titleUnansweredSYN}},
 		{"midstream traffic has no SYN", []models.PacketInfo{
@@ -798,7 +807,7 @@ func TestSYNHandshakeCases(t *testing.T) {
 
 func TestSYNRetriedIsInfo(t *testing.T) {
 	res := Analyze([]models.PacketInfo{
-		tcpEv(0, 5000, true, "SYN", 0), tcpEv(1000, 5000, true, "SYN", 0), tcpEv(1030, 5000, false, "SYN,ACK", 0), tcpEv(1031, 5000, true, "ACK", 0),
+		synEv(0, 5000), synEv(1000, 5000), tcpEv(1030, 5000, false, "SYN,ACK", 0), tcpEv(1031, 5000, true, "ACK", 0),
 	}, "all")
 	got := synIssuesOf(res)
 	require.Len(t, got, 1)
@@ -810,7 +819,7 @@ func TestSYNRetriedIsInfo(t *testing.T) {
 	var packets []models.PacketInfo
 	for i := 0; i < 3; i++ {
 		port := uint16(5000 + i)
-		packets = append(packets, tcpEv(0, port, true, "SYN", 0), tcpEv(1000, port, true, "SYN", 0), tcpEv(1020, port, false, "SYN,ACK", 0))
+		packets = append(packets, synEv(0, port), synEv(1000, port), tcpEv(1020, port, false, "SYN,ACK", 0))
 	}
 	got = synIssuesOf(Analyze(packets, "all"))
 	require.Len(t, got, 1)
@@ -1059,7 +1068,8 @@ func TestDataRetransmissionsAreKeptWhereSYNRetriesAreUnanswered(t *testing.T) {
 	t.Run("one flow with data retransmissions and unanswered SYN retries", func(t *testing.T) {
 		res := Analyze([]models.PacketInfo{
 			tx(0, false, "PSH,ACK", 2000, 1, 100, 65535), tx(300, false, "PSH,ACK", 2000, 1, 100, 65535), // data resent after 300ms
-			tx(1000, false, "SYN", 7000, 0, 0, 65535), tx(2200, false, "SYN", 7000, 0, 0, 65535), tail(2300)}, "all")
+			// the SYN of the same connection (ISN 1999, so its data starts at 2000): a SYN with an unrelated ISN would be another connection
+			tx(1000, false, "SYN", 1999, 0, 0, 65535), tx(2200, false, "SYN", 1999, 0, 0, 65535), tail(2300)}, "all")
 		require.Len(t, res.Flows, 2, "the TCP flow and the UDP packet that ends the capture")
 		assert.Equal(t, 2, res.Flows[0].Retransmits, "both resent segments are counted")
 		un := titlesOf(res, "Unanswered SYN")
