@@ -6,6 +6,20 @@ import (
 	"github.com/gocisse/netforensic/internal/models"
 )
 
+// The recommendations of Slow Server Response, chosen by the evidence in the
+// response window (see slowResponseAdvice); slowRespAmbiguous is also the
+// text used where no evidence is at hand.
+const (
+	slowRespRequestAcked = "The server's TCP stack acknowledged the request, but the first data came much later and no retransmission was captured in between. The delay is after the request arrived: look at the server (application processing, a slow backend or database, or an overloaded host), or at a proxy or load balancer in front of it."
+	slowRespLoss         = "Retransmissions or duplicate ACKs were captured while waiting, so packet loss may explain the delay rather than slow processing. Fix the loss first (check the path, MTU and middleboxes, and compare with a capture at the server to see when the request arrived), then measure again."
+	slowRespAmbiguous    = "The first server data came much later than the client's first data, but this capture cannot show whether the time went to the server or to the network (no acknowledgement of the request and no retransmission was captured). Capture at the server, or on both sides, to tell them apart."
+	slowRespServerFirst  = "The server took this long to send its first data after the handshake. This capture cannot show whether the time went to the server or to the network (no retransmission was captured). Capture at the server, or on both sides, to tell them apart."
+
+	// httpSlowAdvice is the single recommendation of HTTP Slow Response, whose
+	// issue is not tied to a flow and so has no response-window evidence.
+	httpSlowAdvice = "The server took more than a second to answer this request. The capture alone does not show whether the time went to the application or to packet loss on the path: check this flow for retransmissions first; if there are none, look at application and database performance on the server side."
+)
+
 // recommendations say what to look at or do about each kind of issue.
 var issueRecommendations = map[string]string{
 	titleFastRetransmit:            "Isolated packet loss: the receiver kept asking for one missing segment and the sender repaired it quickly. Check the path between the two hosts for a lossy link, duplex mismatch or an overloaded interface or queue; a few of these on a busy link are normal.",
@@ -21,7 +35,7 @@ var issueRecommendations = map[string]string{
 	titleSYNFlood:                  "Many connection attempts to one service went unanswered in a short time, the pattern of a SYN flood or of a service that cannot keep up. If the sources are many and spoofed-looking, consider SYN cookies and rate limiting; if the capture only sees one direction, the replies may simply have taken another path.",
 	titleSYNRetried:                "The first SYN got no answer and the handshake only worked after a retry, which adds delay at connection setup. Look for packet loss or a slow server on the way to the destination.",
 	"Slow TCP Handshake":           "The SYN to final ACK took too long. Look at the network round-trip time to the server and at the server's accept queue or load; compare the SYN-ACK delay with the ACK delay to see which end is slow.",
-	"Slow Server Response":         "The server took too long to send its first data after the handshake. The network is fine at that point, so look at the server: application processing, a slow backend or database, or an overloaded host.",
+	"Slow Server Response":         slowRespAmbiguous,
 	"High Network Latency":         "Round trips take longer than 200 ms, which points to a long or congested path, queueing (bufferbloat) or a distant server. Compare with a ping from the same place and check for a saturated link.",
 	"High Jitter":                  "Round-trip times vary widely, with peaks above 500 ms. Look for bursts of traffic that fill a queue, a congested or shared link, or wireless interference.",
 	"DNS NXDOMAIN":                 "The resolver says these names do not exist. Check for typos, stale configuration, a missing search domain or reverse-lookup zone, or software that queries names it should not.",
@@ -30,7 +44,7 @@ var issueRecommendations = map[string]string{
 	"DNS Slow Response":            "The resolver took more than a second to answer. Look at the resolver's load, its upstream latency and whether it answers from cache.",
 	"HTTP Client Error":            "The server rejected the request (4xx): a wrong URL, missing credentials, or a request the server refuses. Compare with what the client was meant to send.",
 	"HTTP Server Error":            "The server failed while handling the request (5xx). Look at the server's own logs for the same time; if only some requests fail, check the backends behind a load balancer.",
-	"HTTP Slow Response":           "The server took more than a second to answer. Check application and database performance on the server side; the network is usually not the cause if the TCP handshake was quick.",
+	"HTTP Slow Response":           httpSlowAdvice,
 	"TLS Handshake Failure":        "The TLS handshake was rejected. Check that client and server share a protocol version and cipher suite, that the certificate is valid, trusted and matches the name, and that the client trusts the issuing CA.",
 	"TLS Protocol Downgrade":       "The server chose an older TLS version than the client offered. Update the server's TLS configuration to support TLS 1.2 or later; a downgrade can also be a sign of interference on the path.",
 	"ICMP Destination Unreachable": "A router or host reported that traffic could not be delivered. The reason (network, host, port unreachable or administratively prohibited) is in the description; check routing and firewall rules for those destinations.",

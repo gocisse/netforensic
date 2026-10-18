@@ -488,3 +488,126 @@ func TestTTFBFlowLevelConsistency(t *testing.T) {
 	assert.Equal(t, byPort["10.0.0.1:1003"].ID, res.SlowFlows[1].ID)
 	assert.Equal(t, byPort["10.0.0.1:1001"].ID, res.SlowFlows[2].ID)
 }
+
+// The three recommendations of Slow Server Response, and that of HTTP Slow Response.
+const (
+	adviceRequestAcked = "The server's TCP stack acknowledged the request, but the first data came much later and no retransmission was captured in between. The delay is after the request arrived: look at the server (application processing, a slow backend or database, or an overloaded host), or at a proxy or load balancer in front of it."
+	adviceLoss         = "Retransmissions or duplicate ACKs were captured while waiting, so packet loss may explain the delay rather than slow processing. Fix the loss first (check the path, MTU and middleboxes, and compare with a capture at the server to see when the request arrived), then measure again."
+	adviceAmbiguous    = "The first server data came much later than the client's first data, but this capture cannot show whether the time went to the server or to the network (no acknowledgement of the request and no retransmission was captured). Capture at the server, or on both sides, to tell them apart."
+	adviceServerFirst  = "The server took this long to send its first data after the handshake. This capture cannot show whether the time went to the server or to the network (no retransmission was captured). Capture at the server, or on both sides, to tell them apart."
+	adviceHTTPSlow     = "The server took more than a second to answer this request. The capture alone does not show whether the time went to the application or to packet loss on the path: check this flow for retransmissions first; if there are none, look at application and database performance on the server side."
+)
+
+// slowResponseIssue runs the packets through the performance metrics and
+// returns the Slow Server Response issue of the flow, which must exist.
+func slowResponseIssue(t *testing.T, pkts []models.PacketInfo) models.Issue {
+	t.Helper()
+	for i := range pkts {
+		pkts[i].TCPWindow = 65535
+	}
+	pkts = withHandshake(pkts, 0, 0.010, 0.020, -1)
+	_, issues := applyPerformanceMetrics(pkts, aggregateFlows(pkts))
+	for _, is := range issues {
+		if is.Title == "Slow Server Response" {
+			return is
+		}
+	}
+	require.Failf(t, "no Slow Server Response", "issues: %v", issues)
+	return models.Issue{}
+}
+
+func TestSlowServerResponseAdvice(t *testing.T) {
+	syn := func() models.PacketInfo { return tcpPkt(0, true, "SYN", 0, 0, 0) }
+	synAck := func(sec float64) models.PacketInfo { return tcpPkt(sec, false, "SYN,ACK", 0, 1, 0) }
+	ack := func() models.PacketInfo { return tcpPkt(0.020, true, "ACK", 1, 1, 0) }
+	req := func(sec float64, n int) models.PacketInfo { return tcpPkt(sec, true, "PSH,ACK", 1, 1, n) }
+	srvAck := func(sec float64, ackNo uint32) models.PacketInfo { return tcpPkt(sec, false, "ACK", 1, ackNo, 0) }
+	resp := func(sec float64) models.PacketInfo { return tcpPkt(sec, false, "PSH,ACK", 1, 101, 500) }
+	hs := func(rest ...models.PacketInfo) []models.PacketInfo {
+		return append([]models.PacketInfo{syn(), synAck(0.010), ack()}, rest...)
+	}
+
+	tests := []struct {
+		name string
+		pkts []models.PacketInfo
+		want string
+	}{
+		{"request acknowledged, nothing lost", hs(req(0.025, 100), srvAck(0.030, 101), resp(2.025)), adviceRequestAcked},
+		{"a retransmission inside the window beats the acknowledgement",
+			hs(req(0.025, 100), req(0.225, 100), srvAck(0.230, 101), resp(2.025)), adviceLoss},
+		{"two identical pure ACKs inside the window, no retransmission",
+			hs(req(0.025, 100), srvAck(0.030, 101), srvAck(0.031, 101), resp(2.025)), adviceLoss},
+		{"request never acknowledged before the response", hs(req(0.025, 100), resp(2.025)), adviceAmbiguous},
+		{"the acknowledgement of the response itself is not an earlier one",
+			hs(req(0.025, 100), resp(2.025)), adviceAmbiguous},
+		{"server speaks first", hs(tcpPkt(1.520, false, "PSH,ACK", 1, 1, 40)), adviceServerFirst},
+		{"a one-byte client segment is an uncertain anchor",
+			hs(req(0.025, 1), srvAck(0.030, 2), tcpPkt(2.025, false, "PSH,ACK", 1, 2, 500)), adviceAmbiguous},
+		{"a one-byte anchor does not hide loss evidence",
+			hs(req(0.025, 1), srvAck(0.030, 2), synAck(0.100), tcpPkt(2.025, false, "PSH,ACK", 1, 2, 500)), adviceLoss},
+		{"an ACK answering a keep-alive probe is not a duplicate ACK",
+			hs(req(0.025, 100), srvAck(0.030, 101), tcpPkt(1.0, true, "ACK", 100, 1, 1), srvAck(1.001, 101), resp(2.025)), adviceRequestAcked},
+		{"the same repeated ACK without a probe is",
+			hs(req(0.025, 100), srvAck(0.030, 101), tcpPkt(1.0, true, "ACK", 101, 1, 0), srvAck(1.001, 101), resp(2.025)), adviceLoss},
+
+		// Window boundaries.
+		{"a retransmission before the anchor is not in the window",
+			[]models.PacketInfo{syn(), synAck(0.010), synAck(0.015), ack(), req(0.025, 100), srvAck(0.030, 101), resp(2.025)}, adviceRequestAcked},
+		{"a retransmission after the first server payload is not in the window",
+			hs(req(0.025, 100), srvAck(0.030, 101), resp(2.025), resp(2.5)), adviceRequestAcked},
+		{"a retransmission at the anchor's time is in the window",
+			hs(synAck(0.025), req(0.025, 100), srvAck(0.030, 101), resp(2.025)), adviceLoss},
+		{"a retransmission at the first server payload's time is in the window",
+			hs(req(0.025, 100), srvAck(0.030, 101), synAck(2.025), resp(2.025)), adviceLoss},
+		{"duplicate ACKs need both ACKs inside the window",
+			hs(srvAck(0.022, 1), req(0.025, 100), srvAck(0.026, 1), srvAck(0.030, 101), resp(2.025)), adviceRequestAcked},
+		{"an acknowledgement that does not cover the request does not count",
+			hs(req(0.025, 100), srvAck(0.030, 50), resp(2.025)), adviceAmbiguous},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			is := slowResponseIssue(t, tt.pkts)
+			assert.Equal(t, tt.want, is.Recommendation)
+			assert.NotContains(t, is.Recommendation, "The network is fine")
+		})
+	}
+}
+
+func TestSlowServerResponseAdviceKeepsTheIssueUnchanged(t *testing.T) {
+	pkts := []models.PacketInfo{tcpPkt(0, true, "SYN", 0, 0, 0), tcpPkt(0.010, false, "SYN,ACK", 0, 1, 0), tcpPkt(0.020, true, "ACK", 1, 1, 0),
+		tcpPkt(0.025, true, "PSH,ACK", 1, 1, 100), tcpPkt(0.030, false, "ACK", 1, 101, 0), tcpPkt(2.025, false, "PSH,ACK", 1, 101, 500)}
+	is := slowResponseIssue(t, pkts)
+	assert.Equal(t, models.SeverityWarning, is.Severity)
+	assert.Equal(t, "Performance", is.Category)
+	assert.Contains(t, is.Description, "waited 2000ms for the first server data after the first client data, or after the handshake if the server sends first (threshold 1000ms)")
+}
+
+func TestSlowServerResponseAdviceOnRealCaptures(t *testing.T) {
+	titles := func(name string) models.Issue {
+		for _, is := range Analyze(readReal(t, name), "all").Issues {
+			if is.Title == "Slow Server Response" {
+				return is
+			}
+		}
+		require.Failf(t, "no Slow Server Response", name)
+		return models.Issue{}
+	}
+	assert.Equal(t, adviceLoss, titles("Lab-4-NetworkCongestion.pcapng").Recommendation, "two retransmissions while waiting")
+	assert.Equal(t, adviceRequestAcked, titles("Lab-5-AnotherSlowApp.pcapng").Recommendation, "the request was acknowledged, nothing was lost")
+}
+
+func TestSlowResponseStaticRecommendations(t *testing.T) {
+	assert.Equal(t, adviceAmbiguous, recommendationFor(models.Issue{Title: "Slow Server Response"}), "without evidence, the neutral text")
+	assert.Equal(t, adviceHTTPSlow, recommendationFor(models.Issue{Title: "HTTP Slow Response"}))
+
+	res := Analyze([]models.PacketInfo{httpReq(0, 1000, "GET", "/"), httpResp(2, 1000, 200)}, "all")
+	var got []models.Issue
+	for _, is := range res.Issues {
+		if is.Title == "HTTP Slow Response" {
+			got = append(got, is)
+		}
+	}
+	require.Len(t, got, 1)
+	assert.Equal(t, adviceHTTPSlow, got[0].Recommendation)
+	assert.Equal(t, models.SeverityInfo, got[0].Severity)
+}

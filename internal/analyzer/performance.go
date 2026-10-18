@@ -87,7 +87,17 @@ func applyPerformanceMetrics(packets []models.PacketInfo, flows []models.Flow) (
 
 		f.SetupTimeMs, f.TTFBMs = handshakeMetrics(pkts)
 		f.AvgRTTMs, f.MaxRTTMs = rttMetrics(pkts)
-		issues = append(issues, performanceIssues(*f)...)
+		perf := performanceIssues(*f)
+		if f.TTFBMs > slowTTFBMs {
+			_, ack := flowHandshake(pkts)
+			advice := slowResponseAdvice(*f, pkts, ack)
+			for i := range perf {
+				if perf[i].Title == "Slow Server Response" {
+					perf[i].Recommendation = advice
+				}
+			}
+		}
+		issues = append(issues, perf...)
 	}
 	issues = append(issues, aggregatePerformance(out)...)
 	return out, issues
@@ -108,7 +118,20 @@ func ms(d time.Duration) float64 { return math.Round(float64(d)/float64(time.Mil
 // The client is the sender of the connection's first SYN. Nothing looks into
 // the payload: a one-byte keepalive probe counts as client data.
 func handshakeMetrics(pkts []models.PacketInfo) (setupMs, ttfbMs float64) {
-	var syn, ack time.Time
+	syn, ack := flowHandshake(pkts)
+	if !syn.IsZero() && !ack.IsZero() && !ack.Before(syn) {
+		setupMs = ms(ack.Sub(syn))
+	}
+	if !ack.IsZero() {
+		ttfbMs = ttfb(pkts, ack)
+	}
+	return setupMs, ttfbMs
+}
+
+// flowHandshake returns the time of the first SYN and of the final handshake
+// ACK of the flow, from the handshake carried by its packets; a zero time
+// means the event was not observed.
+func flowHandshake(pkts []models.PacketInfo) (syn, ack time.Time) {
 	for _, p := range pkts {
 		if p.Handshake == nil {
 			continue
@@ -120,43 +143,121 @@ func handshakeMetrics(pkts []models.PacketInfo) (setupMs, ttfbMs float64) {
 			ack = p.Handshake.TCPAckTime
 		}
 	}
-	if !syn.IsZero() && !ack.IsZero() && !ack.Before(syn) {
-		setupMs = ms(ack.Sub(syn))
+	return syn, ack
+}
+
+// responseWindow is the interval TTFB measures: from the first client payload
+// to the first server payload after it, as indices into the flow's packets.
+type responseWindow struct {
+	client endpoint
+	anchor int       // the first client payload at or after the ACK; -1 if the server sent first
+	end    int       // the first server payload at or after the ACK
+	start  time.Time // the anchor's time, or the handshake ACK if the server sent first
+}
+
+// findResponseWindow locates the response window of the connection whose
+// handshake ended at ack, in packets sorted by time. It reports false if the
+// client is unknown or no server payload follows.
+func findResponseWindow(pkts []models.PacketInfo, ack time.Time) (responseWindow, bool) {
+	w := responseWindow{anchor: -1, start: ack}
+	found := false
+	for _, p := range pkts {
+		if hasTCPFlag(p.TCPFlags, "SYN") && !hasTCPFlag(p.TCPFlags, "ACK") {
+			w.client, found = endpoint{p.SrcIP, p.SrcPort}, true
+			break
+		}
 	}
-	if !ack.IsZero() {
-		ttfbMs = ttfb(pkts, ack)
+	if !found {
+		return w, false
 	}
-	return setupMs, ttfbMs
+	for i, p := range pkts {
+		if p.PayloadSize == 0 || p.Timestamp.Before(ack) {
+			continue
+		}
+		if (endpoint{p.SrcIP, p.SrcPort}) == w.client {
+			if w.anchor < 0 {
+				w.anchor, w.start = i, p.Timestamp // the first client payload; later ones do not move it
+			}
+			continue
+		}
+		w.end = i // the first server payload after the anchor
+		return w, true
+	}
+	return w, false
 }
 
 // ttfb measures the time to first byte of the connection whose handshake ended
 // at ack, or returns 0 if it cannot be measured.
 func ttfb(pkts []models.PacketInfo, ack time.Time) float64 {
-	var client endpoint
-	found := false
-	for _, p := range pkts {
-		if hasTCPFlag(p.TCPFlags, "SYN") && !hasTCPFlag(p.TCPFlags, "ACK") {
-			client, found = endpoint{p.SrcIP, p.SrcPort}, true
-			break
-		}
-	}
-	if !found {
+	w, ok := findResponseWindow(pkts, ack)
+	if !ok {
 		return 0
 	}
-	anchor, anchored := ack, false
-	for _, p := range pkts {
-		if p.PayloadSize == 0 || p.Timestamp.Before(ack) {
-			continue
-		}
-		if (endpoint{p.SrcIP, p.SrcPort}) == client {
-			if !anchored {
-				anchor, anchored = p.Timestamp, true // the first client payload; later ones do not move it
-			}
-			continue
-		}
-		return ms(p.Timestamp.Sub(anchor)) // the first server payload after the anchor
+	return ms(pkts[w.end].Timestamp.Sub(w.start))
+}
+
+// slowResponseAdvice says what the evidence in the response window of a slow
+// flow supports. Loss evidence is a retransmission of either side inside the
+// window, or a duplicate ACK (the detector's definition, see
+// retransDir.trackAck) whose predecessor is also inside it, except an ACK that
+// answers a keep-alive probe. Without it, the
+// delay is placed after the request only if the server acknowledged the
+// anchor's payload before its first data (the ACK on the first data itself
+// does not count). A server-first flow and a one-byte client anchor, which
+// may be a keep-alive probe, are not a request, so nothing is claimed for
+// them. A truncated capture needs no case of its own: the window ends at a
+// captured server payload, so it is always complete.
+func slowResponseAdvice(f models.Flow, pkts []models.PacketInfo, ack time.Time) string {
+	w, ok := findResponseWindow(pkts, ack)
+	if !ok {
+		return slowRespAmbiguous
 	}
-	return 0
+	end := pkts[w.end].Timestamp
+	for _, ev := range f.RetransmitEvents {
+		if !ev.Time.Before(w.start) && !ev.Time.After(end) {
+			return slowRespLoss
+		}
+	}
+	first := w.anchor
+	if first < 0 {
+		for first = 0; first < w.end && pkts[first].Timestamp.Before(ack); first++ {
+		}
+	}
+	var client, server retransDir
+	var next [2]uint32 // the end of the highest segment each side has sent, from the window's first packet
+	var sent [2]bool
+	probed := false // the previous packet was a keep-alive probe
+	for i := first; i <= w.end; i++ {
+		p := pkts[i]
+		who, side := 1, &server
+		if (endpoint{p.SrcIP, p.SrcPort}) == w.client {
+			who, side = 0, &client
+		}
+		// A pure ACK that answers a keep-alive probe repeats the previous ACK
+		// by design: it is not a duplicate ACK in the loss sense.
+		if side.trackAck(p) && !probed {
+			return slowRespLoss
+		}
+		probed = isKeepAlive(p, next[who], sent[who])
+		if end := p.TCPSeq + seqLen(p); consumesSeq(p) && (!sent[who] || int32(end-next[who]) > 0) {
+			next[who], sent[who] = end, true
+		}
+	}
+	if w.anchor < 0 {
+		return slowRespServerFirst
+	}
+	a := pkts[w.anchor]
+	if a.PayloadSize == 1 {
+		return slowRespAmbiguous
+	}
+	covered := a.TCPSeq + uint32(a.PayloadSize)
+	for i := w.anchor + 1; i < w.end; i++ {
+		p := pkts[i]
+		if (endpoint{p.SrcIP, p.SrcPort}) != w.client && hasTCPFlag(p.TCPFlags, "ACK") && int32(p.TCPAck-covered) >= 0 {
+			return slowRespRequestAcked
+		}
+	}
+	return slowRespAmbiguous
 }
 
 type segment struct {
