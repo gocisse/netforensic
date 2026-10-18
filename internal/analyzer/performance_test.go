@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -610,4 +611,91 @@ func TestSlowResponseStaticRecommendations(t *testing.T) {
 	require.Len(t, got, 1)
 	assert.Equal(t, adviceHTTPSlow, got[0].Recommendation)
 	assert.Equal(t, models.SeverityInfo, got[0].Severity)
+}
+
+// handshakeRun runs a connection through the whole analysis: the client SYN at
+// every time in syns (seconds), the SYN-ACK at synAck, the final ACK at ack,
+// stamped like the reader stamps it (the first SYN, the SYN-ACK, the ACK).
+func handshakeRun(syns []float64, synAck, ack float64) *models.AnalysisResult {
+	var pkts []models.PacketInfo
+	for _, s := range syns {
+		pkts = append(pkts, tcpPkt(s, true, "SYN", 0, 0, 0))
+	}
+	pkts = append(pkts, tcpPkt(synAck, false, "SYN,ACK", 0, 1, 0), tcpPkt(ack, true, "ACK", 1, 1, 0))
+	for i := range pkts {
+		pkts[i].TCPWindow = 65535
+	}
+	sort.SliceStable(pkts, func(a, b int) bool { return pkts[a].Timestamp.Before(pkts[b].Timestamp) })
+	return Analyze(withHandshake(pkts, syns[0], synAck, ack, -1), "all")
+}
+
+func hasIssue(res *models.AnalysisResult, title string) bool {
+	for _, is := range res.Issues {
+		if is.Title == title {
+			return true
+		}
+	}
+	return false
+}
+
+// A slow handshake needs a SYN-ACK that is slow whichever SYN it answered: the
+// time from the last SYN before it to the final ACK must exceed the threshold.
+func TestSlowHandshakeNeedsEvenTheLastSYNToBeSlow(t *testing.T) {
+	tests := []struct {
+		name      string
+		syns      []float64
+		synAck    float64
+		ack       float64
+		wantSetup float64 // SYN to final ACK, which never changes
+		wantSlow  bool
+	}{
+		{"D3-1 a retry answered quickly: the retry explains the wait", []float64{0, 1.0}, 1.015, 1.030, 1030, false},
+		{"D3-2 a retry answered slowly", []float64{0, 1.0}, 1.700, 1.710, 1710, true},
+		{"D3-3 no retry, slow", []float64{0}, 0.350, 0.700, 700, true},
+		{"D3-4 no retry, fast", []float64{0}, 0.150, 0.300, 300, false},
+		{"several retries: the last SYN before the SYN-ACK counts", []float64{0, 1.0, 3.0}, 3.150, 3.310, 3310, false},
+		{"several retries, the last one answered slowly", []float64{0, 1.0, 3.0}, 3.800, 3.810, 3810, true},
+		{"no retry, exactly at the threshold is not slow", []float64{0}, 0.250, 0.500, 500, false},
+		{"a retry whose minimum is exactly the threshold is not slow", []float64{0, 1.0}, 1.250, 1.500, 1500, false},
+		{"a retry whose minimum is just over the threshold is slow", []float64{0, 1.0}, 1.250, 1.501, 1501, true},
+		{"a SYN after the SYN-ACK is not a retry before it", []float64{0, 0.6}, 0.250, 0.700, 700, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			res := handshakeRun(tt.syns, tt.synAck, tt.ack)
+			require.Len(t, res.Flows, 1)
+			assert.InDelta(t, tt.wantSetup, res.Flows[0].SetupTimeMs, 0.01, "the reported setup time is the real one")
+			assert.Equal(t, tt.wantSlow, hasIssue(res, "Slow TCP Handshake"))
+			assert.Equal(t, len(tt.syns) > 1 && tt.syns[len(tt.syns)-1] < tt.synAck, hasIssue(res, titleSYNRetried), "SYN Retried Before Answer is as before")
+		})
+	}
+}
+
+func TestSlowHandshakeWithoutAFullHandshake(t *testing.T) {
+	// A retry and no SYN-ACK, and a stamped flow without a final ACK: nothing to measure, nothing raised.
+	pkts := withHandshake([]models.PacketInfo{tcpPkt(0, true, "SYN", 0, 0, 0), tcpPkt(1, true, "SYN", 0, 0, 0)}, 0, -1, -1, -1)
+	flows, issues := applyPerformanceMetrics(pkts, aggregateFlows(pkts))
+	require.Len(t, flows, 1)
+	assert.Zero(t, flows[0].SetupTimeMs)
+	assert.Empty(t, issues)
+
+	pkts = []models.PacketInfo{tcpPkt(0, true, "SYN", 0, 0, 0), tcpPkt(1, true, "SYN", 0, 0, 0), tcpPkt(1.02, false, "SYN,ACK", 0, 1, 0)} // no Handshake stamp at all
+	_, issues = applyPerformanceMetrics(pkts, aggregateFlows(pkts))
+	assert.Empty(t, issues)
+}
+
+// Lab-4: the first SYN was lost, the retry was answered in about 30 ms.
+func TestLab4SlowHandshakeIsExplainedByTheSYNRetry(t *testing.T) {
+	res := Analyze(readReal(t, "Lab-4-NetworkCongestion.pcapng"), "all")
+	require.Equal(t, 1, res.TotalFlows)
+	f := res.Flows[0]
+	assert.InDelta(t, 1030.77, f.SetupTimeMs, 0.01, "the real SYN to ACK time is still reported")
+	assert.False(t, hasIssue(res, "Slow TCP Handshake"))
+	assert.True(t, hasIssue(res, titleSYNRetried))
+	assert.True(t, hasIssue(res, titleTimeoutRetransmit))
+	assert.True(t, hasIssue(res, "Slow Server Response"))
+	assert.Equal(t, 6, f.Retransmits)
+	assert.Equal(t, 4, f.TimeoutRetransmits)
+	assert.Equal(t, 2, f.RecoveryRetransmits)
+	assert.Equal(t, 68, res.Diagnosis.HealthScore, "58 with the slow-handshake warning, 10 points more without it")
 }

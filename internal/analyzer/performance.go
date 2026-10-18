@@ -88,6 +88,11 @@ func applyPerformanceMetrics(packets []models.PacketInfo, flows []models.Flow) (
 		f.SetupTimeMs, f.TTFBMs = handshakeMetrics(pkts)
 		f.AvgRTTMs, f.MaxRTTMs = rttMetrics(pkts)
 		perf := performanceIssues(*f)
+		if f.SetupTimeMs > slowSetupMs {
+			if min, ok := minimumSetupMs(pkts); ok && min <= slowSetupMs {
+				perf = withoutIssue(perf, "Slow TCP Handshake") // the SYN retry explains the wait
+			}
+		}
 		if f.TTFBMs > slowTTFBMs {
 			_, ack := flowHandshake(pkts)
 			advice := slowResponseAdvice(*f, pkts, ack)
@@ -184,6 +189,54 @@ func findResponseWindow(pkts []models.PacketInfo, ack time.Time) (responseWindow
 		return w, true
 	}
 	return w, false
+}
+
+// minimumSetupMs is the shortest the handshake of a flow can have taken, in
+// milliseconds: from the last client SYN sent before the SYN-ACK to the final
+// ACK. The SYN-ACK cannot be tied to one of several identical SYNs, so only
+// this bound holds whichever of them it answered. With no SYN retry it is the
+// setup time itself. It reports false if the flow has no complete handshake.
+func minimumSetupMs(pkts []models.PacketInfo) (float64, bool) {
+	_, ack := flowHandshake(pkts)
+	var synAck time.Time
+	for _, p := range pkts {
+		if p.Handshake != nil && !p.Handshake.TCPSynAckTime.IsZero() {
+			synAck = p.Handshake.TCPSynAckTime
+			break
+		}
+	}
+	if ack.IsZero() || synAck.IsZero() {
+		return 0, false
+	}
+	var client endpoint
+	var last time.Time
+	found := false
+	for _, p := range pkts {
+		if !hasTCPFlag(p.TCPFlags, "SYN") || hasTCPFlag(p.TCPFlags, "ACK") {
+			continue
+		}
+		if !found {
+			client, found = endpoint{p.SrcIP, p.SrcPort}, true
+		}
+		if (endpoint{p.SrcIP, p.SrcPort}) == client && p.Timestamp.Before(synAck) {
+			last = p.Timestamp
+		}
+	}
+	if last.IsZero() || ack.Before(last) {
+		return 0, false
+	}
+	return ms(ack.Sub(last)), true
+}
+
+// withoutIssue returns issues without those titled title.
+func withoutIssue(issues []models.Issue, title string) []models.Issue {
+	out := issues[:0]
+	for _, is := range issues {
+		if is.Title != title {
+			out = append(out, is)
+		}
+	}
+	return out
 }
 
 // ttfb measures the time to first byte of the connection whose handshake ended
