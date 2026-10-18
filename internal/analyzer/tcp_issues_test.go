@@ -3,6 +3,7 @@ package analyzer
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -948,4 +949,140 @@ func TestAggregatedIssuesSerializeTheirOccurrences(t *testing.T) {
 	assert.Equal(t, 6, seen[titleRefused])
 	assert.Equal(t, 3, seen[titleUnansweredSYN])
 	assert.Equal(t, 1, seen[titleStray])
+}
+
+// onPort moves a tx() packet to another client port.
+func onPort(p models.PacketInfo, port uint16) models.PacketInfo {
+	if p.SrcPort == 5000 {
+		p.SrcPort = port
+	}
+	if p.DstPort == 5000 {
+		p.DstPort = port
+	}
+	return p
+}
+
+func titlesOf(res *models.AnalysisResult, prefix string) (out []models.Issue) {
+	for _, is := range res.Issues {
+		if strings.HasPrefix(is.Title, prefix) {
+			out = append(out, is)
+		}
+	}
+	return out
+}
+
+// Client SYN retries that get no reply are reported by Unanswered SYN, not as
+// a Timeout Retransmit error.
+func TestUnansweredSYNRetriesAreNotATimeoutRetransmitError(t *testing.T) {
+	syn := func(ms int) models.PacketInfo { return tx(ms, false, "SYN", 7000, 0, 0, 65535) }
+	tests := []struct {
+		name          string
+		packets       []models.PacketInfo
+		wantUnanswer  int
+		wantRetransIs []string // titles of the retransmission issues
+		wantRetrans   int      // the flow's Retransmits counter, which never changes
+	}{
+		{"retries spanning 3s, capture ends 200ms after the last: unanswered by the retry span",
+			[]models.PacketInfo{syn(0), syn(1000), syn(3000), tail(3200)}, 1, nil, 2},
+		{"retries spanning 3s, the capture ends with the last SYN",
+			[]models.PacketInfo{syn(0), syn(1000), syn(3000)}, 1, nil, 2},
+		{"retries spanning exactly 1s",
+			[]models.PacketInfo{syn(0), syn(1000), tail(1100)}, 1, nil, 1},
+		{"retries spanning under 1s, capture ends under 1s later: nothing is unanswered yet, as before",
+			[]models.PacketInfo{syn(0), syn(500), tail(700)}, 0, []string{titleTimeoutRetransmit}, 1},
+		{"retries spanning under 1s but the capture runs 1s past the last SYN: unanswered by the existing rule",
+			[]models.PacketInfo{syn(0), syn(300), tail(1300)}, 1, nil, 1},
+		{"a single SYN is not unanswered by the retry-span rule",
+			[]models.PacketInfo{syn(0), tail(500)}, 0, nil, 0},
+		{"a single SYN with a second of capture left is still unanswered (existing rule)",
+			[]models.PacketInfo{syn(0), tail(1000)}, 1, nil, 0},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			res := Analyze(tt.packets, "all")
+			un := titlesOf(res, "Unanswered SYN")
+			require.Len(t, un, tt.wantUnanswer)
+			if len(un) == 1 {
+				assert.Equal(t, models.SeverityWarning, un[0].Severity)
+			}
+			var titles []string
+			for _, is := range retransmitIssues(res) {
+				titles = append(titles, is.Title)
+			}
+			assert.Equal(t, tt.wantRetransIs, titles)
+			var flowRetrans int
+			for _, f := range res.Flows {
+				flowRetrans += f.Retransmits
+			}
+			assert.Equal(t, tt.wantRetrans, flowRetrans, "the counters keep counting the SYN retries")
+		})
+	}
+}
+
+func TestSYNRetriesThatGetAnAnswerKeepTheirRetransmissionIssue(t *testing.T) {
+	t.Run("SYN-ACK after the retry", func(t *testing.T) {
+		res := Analyze([]models.PacketInfo{
+			tx(0, false, "SYN", 7000, 0, 0, 65535), tx(1000, false, "SYN", 7000, 0, 0, 65535),
+			tx(1030, true, "SYN,ACK", 9000, 7001, 0, 65535), tx(1031, false, "ACK", 7001, 9001, 0, 65535)}, "all")
+		got := retransmitIssues(res)
+		require.Len(t, got, 1)
+		assert.Equal(t, titleTimeoutRetransmit, got[0].Title)
+		assert.Equal(t, models.SeverityError, got[0].Severity)
+		assert.Contains(t, got[0].Description, "1 segment(s) retransmitted")
+		assert.Empty(t, titlesOf(res, "Unanswered SYN"))
+		assert.Len(t, titlesOf(res, titleSYNRetried), 1)
+	})
+	t.Run("a server RST after the retry", func(t *testing.T) {
+		res := Analyze([]models.PacketInfo{
+			tx(0, false, "SYN", 7000, 0, 0, 65535), tx(1000, false, "SYN", 7000, 0, 0, 65535),
+			tx(1500, true, "RST,ACK", 0, 7001, 0, 0), tail(5000)}, "all")
+		assert.Empty(t, titlesOf(res, "Unanswered SYN"))
+		assert.Len(t, titlesOf(res, titleRefused), 1)
+		got := retransmitIssues(res)
+		require.Len(t, got, 1, "a refused connection keeps its retransmission issue, as before")
+		assert.Equal(t, models.SeverityError, got[0].Severity)
+	})
+}
+
+func TestDataRetransmissionsAreKeptWhereSYNRetriesAreUnanswered(t *testing.T) {
+	t.Run("established connection", func(t *testing.T) {
+		res := Analyze([]models.PacketInfo{
+			tx(0, false, "SYN", 1000, 0, 0, 65535), tx(10, true, "SYN,ACK", 9000, 1001, 0, 65535), tx(11, false, "ACK", 1001, 9001, 0, 65535),
+			tx(100, false, "PSH,ACK", 1001, 9001, 100, 65535), tx(400, false, "PSH,ACK", 1001, 9001, 100, 65535)}, "all")
+		got := retransmitIssues(res)
+		require.Len(t, got, 1)
+		assert.Equal(t, titleTimeoutRetransmit, got[0].Title)
+		assert.Equal(t, models.SeverityError, got[0].Severity)
+		assert.Equal(t, 1, res.Flows[0].Retransmits)
+		assert.Equal(t, 1, res.Flows[0].TimeoutRetransmits)
+	})
+	t.Run("one flow with data retransmissions and unanswered SYN retries", func(t *testing.T) {
+		res := Analyze([]models.PacketInfo{
+			tx(0, false, "PSH,ACK", 2000, 1, 100, 65535), tx(300, false, "PSH,ACK", 2000, 1, 100, 65535), // data resent after 300ms
+			tx(1000, false, "SYN", 7000, 0, 0, 65535), tx(2200, false, "SYN", 7000, 0, 0, 65535), tail(2300)}, "all")
+		require.Len(t, res.Flows, 2, "the TCP flow and the UDP packet that ends the capture")
+		assert.Equal(t, 2, res.Flows[0].Retransmits, "both resent segments are counted")
+		un := titlesOf(res, "Unanswered SYN")
+		require.Len(t, un, 1)
+		got := retransmitIssues(res)
+		require.Len(t, got, 1, "the data retransmission is still reported")
+		assert.Equal(t, models.SeverityError, got[0].Severity)
+		assert.Contains(t, got[0].Description, "1 segment(s) retransmitted", "...and only the data segment is counted in it")
+	})
+	t.Run("several flows: only the unanswered ones lose the error, none is reported twice", func(t *testing.T) {
+		var pk []models.PacketInfo
+		for _, port := range []uint16{5001, 5002} {
+			for _, ms := range []int{0, 1000, 3000} {
+				pk = append(pk, onPort(tx(ms, false, "SYN", 7000, 0, 0, 65535), port))
+			}
+		}
+		pk = append(pk, onPort(tx(100, false, "PSH,ACK", 2000, 1, 100, 65535), 5003), onPort(tx(400, false, "PSH,ACK", 2000, 1, 100, 65535), 5003), tail(3100))
+		res := Analyze(pk, "all")
+		un := titlesOf(res, "Unanswered SYN")
+		require.Len(t, un, 1, "one aggregated issue for both")
+		assert.Equal(t, 2, un[0].Count)
+		got := retransmitIssues(res)
+		require.Len(t, got, 1)
+		assert.Equal(t, "10.0.0.1:5003-10.0.0.2:443", got[0].FlowID)
+	})
 }

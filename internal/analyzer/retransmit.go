@@ -260,7 +260,8 @@ func recordRetransmit(f *models.Flow, r segmentResult, p models.PacketInfo) {
 	case retransFastRecovery, retransTimeoutRecovery:
 		f.RecoveryRetransmits++
 	}
-	f.RetransmitEvents = append(f.RetransmitEvents, models.RetransmitEvent{Time: p.Timestamp, Seq: p.TCPSeq, Kind: r.kind.String()})
+	f.RetransmitEvents = append(f.RetransmitEvents, models.RetransmitEvent{Time: p.Timestamp, Seq: p.TCPSeq, Kind: r.kind.String(),
+		SYN: hasTCPFlag(p.TCPFlags, "SYN") && !hasTCPFlag(p.TCPFlags, "ACK")})
 }
 
 // Titles of the retransmission issues.

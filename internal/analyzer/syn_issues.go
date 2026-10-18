@@ -40,7 +40,8 @@ const (
 //     per such destination.
 //   - Unanswered SYN (warning): the client sent a SYN and neither a SYN-ACK
 //     nor an RST was captured, although the capture ran on for at least a
-//     second. The title stays neutral about why, since a capture that sees
+//     second after the last SYN, or the client had already sent the SYN again
+//     at least a second after the first (the retries show the wait). The title stays neutral about why, since a capture that sees
 //     only one direction looks the same as a firewall drop. All remaining unanswered attempts are folded into one issue
 //     that names the most affected destinations, so a port sweep does not
 //     bury the report.
@@ -62,7 +63,8 @@ func synIssues(conns map[instKey]*connState, order []instKey, captureEnd time.Ti
 		switch {
 		case c.sawSynAck && c.synTries > 1:
 			retried = append(retried, c)
-		case !c.sawSynAck && !c.firstReply && captureEnd.Sub(c.synLast) >= synAnswerGrace:
+		case !c.sawSynAck && !c.firstReply && (captureEnd.Sub(c.synLast) >= synAnswerGrace ||
+			c.synTries > 1 && c.synLast.Sub(c.synFirst) >= synAnswerGrace):
 			t := c.server.String()
 			if _, ok := unanswered[t]; !ok {
 				targets = append(targets, t)
@@ -270,4 +272,26 @@ func retriedIssue(conns []*connState) models.Issue {
 	is.Description = fmt.Sprintf("%d connections needed more than one SYN before the SYN-ACK came; most affected: %s (earliest: %s, %d SYNs, answered after %s)",
 		len(conns), list, first.id, first.synTries, waited)
 	return is
+}
+
+// unansweredFlows returns the IDs of the connections that issues, as returned
+// by analyzeConnections, report as unanswered: those named by an Unanswered SYN
+// or Possible SYN Flood issue.
+func unansweredFlows(issues []models.Issue) map[string]bool {
+	var ids map[string]bool
+	for _, is := range issues {
+		if is.Title != titleUnansweredSYN && is.Title != titleSYNFlood {
+			continue
+		}
+		if ids == nil {
+			ids = make(map[string]bool)
+		}
+		if is.FlowID != "" {
+			ids[is.FlowID] = true
+		}
+		for _, o := range is.Occurrences {
+			ids[o.Subject] = true
+		}
+	}
+	return ids
 }

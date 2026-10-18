@@ -100,7 +100,8 @@ func AnalyzeWithProgress(packets []models.PacketInfo, service string, progress f
 	}
 	flows, perfIssues := applyPerformanceMetrics(packets, flows)
 	stage(StageDetecting)
-	issues := detectIssues(flows)
+	connIssues := analyzeConnections(packets)
+	issues := detectIssuesFor(flows, unansweredFlows(connIssues))
 	issues = append(issues, analyzeDNS(packets)...)
 	issues = append(issues, analyzeHTTP(packets)...)
 	issues = append(issues, analyzeTLS(packets)...)
@@ -110,7 +111,7 @@ func AnalyzeWithProgress(packets []models.PacketInfo, service string, progress f
 	issues = append(issues, analyzeQUIC(packets)...)
 	issues = append(issues, analyzeICMP(packets)...)
 	issues = append(issues, analyzeARP(packets)...)
-	issues = append(issues, analyzeConnections(packets)...)
+	issues = append(issues, connIssues...)
 	issues = append(issues, perfIssues...)
 	issues = append(issues, extra...)
 	if note, ok := decapsulatedIssue(packets); ok {
@@ -395,10 +396,22 @@ func consumesSeq(p models.PacketInfo) bool {
 // detectIssues inspects flows and returns any anomalies found: one issue
 // per flow for each kind of retransmission it contains.
 func detectIssues(flows []models.Flow) []models.Issue {
+	return detectIssuesFor(flows, nil)
+}
+
+// detectIssuesFor is detectIssues for a capture in which the flows named in
+// unanswered (see unansweredFlows) never got a reply to their SYNs. The SYN
+// retries of such a flow are reported by the Unanswered SYN issue; they do not
+// also make a retransmission issue. The flow's other retransmissions do, and
+// its counters are untouched.
+func detectIssuesFor(flows []models.Flow, unanswered map[string]bool) []models.Issue {
 	var issues []models.Issue
 	for _, f := range flows {
 		if f.Retransmits == 0 {
 			continue
+		}
+		if unanswered[f.ID] {
+			f.RetransmitEvents = withoutSYNRetries(f.RetransmitEvents)
 		}
 		for _, k := range []retransKind{retransTimeout, retransFast, retransOther} {
 			if is, ok := retransmitIssue(f, k); ok {
@@ -407,6 +420,18 @@ func detectIssues(flows []models.Flow) []models.Issue {
 		}
 	}
 	return issues
+}
+
+// withoutSYNRetries returns events without the repeated client SYNs; events is
+// not modified.
+func withoutSYNRetries(events []models.RetransmitEvent) []models.RetransmitEvent {
+	out := make([]models.RetransmitEvent, 0, len(events))
+	for _, ev := range events {
+		if !ev.SYN {
+			out = append(out, ev)
+		}
+	}
+	return out
 }
 
 // topTalkers returns up to n flows with the most total bytes, descending.

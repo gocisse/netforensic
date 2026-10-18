@@ -397,6 +397,9 @@ type RetransmitEvent struct {
 	Time time.Time
 	Seq  uint32
 	Kind string // "fast", "timeout" or "other"
+	// SYN reports that the segment is a client SYN (without ACK), a connection
+	// attempt repeated before any reply. It is for the analysis only.
+	SYN bool `json:"-"`
 }
 
 // FlowEvent is one entry in the timeline of a flow.
