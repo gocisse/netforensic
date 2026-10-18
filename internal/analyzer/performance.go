@@ -34,7 +34,8 @@ const (
 //     worst flow averages over 1s)
 //   - max RTT over 500ms: high jitter (warning)
 //
-// Setup time and TTFB come from the handshake timestamps on the packets.
+// Setup time comes from the handshake timestamps on the packets, TTFB from
+// those and the first payloads of the flow (see handshakeMetrics).
 // RTT samples are the delays between a segment (data, SYN or FIN) and the
 // first reverse-direction ACK covering it; retransmitted segments are
 // skipped because their ACK is ambiguous.
@@ -96,9 +97,18 @@ func applyPerformanceMetrics(packets []models.PacketInfo, flows []models.Flow) (
 func ms(d time.Duration) float64 { return math.Round(float64(d)/float64(time.Millisecond)*100) / 100 }
 
 // handshakeMetrics derives setup time and TTFB from the handshake
-// timestamps carried by the flow's packets. Unobserved events yield 0.
+// timestamps carried by the flow's packets, which must be sorted by time.
+// Unobserved events yield 0.
+//
+// TTFB needs the handshake ACK. The anchor is the first payload at or after
+// it: if that comes from the client, TTFB runs from that segment (a later or
+// retransmitted client segment never moves it) to the first server payload
+// after it, so the client's idle time before its request is not counted. If
+// the server sends first (a greeting), TTFB runs from the ACK to that payload.
+// The client is the sender of the connection's first SYN. Nothing looks into
+// the payload: a one-byte keepalive probe counts as client data.
 func handshakeMetrics(pkts []models.PacketInfo) (setupMs, ttfbMs float64) {
-	var syn, ack, data time.Time
+	var syn, ack time.Time
 	for _, p := range pkts {
 		if p.Handshake == nil {
 			continue
@@ -109,17 +119,44 @@ func handshakeMetrics(pkts []models.PacketInfo) (setupMs, ttfbMs float64) {
 		if ack.IsZero() {
 			ack = p.Handshake.TCPAckTime
 		}
-		if data.IsZero() {
-			data = p.Handshake.FirstDataTime
-		}
 	}
 	if !syn.IsZero() && !ack.IsZero() && !ack.Before(syn) {
 		setupMs = ms(ack.Sub(syn))
 	}
-	if !ack.IsZero() && !data.IsZero() && !data.Before(ack) {
-		ttfbMs = ms(data.Sub(ack))
+	if !ack.IsZero() {
+		ttfbMs = ttfb(pkts, ack)
 	}
 	return setupMs, ttfbMs
+}
+
+// ttfb measures the time to first byte of the connection whose handshake ended
+// at ack, or returns 0 if it cannot be measured.
+func ttfb(pkts []models.PacketInfo, ack time.Time) float64 {
+	var client endpoint
+	found := false
+	for _, p := range pkts {
+		if hasTCPFlag(p.TCPFlags, "SYN") && !hasTCPFlag(p.TCPFlags, "ACK") {
+			client, found = endpoint{p.SrcIP, p.SrcPort}, true
+			break
+		}
+	}
+	if !found {
+		return 0
+	}
+	anchor, anchored := ack, false
+	for _, p := range pkts {
+		if p.PayloadSize == 0 || p.Timestamp.Before(ack) {
+			continue
+		}
+		if (endpoint{p.SrcIP, p.SrcPort}) == client {
+			if !anchored {
+				anchor, anchored = p.Timestamp, true // the first client payload; later ones do not move it
+			}
+			continue
+		}
+		return ms(p.Timestamp.Sub(anchor)) // the first server payload after the anchor
+	}
+	return 0
 }
 
 type segment struct {
@@ -245,7 +282,7 @@ func performanceIssues(f models.Flow) []models.Issue {
 	}
 	if f.TTFBMs > slowTTFBMs {
 		add("ttfb", "Slow Server Response",
-			fmt.Sprintf("flow %s waited %.0fms for the first server data after the handshake (threshold %.0fms)", f.ID, f.TTFBMs, slowTTFBMs))
+			fmt.Sprintf("flow %s waited %.0fms for the first server data after the first client data, or after the handshake if the server sends first (threshold %.0fms)", f.ID, f.TTFBMs, slowTTFBMs))
 	}
 	return issues
 }

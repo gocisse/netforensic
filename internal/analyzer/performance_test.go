@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -54,7 +55,17 @@ func TestHandshakeMetrics(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			pkts := withHandshake([]models.PacketInfo{tcpPkt(0, true, "ACK", 1, 1, 0)}, tt.syn, tt.synAck, tt.ack, tt.dat)
+			var pkts []models.PacketInfo
+			if tt.syn >= 0 {
+				pkts = append(pkts, tcpPkt(tt.syn, true, "SYN", 0, 0, 0))
+			}
+			if tt.dat >= 0 {
+				pkts = append(pkts, tcpPkt(tt.dat, false, "PSH,ACK", 1, 1, 100)) // the first server payload
+			}
+			if len(pkts) == 0 {
+				pkts = append(pkts, tcpPkt(0, true, "ACK", 1, 1, 0))
+			}
+			pkts = withHandshake(pkts, tt.syn, tt.synAck, tt.ack, tt.dat)
 			setup, ttfb := handshakeMetrics(pkts)
 			assert.InDelta(t, tt.wantSetup, setup, 0.001)
 			assert.InDelta(t, tt.wantTTFB, ttfb, 0.001)
@@ -374,4 +385,106 @@ func TestHandshakeMetricsWithoutHandshakeObject(t *testing.T) {
 	setup, ttfb := handshakeMetrics(pkts)
 	assert.Zero(t, setup)
 	assert.Zero(t, ttfb)
+}
+
+// ttfbFlow is a connection whose handshake ends at 0.020s (SYN at 0, SYN-ACK at
+// 0.010s), followed by the given packets, stamped with the handshake timeline
+// the reader would give it (firstData is the first server payload after the ACK).
+func ttfbFlow(firstData float64, rest ...models.PacketInfo) []models.PacketInfo {
+	pkts := []models.PacketInfo{
+		tcpPkt(0, true, "SYN", 0, 0, 0), tcpPkt(0.010, false, "SYN,ACK", 0, 1, 0), tcpPkt(0.020, true, "ACK", 1, 1, 0),
+	}
+	pkts = append(pkts, rest...)
+	for i := range pkts {
+		pkts[i].TCPWindow = 65535 // a zero window would be an issue of its own
+	}
+	return withHandshake(pkts, 0, 0.010, 0.020, firstData)
+}
+
+func TestHandshakeMetricsTTFBAnchor(t *testing.T) {
+	cli := func(sec float64, n int) models.PacketInfo { return tcpPkt(sec, true, "PSH,ACK", 1, 1, n) }
+	srv := func(sec float64, n int) models.PacketInfo { return tcpPkt(sec, false, "PSH,ACK", 1, 1, n) }
+	tests := []struct {
+		name string
+		pkts []models.PacketInfo
+		want float64
+	}{
+		// Necessary for D1.
+		{"D1-1 client idle time is not server time", ttfbFlow(30.070, cli(30.020, 100), srv(30.070, 500)), 50},
+		{"D1-2 normal request and response", ttfbFlow(0.075, cli(0.025, 100), srv(0.075, 500)), 50},
+		{"D1-3 a genuinely slow response is still measured", ttfbFlow(2.025, cli(0.025, 100), srv(2.025, 500)), 2000},
+		{"D1-4 server-first protocol: measured from the handshake ACK", ttfbFlow(1.520, srv(1.520, 40)), 1500},
+		{"D1-5 a retransmitted client payload does not move the anchor",
+			ttfbFlow(0.260, cli(0.025, 100), cli(0.225, 100), srv(0.260, 500)), 235},
+		{"the anchor is the first client payload, not a later client segment",
+			ttfbFlow(0.900, cli(0.025, 100), cli(0.500, 100), srv(0.900, 500)), 875},
+		{"client payload on the final ACK itself is the anchor",
+			ttfbFlow(0.070, tcpPkt(0.020, true, "PSH,ACK", 1, 1, 100), srv(0.070, 500)), 50},
+		{"server payload before any client payload keeps the server-first anchor, even if the client talks later",
+			ttfbFlow(0.500, srv(0.500, 40), cli(0.600, 100), srv(0.700, 500)), 480},
+		// Unavailable: 0.
+		{"client payload without a server response", ttfbFlow(-1, cli(0.025, 100)), 0},
+		{"no payload at all after the handshake", ttfbFlow(-1), 0},
+		{"server payload before the handshake ACK does not count",
+			withHandshake([]models.PacketInfo{tcpPkt(0, true, "SYN", 0, 0, 0), tcpPkt(0.010, false, "SYN,ACK", 0, 1, 0), tcpPkt(0.015, false, "PSH,ACK", 1, 1, 40), tcpPkt(0.020, true, "ACK", 1, 1, 0)}, 0, 0.010, 0.020, -1), 0},
+		{"client unknown without the SYN", withHandshake([]models.PacketInfo{tcpPkt(0.020, true, "ACK", 1, 1, 0), cli(0.025, 100), srv(0.075, 500)}, -1, -1, 0.020, 0.075), 0},
+		{"handshake never completed", withHandshake([]models.PacketInfo{tcpPkt(0, true, "SYN", 0, 0, 0), cli(0.025, 100), srv(0.075, 500)}, 0, -1, -1, 0.075), 0},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, ttfb := handshakeMetrics(tt.pkts)
+			assert.InDelta(t, tt.want, ttfb, 0.001)
+		})
+	}
+}
+
+func ttfbFlowOnPort(port uint16, pkts []models.PacketInfo) []models.PacketInfo {
+	for i := range pkts {
+		if pkts[i].SrcPort == 1000 {
+			pkts[i].SrcPort = port
+		}
+		if pkts[i].DstPort == 1000 {
+			pkts[i].DstPort = port
+		}
+	}
+	return pkts
+}
+
+func TestTTFBFlowLevelConsistency(t *testing.T) {
+	cli := func(sec float64, n int) models.PacketInfo { return tcpPkt(sec, true, "PSH,ACK", 1, 1, n) }
+	srv := func(sec float64, n int) models.PacketInfo { return tcpPkt(sec, false, "PSH,ACK", 1, 1, n) }
+	idle := ttfbFlowOnPort(1001, ttfbFlow(30.070, cli(30.020, 100), srv(30.070, 500)))
+	slow := ttfbFlowOnPort(1002, ttfbFlow(2.025, cli(0.025, 100), srv(2.025, 500)))
+	banner := ttfbFlowOnPort(1003, ttfbFlow(1.520, srv(1.520, 40)))
+
+	res := Analyze(append(append(append([]models.PacketInfo{}, idle...), slow...), banner...), "all")
+	byPort := map[string]models.Flow{}
+	for _, f := range res.TopTalkers {
+		byPort[f.ID[:strings.Index(f.ID, "-")]] = f
+	}
+	require.Len(t, byPort, 3)
+
+	f := byPort["10.0.0.1:1001"]
+	assert.InDelta(t, 50, f.TTFBMs, 0.01)
+	assert.Equal(t, statusWorking, f.Status, "an idle client is not a slow flow")
+	f = byPort["10.0.0.1:1002"]
+	assert.InDelta(t, 2000, f.TTFBMs, 0.01)
+	assert.Equal(t, statusSlow, f.Status)
+	f = byPort["10.0.0.1:1003"]
+	assert.InDelta(t, 1500, f.TTFBMs, 0.01)
+	assert.Equal(t, statusSlow, f.Status)
+
+	var slowIssueFlows []string
+	for _, is := range res.Issues {
+		if is.Title == "Slow Server Response" {
+			slowIssueFlows = append(slowIssueFlows, is.FlowID)
+		}
+	}
+	assert.ElementsMatch(t, []string{byPort["10.0.0.1:1002"].ID, byPort["10.0.0.1:1003"].ID}, slowIssueFlows,
+		"only the genuinely slow server and the server-first greeting are reported")
+
+	require.Len(t, res.SlowFlows, 3)
+	assert.Equal(t, byPort["10.0.0.1:1002"].ID, res.SlowFlows[0].ID, "ranking follows the corrected value")
+	assert.Equal(t, byPort["10.0.0.1:1003"].ID, res.SlowFlows[1].ID)
+	assert.Equal(t, byPort["10.0.0.1:1001"].ID, res.SlowFlows[2].ID)
 }

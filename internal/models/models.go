@@ -369,7 +369,7 @@ type Flow struct {
 	// Performance metrics for TCP flows, in milliseconds. Zero means the
 	// metric could not be measured from the capture.
 	SetupTimeMs float64 `json:"setup_time_ms"` // SYN to final handshake ACK
-	TTFBMs      float64 `json:"ttfb_ms"`       // handshake completion to first server data
+	TTFBMs      float64 `json:"ttfb_ms"`       // first client payload to first server payload; from the handshake ACK if the server speaks first
 	AvgRTTMs    float64 `json:"avg_rtt_ms"`
 	MaxRTTMs    float64 `json:"max_rtt_ms"` // large values relative to the average indicate jitter
 }
