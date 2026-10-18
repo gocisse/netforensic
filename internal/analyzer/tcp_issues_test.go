@@ -499,9 +499,15 @@ func TestTimeoutRetransmit(t *testing.T) { // Test B
 	assert.Equal(t, titleTimeoutRetransmit, got[0].Title)
 	assert.Equal(t, models.SeverityError, got[0].Severity)
 	assert.Contains(t, got[0].Description, "went silent for over 200ms with no duplicate ACKs")
-	assert.Equal(t, "Timeout Retransmit (severe congestion or blackhole)", res.Diagnosis.PrimaryCause)
-	assert.Equal(t, []string{"Severe congestion or blackhole detected. The sender waited for an RTO (Retransmission Timeout) before retrying. Investigate link quality or MTU issues."},
+	assert.Equal(t, "TCP retransmission timeout observed", res.Diagnosis.PrimaryCause)
+	assert.Equal(t, []string{"TCP data was retransmitted after a period without sufficient acknowledgment progress. This capture alone cannot determine whether the cause was packet loss, congestion, an endpoint problem, or a capture limitation. Compare captures at both ends and inspect network interface, queue, and endpoint behavior."},
 		res.Diagnosis.Recommendations)
+	assert.Equal(t, "A TCP segment was retransmitted after a period without sufficient acknowledgment progress. This does not by itself prove packet loss or a path-wide stall. Compare captures at both ends to identify where the delay or missing acknowledgment occurs.", got[0].Recommendation)
+	for _, s := range append([]string{res.Diagnosis.PrimaryCause, got[0].Recommendation}, res.Diagnosis.Recommendations...) {
+		assert.NotContains(t, strings.ToLower(s), "blackhole")
+		assert.NotContains(t, strings.ToLower(s), "severe congestion")
+		assert.NotContains(t, strings.ToLower(s), "stalled completely")
+	}
 	assert.Equal(t, 80, res.Diagnosis.HealthScore)
 }
 

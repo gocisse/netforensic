@@ -412,7 +412,7 @@ var categoryCause = map[string]string{
 // titleCause overrides the cause name for specific issues.
 var titleCause = map[string]string{
 	titleFastRetransmit:    "Fast Retransmit (isolated packet loss)",
-	titleTimeoutRetransmit: "Timeout Retransmit (severe congestion or blackhole)",
+	titleTimeoutRetransmit: "TCP retransmission timeout observed",
 }
 
 var categoryRecommendations = map[string][]string{
@@ -420,7 +420,7 @@ var categoryRecommendations = map[string][]string{
 		"Isolated packet loss detected. The sender recovered quickly via Fast Retransmit. Monitor for increasing frequency.",
 	},
 	titleTimeoutRetransmit: {
-		"Severe congestion or blackhole detected. The sender waited for an RTO (Retransmission Timeout) before retrying. Investigate link quality or MTU issues.",
+		"TCP data was retransmitted after a period without sufficient acknowledgment progress. This capture alone cannot determine whether the cause was packet loss, congestion, an endpoint problem, or a capture limitation. Compare captures at both ends and inspect network interface, queue, and endpoint behavior.",
 	},
 	titleStray: {
 		"Check whether the destinations are being scanned, or whether a firewall or NAT dropped the connection state so that later packets are answered with RSTs. If the capture is one-sided, the handshake may simply be on the other path.",
