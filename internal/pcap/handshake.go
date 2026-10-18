@@ -11,7 +11,10 @@ type hsEndpoint struct {
 	port uint16
 }
 
-type hsKey struct{ a, b hsEndpoint }
+type hsKey struct {
+	a, b   hsEndpoint
+	tunnel string // the same inner 4-tuple in different tunnels is another connection
+}
 
 // hsFlowKey returns a direction-independent key for a TCP packet.
 func hsFlowKey(p models.PacketInfo) hsKey {
@@ -19,7 +22,7 @@ func hsFlowKey(p models.PacketInfo) hsKey {
 	if dst.ip < src.ip || (dst.ip == src.ip && dst.port < src.port) {
 		src, dst = dst, src
 	}
-	return hsKey{src, dst}
+	return hsKey{src, dst, models.TunnelKey(p.Tunnel)}
 }
 
 func hasFlag(flags, want string) bool {
@@ -36,7 +39,7 @@ func hasFlag(flags, want string) bool {
 //
 //   - TCPSynTime: the first SYN (without ACK); its sender is the client
 //   - TCPSynAckTime: the first SYN-ACK from the server after that
-//   - TCPAckTime: the first ACK from the client after the SYN-ACK
+//   - TCPAckTime: the first ACK from the client after the SYN-ACK (a reset is not one)
 //   - FirstDataTime: the first packet with payload from the server after that ACK
 //
 // Events that were not captured stay zero. Packets are processed in capture
@@ -84,7 +87,7 @@ func annotateHandshakes(packets []models.PacketInfo) {
 					synAck = i
 				}
 			case ack < 0:
-				if fromClient(p) && hasFlag(p.TCPFlags, "ACK") && !hasFlag(p.TCPFlags, "SYN") {
+				if fromClient(p) && hasFlag(p.TCPFlags, "ACK") && !hasFlag(p.TCPFlags, "SYN") && !hasFlag(p.TCPFlags, "RST") {
 					ack = i
 				}
 			case data < 0:

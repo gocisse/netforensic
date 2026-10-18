@@ -414,3 +414,66 @@ func TestFillICMPOriginal(t *testing.T) {
 		assert.Equal(t, models.PacketInfo{ICMPType: 3}, got)
 	})
 }
+
+func TestAnnotateHandshakesSeparatesTunnels(t *testing.T) {
+	ts := func(sec float64) time.Time {
+		return time.Unix(1700000000, 0).Add(time.Duration(sec * float64(time.Second)))
+	}
+	const a, b = "192.0.2.1>192.0.2.2/GRE", "198.51.100.1>198.51.100.2/GRE"
+	in := func(p models.PacketInfo, tunnel string) models.PacketInfo {
+		p.Tunnel = tunnel
+		return p
+	}
+	// The same inner 4-tuple in two tunnels is two connections. The second
+	// one is also seen in the reverse direction through the same tunnel.
+	pkts := []models.PacketInfo{
+		in(tcpInfo(0, true, "SYN", 0), a), in(tcpInfo(0.01, false, "SYN,ACK", 0), "192.0.2.2>192.0.2.1/GRE"), in(tcpInfo(0.02, true, "ACK", 0), a),
+		in(tcpInfo(1, true, "SYN", 0), b), in(tcpInfo(1.8, false, "SYN,ACK", 0), b), in(tcpInfo(1.81, true, "ACK", 0), b),
+	}
+	annotateHandshakes(pkts)
+
+	require.NotNil(t, pkts[0].Handshake)
+	require.NotNil(t, pkts[3].Handshake)
+	assert.NotSame(t, pkts[0].Handshake, pkts[3].Handshake, "one object per connection, also across tunnels")
+	assert.Same(t, pkts[0].Handshake, pkts[1].Handshake, "both directions of one tunnel are one connection")
+	assert.Same(t, pkts[0].Handshake, pkts[2].Handshake)
+	assert.Same(t, pkts[3].Handshake, pkts[5].Handshake)
+	assert.True(t, ts(0).Equal(pkts[0].Handshake.TCPSynTime))
+	assert.True(t, ts(0.01).Equal(pkts[0].Handshake.TCPSynAckTime))
+	assert.True(t, ts(1).Equal(pkts[3].Handshake.TCPSynTime), "the second tunnel keeps its own SYN")
+	assert.True(t, ts(1.8).Equal(pkts[3].Handshake.TCPSynAckTime))
+	assert.True(t, ts(1.81).Equal(pkts[3].Handshake.TCPAckTime))
+}
+
+func TestAnnotateHandshakesIgnoresAClientResetAsTheFinalAck(t *testing.T) {
+	ts := func(sec float64) time.Time {
+		return time.Unix(1700000000, 0).Add(time.Duration(sec * float64(time.Second)))
+	}
+	tests := []struct {
+		name    string
+		pkts    []models.PacketInfo
+		wantAck time.Time
+	}{
+		{"an aborted handshake has no final ack",
+			[]models.PacketInfo{tcpInfo(0, true, "SYN", 0), tcpInfo(0.01, false, "SYN,ACK", 0), tcpInfo(0.45, true, "RST,ACK", 0)},
+			time.Time{}},
+		{"a plain RST is not the ack either",
+			[]models.PacketInfo{tcpInfo(0, true, "SYN", 0), tcpInfo(0.01, false, "SYN,ACK", 0), tcpInfo(0.45, true, "RST", 0)},
+			time.Time{}},
+		{"the first real ack after the reset is used",
+			[]models.PacketInfo{tcpInfo(0, true, "SYN", 0), tcpInfo(0.01, false, "SYN,ACK", 0), tcpInfo(0.02, true, "RST,ACK", 0), tcpInfo(0.03, true, "ACK", 0)},
+			ts(0.03)},
+		{"a reset from the server does not matter",
+			[]models.PacketInfo{tcpInfo(0, true, "SYN", 0), tcpInfo(0.01, false, "SYN,ACK", 0), tcpInfo(0.02, true, "ACK", 0), tcpInfo(0.5, false, "RST,ACK", 0)},
+			ts(0.02)},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			annotateHandshakes(tt.pkts)
+			for i, p := range tt.pkts {
+				require.NotNil(t, p.Handshake, "packet %d", i)
+				assert.True(t, tt.wantAck.Equal(p.Handshake.TCPAckTime), "packet %d ack %v want %v", i, p.Handshake.TCPAckTime, tt.wantAck)
+			}
+		})
+	}
+}
