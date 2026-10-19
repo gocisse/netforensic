@@ -173,7 +173,7 @@ func (c *tlConn) observe(p models.PacketInfo) {
 		case p.TCPWindow == 0 && c.stall == 0:
 			c.stallStart, c.stallPackets, c.stallClient = p.Timestamp, 1, fromClient
 			c.stall = c.add(p.Timestamp, evZeroWindow, models.SeverityWarning,
-				fmt.Sprintf("%s advertised a zero window: its receive buffer is full and the sender has to stop sending", c.role(src)))
+				fmt.Sprintf("%s advertised a receive window of 0: it asked the sender to pause sending new data", c.role(src)))
 			c.events[c.stall-1].problem = true
 		case p.TCPWindow == 0 && fromClient == c.stallClient:
 			c.stallPackets++
@@ -239,10 +239,10 @@ func (c *tlConn) finish(f models.Flow, issues []models.Issue) []models.FlowEvent
 			ev.Description = fmt.Sprintf("no SYN-ACK yet: the SYN was sent again (attempt %d)", c.synRetries[retryKey{r.Time, r.Seq}])
 		case r.Kind == retransTimeout.String():
 			ev.Event, ev.Severity = titleTimeoutRetransmit, models.SeverityError
-			ev.Description = fmt.Sprintf("sender waited for the retransmission timeout, then resent seq %d", r.Seq)
+			ev.Description = fmt.Sprintf("seq %d resent after the flow had been silent for over %s with no duplicate ACKs", r.Seq, rtoSilence)
 		case r.Kind == retransFast.String():
 			ev.Event, ev.Severity = titleFastRetransmit, models.SeverityWarning
-			ev.Description = fmt.Sprintf("seq %d resent after %d or more duplicate ACKs: the receiver kept asking for a missing segment", r.Seq, fastRetransmitDupAcks)
+			ev.Description = fmt.Sprintf("seq %d resent after %d or more duplicate ACKs for the same byte", r.Seq, fastRetransmitDupAcks)
 		case r.Kind == retransFast.String()+"-recovery" || r.Kind == retransTimeout.String()+"-recovery":
 			ev.Event, ev.Severity = "Retransmit (recovery)", models.SeverityWarning
 			ev.Description = fmt.Sprintf("seq %d resent as part of an ongoing %s recovery", r.Seq, r.Kind[:len(r.Kind)-len("-recovery")])

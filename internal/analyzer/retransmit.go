@@ -87,6 +87,7 @@ type retransDir struct {
 	seen        map[uint32]struct{}
 	nextSeq     uint32 // sequence number following the highest segment sent
 	haveNext    bool
+	finSent     bool      // this side has sent a FIN
 	advancedAt  time.Time // when nextSeq last moved forward
 	lastRetrans time.Time
 	lastKind    retransKind
@@ -116,16 +117,21 @@ type retransDir struct {
 //
 // Keep-alive probes, which deliberately reuse the last sequence number, are
 // not retransmissions. A duplicate ACK is a pure ACK repeating the previous
-// ACK number and window of the same side.
+// ACK number and window of the same side, except that the answer to a
+// keep-alive or zero-window probe repeats them by design and says nothing
+// about lost data: it is not counted, and neither is a zero-length keep-alive
+// probe, which is itself a bare ACK repeating them.
 type retransmitDetector struct {
 	dirs     map[retransDirKey]*retransDir
-	lastSeen map[instKey]time.Time // last packet of either direction
+	lastSeen map[instKey]time.Time   // last packet of either direction
+	probedBy map[instKey]*retransDir // the side whose packet was the last one, if that was a probe
 }
 
 func (d *retransmitDetector) dir(k retransDirKey) *retransDir {
 	if d.dirs == nil {
 		d.dirs = make(map[retransDirKey]*retransDir)
 		d.lastSeen = make(map[instKey]time.Time)
+		d.probedBy = make(map[instKey]*retransDir)
 	}
 	r := d.dirs[k]
 	if r == nil {
@@ -145,7 +151,23 @@ func (d *retransmitDetector) observe(key instKey, forward bool, p models.PacketI
 	prevPacket, hadPrev := d.lastSeen[key]
 	d.lastSeen[key] = p.Timestamp
 
+	answersProbe := d.probedBy[key] == peer
+	delete(d.probedBy, key)
+	keepAlive := isKeepAlive(p, me.nextSeq, me.haveNext) || isPostFINProbe(p, me, peer)
+	if hasTCPFlag(p.TCPFlags, "FIN") {
+		me.finSent = true
+	}
+	zeroProbe := isZeroWindowProbe(p, peer)
+	bareKeepAlive := isBareKeepAlive(p, me)
+	if keepAlive || zeroProbe || bareKeepAlive {
+		d.probedBy[key] = me
+	}
+
 	res.dupAck = me.trackAck(p)
+	if res.dupAck && (answersProbe || bareKeepAlive) {
+		me.dupAcks-- // not a duplicate ACK in the loss sense: undo the count
+		res.dupAck = false
+	}
 
 	if !consumesSeq(p) {
 		// A bare ACK still reveals how far the sender has got: its sequence
@@ -156,7 +178,7 @@ func (d *retransmitDetector) observe(key instKey, forward bool, p models.PacketI
 		}
 		return res
 	}
-	if isKeepAlive(p, me.nextSeq, me.haveNext) {
+	if keepAlive || zeroProbe {
 		return res
 	}
 
@@ -214,6 +236,41 @@ func (d *retransmitDetector) observe(key instKey, forward bool, p models.PacketI
 	}
 	me.lastRetrans, me.lastKind = p.Timestamp, res.kind.family()
 	return res
+}
+
+// isZeroWindowProbe reports whether p is a zero-window probe: one byte of
+// data at the sequence number the receiver is waiting for, sent while the
+// receiver's last pure ACK advertised a window of 0. The receiver does not
+// accept the byte, so the probe is not data that a later segment at the same
+// sequence number could repeat. peer is the receiver's side of the connection.
+func isZeroWindowProbe(p models.PacketInfo, peer *retransDir) bool {
+	return p.PayloadSize == 1 &&
+		!hasTCPFlag(p.TCPFlags, "SYN") && !hasTCPFlag(p.TCPFlags, "FIN") && !hasTCPFlag(p.TCPFlags, "RST") &&
+		peer.haveAck && peer.lastWin == 0 && p.TCPSeq == peer.lastAck
+}
+
+// isPostFINProbe reports whether p is a one-byte segment on the last data byte
+// sent after this side's FIN, which the receiver has already acknowledged. The
+// FIN takes the sequence number after that byte, so nextSeq is two above it
+// and isKeepAlive, which looks one below nextSeq, does not see it. Nothing but
+// the FIN is outstanding then, so the segment is a probe (Wireshark: Spurious
+// Retransmission), not a retransmission. Without the receiver's
+// acknowledgment of the byte, such a segment is indistinguishable from a
+// genuine retransmission and is not taken for a probe.
+func isPostFINProbe(p models.PacketInfo, me, peer *retransDir) bool {
+	return me.finSent && p.PayloadSize == 1 &&
+		!hasTCPFlag(p.TCPFlags, "SYN") && !hasTCPFlag(p.TCPFlags, "FIN") && !hasTCPFlag(p.TCPFlags, "RST") &&
+		me.haveNext && p.TCPSeq == me.nextSeq-2 &&
+		peer.haveAck && int32(p.TCPSeq+1-peer.lastAck) <= 0
+}
+
+// isBareKeepAlive reports whether p is a zero-length keep-alive probe, as some
+// stacks send them: an ACK without data whose sequence number is the last byte
+// already sent (one below the next one), as isKeepAlive says of the one-byte kind.
+func isBareKeepAlive(p models.PacketInfo, me *retransDir) bool {
+	return me.haveNext && p.PayloadSize == 0 && hasTCPFlag(p.TCPFlags, "ACK") &&
+		!hasTCPFlag(p.TCPFlags, "SYN") && !hasTCPFlag(p.TCPFlags, "FIN") && !hasTCPFlag(p.TCPFlags, "RST") &&
+		p.TCPSeq == me.nextSeq-1
 }
 
 // trackAck updates the ACKs sent by this side and reports whether p is a
@@ -319,11 +376,11 @@ func retransmitIssue(f models.Flow, k retransKind) (models.Issue, bool) {
 	switch k {
 	case retransFast:
 		is.Severity, is.Title = models.SeverityWarning, titleFastRetransmit
-		is.Description = fmt.Sprintf("flow %s had %d segment(s) retransmitted after %d or more duplicate ACKs%s, first seq %d at %s%s; the receiver kept asking for a missing segment",
+		is.Description = fmt.Sprintf("flow %s had %d segment(s) retransmitted after %d or more duplicate ACKs%s, first seq %d at %s%s; the receiver repeatedly acknowledged the same byte",
 			f.ID, n, fastRetransmitDupAcks, also, firstSeq, first.UTC().Format("15:04:05.000"), span)
 	case retransTimeout:
 		is.Severity, is.Title = models.SeverityError, titleTimeoutRetransmit
-		is.Description = fmt.Sprintf("flow %s had %d segment(s) retransmitted after the connection went silent for over %s with no duplicate ACKs%s, first seq %d at %s%s; the sender waited for a retransmission timeout",
+		is.Description = fmt.Sprintf("flow %s had %d segment(s) retransmitted after the connection went silent for over %s with no duplicate ACKs%s, first seq %d at %s%s",
 			f.ID, n, rtoSilence, also, firstSeq, first.UTC().Format("15:04:05.000"), span)
 	default:
 		is.Severity, is.Title = models.SeverityWarning, titleRetransmissions

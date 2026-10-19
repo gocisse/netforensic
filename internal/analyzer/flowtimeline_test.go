@@ -101,7 +101,7 @@ func TestFlowTimeline(t *testing.T) {
 			want:       []string{evStart, evHandshake, evFirstData, titleTimeoutRetransmit},
 			first:      titleTimeoutRetransmit,
 			firstSev:   models.SeverityError,
-			wantDescIn: map[string]string{titleTimeoutRetransmit: "waited for the retransmission timeout, then resent seq 1000"},
+			wantDescIn: map[string]string{titleTimeoutRetransmit: "seq 1000 resent after the flow had been silent for over 200ms with no duplicate ACKs"},
 		},
 		{
 			name: "reset ends an established connection",
@@ -211,4 +211,52 @@ func TestFlowTimelineFallsBackToIssues(t *testing.T) {
 	require.Equal(t, []string{evStart, "Slow Response"}, names(tl))
 	assert.Equal(t, rstT0.Add(2*time.Second), tl[1].Timestamp, "the flow's own occurrence time is used")
 	assert.Equal(t, []string{"Slow Response"}, firstIssues(tl))
+}
+
+// A fast retransmit is reported as seq resent after duplicate ACKs for the
+// same byte; the timeline must not say what the receiver lacked.
+func TestFlowTimelineFastRetransmitWording(t *testing.T) {
+	packets := []models.PacketInfo{
+		tx(0, true, "PSH,ACK", 1000, 1, 100, 100),
+		tx(1, false, "ACK", 1, 1100, 0, 5000),
+		tx(2, true, "PSH,ACK", 1100, 1, 100, 100),
+		tx(3, true, "PSH,ACK", 1200, 1, 100, 100),
+		tx(4, false, "ACK", 1, 1100, 0, 5000), // dup ACK 1
+		tx(5, true, "PSH,ACK", 1300, 1, 100, 100),
+		tx(6, false, "ACK", 1, 1100, 0, 5000), // dup ACK 2
+		tx(7, true, "PSH,ACK", 1400, 1, 100, 100),
+		tx(8, false, "ACK", 1, 1100, 0, 5000),     // dup ACK 3
+		tx(9, true, "PSH,ACK", 1100, 1, 100, 100), // fast retransmit of seq 1100
+	}
+	res := Analyze(packets, "all")
+
+	var events []models.FlowEvent
+	for _, f := range res.Flows {
+		for _, e := range f.Timeline {
+			if e.Event == titleFastRetransmit {
+				events = append(events, e)
+			}
+		}
+	}
+	require.Len(t, events, 1)
+	assert.Equal(t, models.SeverityWarning, events[0].Severity)
+	assert.Equal(t, "seq 1100 resent after 3 or more duplicate ACKs for the same byte", events[0].Description)
+	assert.NotContains(t, events[0].Description, "missing segment")
+}
+
+// A zero window is reported as what the host advertised, not as why.
+func TestFlowTimelineZeroWindowWording(t *testing.T) {
+	pk := append(handshake(),
+		withWindow(tcpEv(50, 5000, false, "ACK", 0), 0),
+		tcpEv(300, 5000, false, "ACK", 0),
+	)
+	var events []models.FlowEvent
+	for _, e := range timelineOf(t, Analyze(pk, "all"), tlFlowID) {
+		if e.Event == evZeroWindow {
+			events = append(events, e)
+		}
+	}
+	require.Len(t, events, 1)
+	assert.Contains(t, events[0].Description, "advertised a receive window of 0: it asked the sender to pause sending new data")
+	assert.NotContains(t, events[0].Description, "buffer is full")
 }

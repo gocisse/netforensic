@@ -316,11 +316,14 @@ func TestZeroWindowWarning(t *testing.T) {
 	assert.Equal(t, models.SeverityWarning, is.Severity)
 	assert.Equal(t, 2, is.Count)
 	assert.Equal(t, rstT0.Add(10*time.Millisecond), is.Timestamp)
-	assert.Contains(t, is.Description, "Receiver buffer full, sender stalled")
-	assert.Contains(t, is.Description, "the client (10.0.0.1) advertised a zero window 2 time(s)")
-	assert.Contains(t, is.Description, "it never reopened in the capture")
+	assert.Contains(t, is.Description, "the client (10.0.0.1) advertised a TCP receive window of 0 in 2 packet(s), first at 22:13:20.010")
+	assert.True(t, strings.HasSuffix(is.Description, "; no later packet from it advertised a non-zero window in the capture"), is.Description)
+	assert.NotContains(t, is.Description, "buffer full")
+	assert.NotContains(t, is.Description, "stalled")
 	assert.Equal(t, 90, res.Diagnosis.HealthScore)
-	assert.Equal(t, categoryRecommendations[titleZeroWindow], res.Diagnosis.Recommendations)
+	assert.Equal(t, []string{"A TCP receive window of 0 was advertised on this flow. This capture alone cannot show why, or whether it affected the rest of the exchange. Compare captures at both ends and inspect the receiving application and its buffer behavior."}, res.Diagnosis.Recommendations)
+	assert.Equal(t, "The receiver advertised a TCP receive window of 0, which asks the sender to pause sending data. This capture does not show why the window reached zero or how long the sender actually waited. Check how the receiving application reads from its socket and its buffer settings and load, and compare with a capture at the other end.", is.Recommendation)
+	assert.NotContains(t, is.Recommendation, "not the network")
 }
 
 func TestZeroWindowReopens(t *testing.T) {
@@ -331,8 +334,8 @@ func TestZeroWindowReopens(t *testing.T) {
 	)
 	got := connectionIssues(Analyze(packets, "all"))
 	require.Len(t, got, 1)
-	assert.Contains(t, got[0].Description, "the server (10.0.0.2) advertised a zero window 1 time(s)")
-	assert.Contains(t, got[0].Description, "the window reopened 30ms later")
+	assert.Contains(t, got[0].Description, "the server (10.0.0.2) advertised a TCP receive window of 0 in 1 packet(s)")
+	assert.True(t, strings.HasSuffix(got[0].Description, "; a later packet from the same host advertised a non-zero window 30ms later"), got[0].Description)
 }
 
 func TestZeroWindowThenResetIsOneError(t *testing.T) { // Lab-7 pattern
@@ -353,8 +356,10 @@ func TestZeroWindowThenResetIsOneError(t *testing.T) { // Lab-7 pattern
 	assert.Contains(t, is.Description, "2 RST packets in total")
 	assert.Equal(t, 80, res.Diagnosis.HealthScore)
 	assert.Equal(t, titleZeroWindowReset, res.Diagnosis.PrimaryCause)
-	assert.Equal(t, []string{"The receiver's buffer filled up, causing the sender to stall, and the connection was eventually reset. Investigate receiver application processing speed or buffer sizing."},
+	assert.Equal(t, []string{"A TCP receive window of 0 was advertised on this flow. This capture alone cannot show why, or whether it affected the rest of the exchange. Compare captures at both ends and inspect the receiving application and its buffer behavior."},
 		res.Diagnosis.Recommendations)
+	assert.Equal(t, "A TCP receive window of 0 was advertised on this flow and the connection was later reset. This capture does not show whether the two are related, or who or what caused either. Use the filter to check their order, then inspect the applications and any device on the path.", is.Recommendation)
+	assert.NotContains(t, is.Recommendation, "not at fault")
 }
 
 func TestZeroWindowReopenedBeforeResetIsSaid(t *testing.T) {
@@ -477,9 +482,11 @@ func TestFastRetransmit(t *testing.T) { // Test A
 	assert.Equal(t, models.SeverityWarning, got[0].Severity)
 	assert.Equal(t, rstT0.Add(9*time.Millisecond), got[0].Timestamp)
 	assert.Contains(t, got[0].Description, "after 3 or more duplicate ACKs, first seq 1100")
-	assert.Equal(t, "Fast Retransmit (isolated packet loss)", res.Diagnosis.PrimaryCause)
-	assert.Equal(t, []string{"Isolated packet loss detected. The sender recovered quickly via Fast Retransmit. Monitor for increasing frequency."},
+	assert.Equal(t, "TCP fast retransmission observed", res.Diagnosis.PrimaryCause)
+	assert.Equal(t, []string{"TCP data was retransmitted after 3 or more duplicate acknowledgments for the same byte. This capture alone cannot determine whether a segment was lost, reordered or delayed, or where. Compare captures at both ends and inspect network interface, queue, and endpoint behavior."},
 		res.Diagnosis.Recommendations)
+	assert.True(t, strings.HasSuffix(got[0].Description, "; the receiver repeatedly acknowledged the same byte"), got[0].Description)
+	assert.Equal(t, "A TCP segment was retransmitted after 3 or more duplicate ACKs for the same byte. Duplicate ACKs can follow a lost segment, but also reordering or delayed delivery, so this does not by itself prove packet loss. Compare captures at both ends to see whether the original segment reached the receiver.", got[0].Recommendation)
 	assert.Equal(t, 90, res.Diagnosis.HealthScore)
 }
 
@@ -499,6 +506,7 @@ func TestTimeoutRetransmit(t *testing.T) { // Test B
 	assert.Equal(t, titleTimeoutRetransmit, got[0].Title)
 	assert.Equal(t, models.SeverityError, got[0].Severity)
 	assert.Contains(t, got[0].Description, "went silent for over 200ms with no duplicate ACKs")
+	assert.NotContains(t, got[0].Description, "waited for a retransmission timeout")
 	assert.Equal(t, "TCP retransmission timeout observed", res.Diagnosis.PrimaryCause)
 	assert.Equal(t, []string{"TCP data was retransmitted after a period without sufficient acknowledgment progress. This capture alone cannot determine whether the cause was packet loss, congestion, an endpoint problem, or a capture limitation. Compare captures at both ends and inspect network interface, queue, and endpoint behavior."},
 		res.Diagnosis.Recommendations)

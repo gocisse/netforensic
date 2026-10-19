@@ -147,7 +147,7 @@ func TestAnalyzeUploadMatchesTheCLIResult(t *testing.T) {
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &res))
 	assert.Equal(t, 202, res.TotalPackets)
 	assert.Equal(t, 80, res.Diagnosis.HealthScore)
-	assert.Equal(t, "Fast Retransmit (isolated packet loss)", res.Diagnosis.PrimaryCause)
+	assert.Equal(t, "TCP fast retransmission observed", res.Diagnosis.PrimaryCause)
 	var titles []string
 	for _, is := range res.Issues {
 		titles = append(titles, is.Title)
