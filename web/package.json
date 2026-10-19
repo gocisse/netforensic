@@ -8,7 +8,7 @@
     "build": "tsc -b && vite build",
     "lint": "oxlint",
     "check:spacing": "node scripts/check-spacing.mjs",
-    "test": "node --disable-warning=ExperimentalWarning --experimental-strip-types --test \"src/**/*.test.ts\"",
+    "test": "node --test \"src/**/*.test.ts\"",
     "preview": "vite preview"
   },
   "dependencies": {

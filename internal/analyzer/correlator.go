@@ -406,18 +406,18 @@ func recommendations(kind, domain, category string) []string {
 // categoryCause names the primary cause for categories where the issue title
 // describes a symptom rather than the underlying problem.
 var categoryCause = map[string]string{
-	"PacketLoss": "TCP retransmissions observed",
+	"PacketLoss": "Packet loss",
 }
 
 // titleCause overrides the cause name for specific issues.
 var titleCause = map[string]string{
-	titleFastRetransmit:    "TCP fast retransmission observed",
+	titleFastRetransmit:    "Fast Retransmit (isolated packet loss)",
 	titleTimeoutRetransmit: "TCP retransmission timeout observed",
 }
 
 var categoryRecommendations = map[string][]string{
 	titleFastRetransmit: {
-		"TCP data was retransmitted after 3 or more duplicate acknowledgments for the same byte. This capture alone cannot determine whether a segment was lost, reordered or delayed, or where. Compare captures at both ends and inspect network interface, queue, and endpoint behavior.",
+		"Isolated packet loss detected. The sender recovered quickly via Fast Retransmit. Monitor for increasing frequency.",
 	},
 	titleTimeoutRetransmit: {
 		"TCP data was retransmitted after a period without sufficient acknowledgment progress. This capture alone cannot determine whether the cause was packet loss, congestion, an endpoint problem, or a capture limitation. Compare captures at both ends and inspect network interface, queue, and endpoint behavior.",
@@ -438,10 +438,10 @@ var categoryRecommendations = map[string][]string{
 		"Verify if the service is running on the target port, or if a firewall is actively rejecting connections with an RST instead of dropping them.",
 	},
 	titleZeroWindowReset: {
-		"A TCP receive window of 0 was advertised on this flow. This capture alone cannot show why, or whether it affected the rest of the exchange. Compare captures at both ends and inspect the receiving application and its buffer behavior.",
+		"The receiver's buffer filled up, causing the sender to stall, and the connection was eventually reset. Investigate receiver application processing speed or buffer sizing.",
 	},
 	titleZeroWindow: {
-		"A TCP receive window of 0 was advertised on this flow. This capture alone cannot show why, or whether it affected the rest of the exchange. Compare captures at both ends and inspect the receiving application and its buffer behavior.",
+		"The receiver's buffer filled up and the sender had to stall. Investigate receiver application processing speed (is it reading from the socket?) or buffer sizing.",
 	},
 	titleIdle: {
 		"Check the idle-timeout settings of firewalls, NAT gateways and load balancers on the path, and enable TCP keep-alives if long-idle connections are expected.",
@@ -462,8 +462,8 @@ var categoryRecommendations = map[string][]string{
 		"Compare the TLS versions and cipher suites offered by the client with those allowed by the server.",
 	},
 	"PacketLoss": {
-		"Retransmissions were observed, but this capture alone cannot show whether packets were lost, delayed or reordered. Compare captures at both ends.",
-		"Check interface error and drop counters and queue behavior on the path.",
+		"Check interface error and drop counters on the path between the two hosts.",
+		"Look for duplex mismatches, faulty cabling or congested links; run a sustained ping or iperf test.",
 	},
 	"Performance": {
 		"Compare handshake and response timings against a baseline capture taken at a quiet time.",

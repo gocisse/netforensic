@@ -16,7 +16,7 @@ It runs in two modes from the same binary:
 ## Prerequisites
 
 - **Go 1.22 or newer** to build the binary.
-- **Node.js 22.12+ and npm** (required for the frontend test runner and Vite 8) to build the web UI that is
+- **Node.js and npm** (Node 20+ recommended) to build the web UI that is
   embedded into the binary. Not needed to run the CLI from a binary that was
   already built with the UI.
 - `tshark` is *not* required; it is only useful for cross-checking results.

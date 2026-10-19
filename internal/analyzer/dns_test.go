@@ -240,7 +240,7 @@ func TestDNSIssuesSerializeEveryQuery(t *testing.T) {
 	assert.Equal(t, 205, decoded.Count)
 	require.Len(t, decoded.Occurrences, 205, "every NXDOMAIN, not just the top three domains")
 	assert.Equal(t, "host000.example", decoded.Occurrences[0].Subject)
-	assert.True(t, dnsT0.Add(10*time.Millisecond).Equal(decoded.Occurrences[0].Time))
+	assert.Equal(t, dnsT0.Add(10*time.Millisecond), decoded.Occurrences[0].Time)
 
 	// timeouts carry how long the answer took, when there was one
 	late := dnsQ(0, 9, "late.example")

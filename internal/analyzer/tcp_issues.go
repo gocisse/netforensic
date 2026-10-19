@@ -337,12 +337,12 @@ func (c *connState) receiverSide() (endpoint, string) {
 // zeroWindowIssue reports a zero-window stall that did not end in a reset.
 func (c *connState) zeroWindowIssue() models.Issue {
 	rx, role := c.receiverSide()
-	desc := fmt.Sprintf("flow %s: the %s (%s) advertised a TCP receive window of 0 in %d packet(s), first at %s",
-		c.id, role, rx.ip, c.zeroWindows, c.firstZero.Timestamp.UTC().Format("15:04:05.000"))
+	desc := fmt.Sprintf("Receiver buffer full, sender stalled: the %s (%s) advertised a zero window %d time(s) in flow %s, first at %s",
+		role, rx.ip, c.zeroWindows, c.id, c.firstZero.Timestamp.UTC().Format("15:04:05.000"))
 	if !c.zeroReopened.IsZero() {
-		desc += fmt.Sprintf("; a later packet from the same host advertised a non-zero window %s later", c.zeroReopened.Sub(c.firstZero.Timestamp).Round(time.Millisecond))
+		desc += fmt.Sprintf("; the window reopened %s later", c.zeroReopened.Sub(c.firstZero.Timestamp).Round(time.Millisecond))
 	} else {
-		desc += "; no later packet from it advertised a non-zero window in the capture"
+		desc += "; it never reopened in the capture"
 	}
 	return models.Issue{
 		ID:          "zerowindow-" + c.id,

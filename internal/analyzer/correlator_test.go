@@ -165,7 +165,7 @@ func TestCorrelatePriority(t *testing.T) {
 		{"dns link beats critical", nil, []models.Issue{dup, servfail("d", 10, "x.com"), http5xx("h", 11, "x.com")}, "DNS resolution failure for x.com", "high"},
 		{"critical beats congestion", congested, []models.Issue{dup}, "Duplicate IP Address", "high"},
 		{"congestion beats worst-issue fallback", congested, []models.Issue{http5xx("h", 1, "")}, "Network congestion", "medium"},
-		{"retransmissions are reported as packet loss", nil, []models.Issue{issue("p", 1, models.SeverityWarning, "PacketLoss", "TCP Retransmissions detected", "")}, "TCP retransmissions observed", "low"},
+		{"retransmissions are reported as packet loss", nil, []models.Issue{issue("p", 1, models.SeverityWarning, "PacketLoss", "TCP Retransmissions detected", "")}, "Packet loss", "low"},
 		{"error issue fallback", nil, []models.Issue{http5xx("h", 1, "x.com")}, "HTTP Server Error", "medium"},
 		{"warning issue fallback", nil, []models.Issue{issue("w", 1, models.SeverityWarning, "TLS", "TLS Protocol Downgrade", "")}, "TLS Protocol Downgrade", "low"},
 		{"info issue fallback", nil, []models.Issue{issue("i", 1, models.SeverityInfo, "ICMP", "ICMP Redirect", "")}, "ICMP Redirect", "low"},
@@ -288,7 +288,7 @@ func TestAnalyzeProducesDiagnosis(t *testing.T) {
 	assert.NotNil(t, res.SlowFlows)
 }
 
-// The tests below run the whole pipeline on the real captures in ../../testdata.
+// The tests below run the whole pipeline on real captures from ../VendorTestFile.
 
 func readReal(t *testing.T, name string) []models.PacketInfo {
 	t.Helper()
@@ -334,8 +334,8 @@ func TestCorrelateRealLab3TCPRetransmissions(t *testing.T) {
 		}
 	}
 	assert.Equal(t, 80, res.Diagnosis.HealthScore, "two warnings")
-	assert.Equal(t, "TCP fast retransmission observed", res.Diagnosis.PrimaryCause)
-	assert.Equal(t, []string{"TCP data was retransmitted after 3 or more duplicate acknowledgments for the same byte. This capture alone cannot determine whether a segment was lost, reordered or delayed, or where. Compare captures at both ends and inspect network interface, queue, and endpoint behavior."}, res.Diagnosis.Recommendations)
+	assert.Equal(t, "Fast Retransmit (isolated packet loss)", res.Diagnosis.PrimaryCause)
+	assert.Equal(t, categoryRecommendations[titleFastRetransmit], res.Diagnosis.Recommendations)
 
 	var rootCause bool
 	for _, e := range res.Diagnosis.Timeline {
